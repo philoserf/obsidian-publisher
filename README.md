@@ -250,7 +250,7 @@ Output is compatible with Obsidian's plugin system (CommonJS, Node target).
 
 - Check the developer console (Cmd/Ctrl + Shift + I) for errors
 - Ensure `main.js` exists in the plugin directory
-- Verify Obsidian version is 0.15.0 or higher
+- Verify Obsidian version is 1.0.0 or higher
 
 ### Publishing Fails
 
