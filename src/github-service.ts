@@ -94,7 +94,7 @@ export class GitHubService {
         repo: this.settings.repoName,
         path,
         message,
-        content: Buffer.from(content).toString("base64"),
+        content: this.stringToBase64(content),
         sha: existingSha || undefined,
       };
 
@@ -153,6 +153,19 @@ export class GitHubService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Convert string to base64 (cross-platform)
+   */
+  private stringToBase64(str: string): string {
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(str);
+    let binary = "";
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
   }
 
   /**
