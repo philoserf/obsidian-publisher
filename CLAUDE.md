@@ -54,9 +54,79 @@ bun run lint
 bun run check
 ```
 
+### Version Management
+
+```bash
+# Bump patch version (1.0.0 → 1.0.1)
+npm version patch
+
+# Bump minor version (1.0.0 → 1.1.0)
+npm version minor
+
+# Bump major version (1.0.0 → 2.0.0)
+npm version major
+
+# Set specific version
+npm version 1.2.3
+```
+
+**What it does:**
+- Updates `package.json` version
+- Updates `manifest.json` version
+- Updates `versions.json` with new version entry
+- Runs `version-bump.ts` script automatically via npm/bun lifecycle hook
+
 **Note:** This project uses Bun, not npm/yarn. Bun provides native TypeScript
 execution, built-in test runner, and fast bundling. The `bun test` command
 requires no configuration.
+
+## Release Process
+
+### Automated GitHub Releases
+
+The project uses GitHub Actions to automatically create releases when you push
+a version tag:
+
+```bash
+# 1. Bump version (updates package.json, manifest.json, versions.json)
+npm version patch
+
+# 2. Commit changes
+git add .
+git commit -m "chore: bump version to 1.0.1"
+
+# 3. Create and push tag (triggers GitHub Actions)
+git tag 1.0.1
+git push origin <branch-name>
+git push origin --tags
+```
+
+**GitHub Actions Workflow:**
+- Triggers on any tag push (`tags: "*"`)
+- Installs dependencies with Bun
+- Runs `bun run build` (includes typecheck and lint)
+- Creates GitHub release with `main.js` and `manifest.json`
+
+**Release Artifacts:**
+- `main.js` - Compiled plugin bundle
+- `manifest.json` - Plugin metadata for Obsidian
+
+**Location:** `.github/workflows/release.yml`
+
+### Version Tracking
+
+**`versions.json`:**
+Maps plugin versions to minimum required Obsidian versions:
+
+```json
+{
+  "1.0.0": "1.0.0",
+  "1.0.1": "1.0.0"
+}
+```
+
+This file is automatically updated by `version-bump.ts` when you run
+`npm version`.
 
 ## Architecture
 
@@ -185,6 +255,16 @@ Example: `My Blog Post!@#.md` → `my-blog-post.md`
 - Production: minified (~120 KB)
 - Development: inline source maps (~508 KB)
 
+**Pre-build Validation:**
+
+The `build` script runs quality checks before bundling:
+1. TypeScript type checking (`tsc --noEmit`)
+2. Biome linting and formatting checks
+3. Bun bundler (minification)
+
+This ensures all code quality checks pass before creating the production build.
+If any check fails, the build is aborted.
+
 ## Code Style
 
 **Enforced by Biome:**
@@ -273,7 +353,19 @@ try {
 
 ## Version Information
 
-- Plugin version tracked in both `package.json` and `manifest.json`
-- Must match for Obsidian plugin validation
+**Version Sync:**
+- Plugin version tracked in `package.json`, `manifest.json`, and `versions.json`
+- All three files must stay synchronized (enforced by `version-bump.ts`)
+- `validate-plugin.ts` checks version consistency before publishing
+- Use `npm version <patch|minor|major>` to update all files automatically
+
+**Plugin Metadata:**
+- Current version: Defined in `package.json` and `manifest.json`
 - Minimum Obsidian version: 1.0.0
 - `isDesktopOnly: false` - explicitly supports mobile/iOS
+
+**Version Files:**
+- `package.json` - npm package version (source of truth)
+- `manifest.json` - Obsidian plugin metadata
+- `versions.json` - Maps plugin versions to minimum Obsidian versions
+- `version-bump.ts` - Script that synchronizes all version files
