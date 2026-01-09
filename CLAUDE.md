@@ -58,23 +58,23 @@ bun run check
 
 ```bash
 # Bump patch version (1.0.0 → 1.0.1)
-npm version patch
+bun version patch
 
 # Bump minor version (1.0.0 → 1.1.0)
-npm version minor
+bun version minor
 
 # Bump major version (1.0.0 → 2.0.0)
-npm version major
+bun version major
 
 # Set specific version
-npm version 1.2.3
+bun version 1.2.3
 ```
 
 **What it does:**
 - Updates `package.json` version
 - Updates `manifest.json` version
 - Updates `versions.json` with new version entry
-- Runs `version-bump.ts` script automatically via npm/bun lifecycle hook
+- Runs `version-bump.ts` script automatically via Bun lifecycle hook
 
 **Note:** This project uses Bun, not npm/yarn. Bun provides native TypeScript
 execution, built-in test runner, and fast bundling. The `bun test` command
@@ -89,7 +89,7 @@ a version tag:
 
 ```bash
 # 1. Bump version (updates package.json, manifest.json, versions.json)
-npm version patch
+bun version patch
 
 # 2. Commit changes
 git add .
@@ -126,7 +126,7 @@ Maps plugin versions to minimum required Obsidian versions:
 ```
 
 This file is automatically updated by `version-bump.ts` when you run
-`npm version`.
+`bun version`.
 
 ## Architecture
 
@@ -357,7 +357,7 @@ try {
 - Plugin version tracked in `package.json`, `manifest.json`, and `versions.json`
 - All three files must stay synchronized (enforced by `version-bump.ts`)
 - `validate-plugin.ts` checks version consistency before publishing
-- Use `npm version <patch|minor|major>` to update all files automatically
+- Use `bun version <patch|minor|major>` to update all files automatically
 
 **Plugin Metadata:**
 - Current version: Defined in `package.json` and `manifest.json`
