@@ -17,13 +17,7 @@
     "version": "bun run version-bump.ts",
     "prepublishOnly": "bun run validate"
   },
-  "keywords": [
-    "obsidian",
-    "obsidian-plugin",
-    "hugo",
-    "github",
-    "publishing"
-  ],
+  "keywords": ["obsidian", "obsidian-plugin", "hugo", "github", "publishing"],
   "author": "",
   "license": "MIT",
   "devDependencies": {

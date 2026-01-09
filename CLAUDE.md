@@ -72,9 +72,13 @@ bun version 1.2.3
 
 **What it does:**
 - Updates `package.json` version
-- Updates `manifest.json` version
-- Updates `versions.json` with new version entry
-- Runs `version-bump.ts` script automatically via Bun lifecycle hook
+- Updates `manifest.json` version (via `version-bump.ts`)
+- Updates `versions.json` with new version entry (via `version-bump.ts`)
+- Automatically creates a git commit with message "v{version}"
+- Automatically creates a git tag
+
+**Note:** `bun version` automatically commits and tags changes. If you need
+manual control over commits, use `bun version --no-git-tag-version` instead.
 
 **Note:** This project uses Bun, not npm/yarn. Bun provides native TypeScript
 execution, built-in test runner, and fast bundling. The `bun test` command
@@ -88,15 +92,25 @@ The project uses GitHub Actions to automatically create releases when you push
 a version tag:
 
 ```bash
-# 1. Bump version (updates package.json, manifest.json, versions.json)
+# 1. Bump version (updates files, creates commit and tag automatically)
 bun version patch
 
-# 2. Commit changes
+# 2. Push commit and tag to trigger release (use --follow-tags)
+git push origin <branch-name> --follow-tags
+```
+
+**Alternative workflow (manual control):**
+
+```bash
+# 1. Bump version without auto-commit
+bun version --no-git-tag-version patch
+
+# 2. Manually commit and tag
 git add .
 git commit -m "chore: bump version to 1.0.1"
-
-# 3. Create and push tag (triggers GitHub Actions)
 git tag 1.0.1
+
+# 3. Push
 git push origin <branch-name>
 git push origin --tags
 ```
@@ -105,11 +119,12 @@ git push origin --tags
 - Triggers on any tag push (`tags: "*"`)
 - Installs dependencies with Bun
 - Runs `bun run build` (includes typecheck and lint)
-- Creates GitHub release with `main.js` and `manifest.json`
+- Creates GitHub release with `main.js`, `manifest.json`, and `versions.json`
 
 **Release Artifacts:**
 - `main.js` - Compiled plugin bundle
 - `manifest.json` - Plugin metadata for Obsidian
+- `versions.json` - Version compatibility mapping for Obsidian community plugins
 
 **Location:** `.github/workflows/release.yml`
 
