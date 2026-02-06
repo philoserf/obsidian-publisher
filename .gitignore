@@ -9,6 +9,9 @@ main.js.map
 .vscode/
 .idea/
 
+# Obsidian
+.obsidian/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -23,3 +26,6 @@ npm-debug.log*
 
 # Testing
 coverage/
+
+# Planning
+.planning/
