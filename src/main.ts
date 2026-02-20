@@ -4,8 +4,8 @@ import { PublisherSettingTab } from "./settings";
 import {
   type BatchPublishResult,
   DEFAULT_SETTINGS,
-  type PublishResult,
   type PublisherSettings,
+  type PublishResult,
 } from "./types";
 
 export default class ObsidianPublisher extends Plugin {

@@ -26,10 +26,7 @@ export class ContentProcessor {
     processedBody = this.convertImageReferences(processedBody);
 
     // Reassemble content with frontmatter
-    const processedContent = this.assembleFrontmatter(
-      processedFrontmatter,
-      processedBody,
-    );
+    const processedContent = this.assembleFrontmatter(processedFrontmatter, processedBody);
 
     // Sanitize filename
     const sanitizedFilename = this.sanitizeFilename(originalFilename);
@@ -72,9 +69,7 @@ export class ContentProcessor {
   /**
    * Process frontmatter for Hugo
    */
-  private processFrontmatter(
-    frontmatter: Record<string, unknown>,
-  ): Record<string, unknown> {
+  private processFrontmatter(frontmatter: Record<string, unknown>): Record<string, unknown> {
     const processed = { ...frontmatter };
 
     // Remove publish field if configured
@@ -83,9 +78,7 @@ export class ContentProcessor {
     }
 
     // Add template fields
-    for (const [key, value] of Object.entries(
-      this.settings.frontmatterTemplate,
-    )) {
+    for (const [key, value] of Object.entries(this.settings.frontmatterTemplate)) {
       // Don't override existing fields
       if (!(key in processed)) {
         processed[key] = value;
@@ -103,10 +96,7 @@ export class ContentProcessor {
   /**
    * Reassemble frontmatter and body
    */
-  private assembleFrontmatter(
-    frontmatter: Record<string, unknown>,
-    body: string,
-  ): string {
+  private assembleFrontmatter(frontmatter: Record<string, unknown>, body: string): string {
     if (Object.keys(frontmatter).length === 0) {
       return body;
     }
@@ -141,14 +131,11 @@ export class ContentProcessor {
    * Handles: [[Page]] and [[Page|Display Text]]
    */
   private convertWikilinks(content: string): string {
-    return content.replace(
-      /\[\[([^\]|]+)(\|([^\]]+))?\]\]/g,
-      (_match, page, _, displayText) => {
-        const display = displayText || page;
-        const slug = this.sanitizeFilename(page);
-        return `[${display}](${slug})`;
-      },
-    );
+    return content.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, (_match, page, _, displayText) => {
+      const display = displayText || page;
+      const slug = this.sanitizeFilename(page);
+      return `[${display}](${slug})`;
+    });
   }
 
   /**
