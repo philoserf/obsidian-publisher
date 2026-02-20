@@ -1,31 +1,33 @@
+# Build output
+*.js.map
+
 # Dependencies
 node_modules/
 
-# Build output (keep main.js for Obsidian plugin distribution)
-main.js.map
-*.js.map
-
-# IDE
-.vscode/
-.idea/
-
-# Obsidian
-.obsidian/
-
-# OS
-.DS_Store
-Thumbs.db
+# Bun
+.bun/
+bun.lockb
 
 # Environment
 .env
 .env.local
 
-# Logs
-*.log
-npm-debug.log*
+# OS
+.DS_Store
+Thumbs.db
 
-# Testing
-coverage/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/settings.local.json
 
 # Planning
 .planning/
+
+# Obsidian
+.obsidian/
