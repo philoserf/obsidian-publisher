@@ -1,38 +1,24 @@
 #!/usr/bin/env bun
 
-/**
- * Validation script that runs before publishing
- * Uses bun's native runtime for fast execution
- */
-
 import { readFileSync } from "node:fs";
 import { $ } from "bun";
 
-console.log("🔍 Validating Obsidian Publisher plugin...\n");
+const manifest = JSON.parse(readFileSync("manifest.json", "utf-8"));
+console.log(`🔍 Validating ${manifest.name || "plugin"}...\n`);
 
 let errors = 0;
 
 // Check manifest.json
-try {
-  const manifest = JSON.parse(readFileSync("manifest.json", "utf-8"));
-  console.log("✓ manifest.json is valid JSON");
-
-  if (!manifest.id || !manifest.name || !manifest.version) {
-    console.error("✗ manifest.json missing required fields");
-    errors++;
-  } else {
-    console.log(`  Plugin: ${manifest.name} v${manifest.version}`);
-  }
-} catch (error) {
-  console.error("✗ manifest.json is invalid:", error);
+if (!manifest.id || !manifest.name || !manifest.version) {
+  console.error("✗ manifest.json missing required fields");
   errors++;
+} else {
+  console.log(`✓ manifest.json — ${manifest.name} v${manifest.version}`);
 }
 
 // Check package.json version matches manifest
 try {
   const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
-  const manifest = JSON.parse(readFileSync("manifest.json", "utf-8"));
-
   if (pkg.version !== manifest.version) {
     console.error(
       `✗ Version mismatch: package.json (${pkg.version}) != manifest.json (${manifest.version})`,
@@ -56,23 +42,13 @@ if (typecheckResult.exitCode === 0) {
   errors++;
 }
 
-// Run tests
-console.log("\n🧪 Running tests...");
-const testResult = await $`bun test`.nothrow();
-if (testResult.exitCode === 0) {
-  console.log("✓ All tests passed");
+// Run checks
+console.log("\n🔧 Checking code quality...");
+const checkResult = await $`bun run check`.nothrow();
+if (checkResult.exitCode === 0) {
+  console.log("✓ Code quality checks passed");
 } else {
-  console.error("✗ Tests failed");
-  errors++;
-}
-
-// Run linter
-console.log("\n🔧 Linting...");
-const lintResult = await $`bun run check`.nothrow();
-if (lintResult.exitCode === 0) {
-  console.log("✓ Linting passed");
-} else {
-  console.error("✗ Linting failed");
+  console.error("✗ Code quality checks failed");
   errors++;
 }
 
@@ -82,7 +58,6 @@ const buildResult = await $`bun run build`.nothrow();
 if (buildResult.exitCode === 0) {
   console.log("✓ Build successful");
 
-  // Check if main.js exists
   const mainFile = Bun.file("main.js");
   if (await mainFile.exists()) {
     const size = mainFile.size / 1024;

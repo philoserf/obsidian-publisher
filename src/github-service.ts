@@ -62,7 +62,12 @@ export class GitHubService {
       return "sha" in response.data ? response.data.sha : null;
     } catch (error) {
       // 404 means file doesn't exist, which is fine
-      if (error && typeof error === "object" && "status" in error && error.status === 404) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "status" in error &&
+        error.status === 404
+      ) {
         return null;
       }
       throw error;
@@ -102,7 +107,8 @@ export class GitHubService {
         params.branch = branch;
       }
 
-      const response = await this.octokit.repos.createOrUpdateFileContents(params);
+      const response =
+        await this.octokit.repos.createOrUpdateFileContents(params);
 
       // Return the HTML URL to the file
       return response.data.content?.html_url || "";
@@ -117,7 +123,11 @@ export class GitHubService {
   /**
    * Upload an image file to the repository
    */
-  async uploadImage(filename: string, content: ArrayBuffer, branch?: string): Promise<string> {
+  async uploadImage(
+    filename: string,
+    content: ArrayBuffer,
+    branch?: string,
+  ): Promise<string> {
     const path = `${this.settings.imageDir}/${filename}`;
     const base64Content = this.arrayBufferToBase64(content);
     const existingSha = await this.getFileSha(path, branch);
@@ -144,7 +154,8 @@ export class GitHubService {
         params.branch = branch;
       }
 
-      const response = await this.octokit.repos.createOrUpdateFileContents(params);
+      const response =
+        await this.octokit.repos.createOrUpdateFileContents(params);
 
       return response.data.content?.html_url || "";
     } catch (error) {
@@ -200,7 +211,9 @@ export class GitHubService {
       return response.data.object.sha;
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`Failed to get SHA for branch ${branch}: ${error.message}`);
+        throw new Error(
+          `Failed to get SHA for branch ${branch}: ${error.message}`,
+        );
       }
       throw error;
     }
@@ -226,7 +239,9 @@ export class GitHubService {
       return branchName;
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`Failed to create branch ${branchName}: ${error.message}`);
+        throw new Error(
+          `Failed to create branch ${branchName}: ${error.message}`,
+        );
       }
       throw error;
     }
@@ -279,7 +294,10 @@ export class GitHubService {
    * Generate a unique branch name for publishing
    */
   generateBranchName(prefix = "publish"): string {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, -5);
     return `${prefix}/${timestamp}`;
   }
 
@@ -300,7 +318,12 @@ export class GitHubService {
         return branchName;
       } catch (error) {
         // Check if error is 422 (branch already exists)
-        if (error && typeof error === "object" && "status" in error && error.status === 422) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "status" in error &&
+          error.status === 422
+        ) {
           // Branch already exists, try again with suffix
           continue;
         }

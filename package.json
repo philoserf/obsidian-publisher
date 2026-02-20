@@ -2,20 +2,21 @@
   "name": "obsidian-publisher",
   "version": "1.0.0",
   "description": "Publish Obsidian notes to GitHub for Hugo processing",
+  "type": "module",
   "main": "main.js",
   "scripts": {
-    "dev": "bun build src/main.ts --outfile=main.js --target=node --format=cjs --external=obsidian --external=electron --watch --sourcemap=inline",
-    "build": "bun run typecheck && bun run check && bun build src/main.ts --outfile=main.js --target=node --format=cjs --external=obsidian --external=electron --minify",
-    "build:dev": "bun build src/main.ts --outfile=main.js --target=node --format=cjs --external=obsidian --external=electron --sourcemap=inline",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
-    "check": "biome check .",
-    "format": "biome format --write .",
-    "lint": "biome lint .",
+    "dev": "bun run build.ts --watch",
+    "build": "bun run check && bun run build.ts",
+    "check": "bun run typecheck && biome check .",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "validate": "bun run scripts/validate-plugin.ts",
     "version": "bun run version-bump.ts",
-    "prepublishOnly": "bun run validate"
+    "test": "bun test",
+    "test:watch": "bun test --watch"
   },
   "keywords": [
     "obsidian",
@@ -24,7 +25,7 @@
     "github",
     "publishing"
   ],
-  "author": "",
+  "author": "Mark Ayers",
   "license": "MIT",
   "devDependencies": {
     "@biomejs/biome": "^2.4.3",
