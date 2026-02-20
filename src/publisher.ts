@@ -1,11 +1,7 @@
 import { Notice, type TFile, type Vault } from "obsidian";
 import { ContentProcessor } from "./content-processor";
 import { GitHubService } from "./github-service";
-import type {
-  BatchPublishResult,
-  PublishResult,
-  PublisherSettings,
-} from "./types";
+import type { BatchPublishResult, PublisherSettings, PublishResult } from "./types";
 
 export class Publisher {
   private vault: Vault;
@@ -127,9 +123,7 @@ export class Publisher {
   /**
    * Publish a single note to GitHub with branch and PR creation
    */
-  async publishNoteWithPR(
-    file: TFile,
-  ): Promise<PublishResult & { prUrl?: string }> {
+  async publishNoteWithPR(file: TFile): Promise<PublishResult & { prUrl?: string }> {
     let branchName: string | null = null;
 
     try {
@@ -262,8 +256,7 @@ export class Publisher {
           // Show progress
           new Notice(`Progress: ${results.length}/${publishableFiles.length}`);
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
+          const message = error instanceof Error ? error.message : "Unknown error";
           results.push({
             filePath: file.path,
             success: false,
@@ -317,16 +310,11 @@ export class Publisher {
   /**
    * Upload images referenced in a note
    */
-  private async uploadImages(
-    imageNames: string[],
-    branch?: string,
-  ): Promise<void> {
+  private async uploadImages(imageNames: string[], branch?: string): Promise<void> {
     for (const imageName of imageNames) {
       try {
         // Find the image file in the vault
-        const imageFile = this.vault
-          .getFiles()
-          .find((f) => f.name === imageName);
+        const imageFile = this.vault.getFiles().find((f) => f.name === imageName);
 
         if (!imageFile) {
           console.warn(`Image not found in vault: ${imageName}`);
@@ -337,15 +325,10 @@ export class Publisher {
         const imageContent = await this.vault.readBinary(imageFile);
 
         // Sanitize filename
-        const sanitizedName =
-          this.contentProcessor.sanitizeImageName(imageName);
+        const sanitizedName = this.contentProcessor.sanitizeImageName(imageName);
 
         // Upload to GitHub
-        await this.githubService.uploadImage(
-          sanitizedName,
-          imageContent,
-          branch,
-        );
+        await this.githubService.uploadImage(sanitizedName, imageContent, branch);
       } catch (error) {
         console.error(`Failed to upload image ${imageName}:`, error);
         // Don't throw - continue with other images

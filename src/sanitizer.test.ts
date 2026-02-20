@@ -50,9 +50,7 @@ describe("Filename Sanitization", () => {
   });
 
   test("removes consecutive hyphens", () => {
-    expect(sanitizeFilename("too   many   spaces.md")).toBe(
-      "too-many-spaces.md",
-    );
+    expect(sanitizeFilename("too   many   spaces.md")).toBe("too-many-spaces.md");
   });
 
   test("handles files without extensions", () => {

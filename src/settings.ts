@@ -92,24 +92,18 @@ export class PublisherSettingTab extends PluginSettingTab {
     // Use Pull Requests
     new Setting(containerEl)
       .setName("Use Pull Requests")
-      .setDesc(
-        "Create pull requests instead of committing directly to the base branch",
-      )
+      .setDesc("Create pull requests instead of committing directly to the base branch")
       .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.usePullRequests)
-          .onChange(async (value) => {
-            this.plugin.settings.usePullRequests = value;
-            await this.plugin.saveSettings();
-          }),
+        toggle.setValue(this.plugin.settings.usePullRequests).onChange(async (value) => {
+          this.plugin.settings.usePullRequests = value;
+          await this.plugin.saveSettings();
+        }),
       );
 
     // Base Branch
     new Setting(containerEl)
       .setName("Base Branch")
-      .setDesc(
-        "Branch to create pull requests against (e.g., 'main', 'master')",
-      )
+      .setDesc("Branch to create pull requests against (e.g., 'main', 'master')")
       .addText((text) =>
         text
           .setPlaceholder("main")
@@ -142,12 +136,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       .setName("Remove 'publish' field")
       .setDesc("Remove 'publish: true' from frontmatter when publishing")
       .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.removePublishFlag)
-          .onChange(async (value) => {
-            this.plugin.settings.removePublishFlag = value;
-            await this.plugin.saveSettings();
-          }),
+        toggle.setValue(this.plugin.settings.removePublishFlag).onChange(async (value) => {
+          this.plugin.settings.removePublishFlag = value;
+          await this.plugin.saveSettings();
+        }),
       );
 
     // Frontmatter Template
@@ -159,15 +151,10 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).addTextArea((text) => {
       text
-        .setPlaceholder(
-          "author: Your Name\ncategories: [blog]\ntags: [obsidian]",
-        )
-        .setValue(
-          this.serializeFrontmatter(this.plugin.settings.frontmatterTemplate),
-        )
+        .setPlaceholder("author: Your Name\ncategories: [blog]\ntags: [obsidian]")
+        .setValue(this.serializeFrontmatter(this.plugin.settings.frontmatterTemplate))
         .onChange(async (value) => {
-          this.plugin.settings.frontmatterTemplate =
-            this.parseFrontmatter(value);
+          this.plugin.settings.frontmatterTemplate = this.parseFrontmatter(value);
           await this.plugin.saveSettings();
         });
       text.inputEl.rows = 6;
