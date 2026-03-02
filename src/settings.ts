@@ -139,8 +139,8 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     // Remove Publish Flag
     new Setting(containerEl)
-      .setName("Remove 'publish' field")
-      .setDesc("Remove 'publish: true' from frontmatter when publishing")
+      .setName("Remove 'status' field")
+      .setDesc("Remove 'status: published' from frontmatter when publishing")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.removePublishFlag)

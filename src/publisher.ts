@@ -28,12 +28,12 @@ export class Publisher {
       // Read file content
       const content = await this.vault.read(file);
 
-      // Check if file has publish: true in frontmatter
+      // Check if file has status: published in frontmatter
       if (!this.hasPublishFlag(content)) {
         return {
           filePath: file.path,
           success: false,
-          error: "File does not have 'publish: true' in frontmatter",
+          error: "File does not have 'status: published' in frontmatter",
         };
       }
 
@@ -68,7 +68,7 @@ export class Publisher {
   }
 
   /**
-   * Publish all notes with publish: true
+   * Publish all notes with status: published
    */
   async publishAll(): Promise<BatchPublishResult> {
     const markdownFiles = this.vault.getMarkdownFiles();
@@ -76,7 +76,7 @@ export class Publisher {
 
     new Notice("Scanning vault for publishable notes...");
 
-    // Filter files with publish: true
+    // Filter files with status: published
     const publishableFiles: TFile[] = [];
     for (const file of markdownFiles) {
       try {
@@ -90,7 +90,7 @@ export class Publisher {
     }
 
     if (publishableFiles.length === 0) {
-      new Notice("No files with 'publish: true' found");
+      new Notice("No files with 'status: published' found");
       return {
         total: 0,
         successful: 0,
@@ -136,12 +136,12 @@ export class Publisher {
       // Read file content
       const content = await this.vault.read(file);
 
-      // Check if file has publish: true in frontmatter
+      // Check if file has status: published in frontmatter
       if (!this.hasPublishFlag(content)) {
         return {
           filePath: file.path,
           success: false,
-          error: "File does not have 'publish: true' in frontmatter",
+          error: "File does not have 'status: published' in frontmatter",
         };
       }
 
@@ -194,7 +194,7 @@ export class Publisher {
   }
 
   /**
-   * Publish all notes with publish: true to a single branch and PR
+   * Publish all notes with status: published to a single branch and PR
    */
   async publishAllWithPR(): Promise<BatchPublishResult & { prUrl?: string }> {
     const markdownFiles = this.vault.getMarkdownFiles();
@@ -203,7 +203,7 @@ export class Publisher {
 
     new Notice("Scanning vault for publishable notes...");
 
-    // Filter files with publish: true
+    // Filter files with status: published
     const publishableFiles: TFile[] = [];
     for (const file of markdownFiles) {
       try {
@@ -217,7 +217,7 @@ export class Publisher {
     }
 
     if (publishableFiles.length === 0) {
-      new Notice("No files with 'publish: true' found");
+      new Notice("No files with 'status: published' found");
       return {
         total: 0,
         successful: 0,
@@ -354,7 +354,7 @@ export class Publisher {
   }
 
   /**
-   * Check if content has publish: true in frontmatter
+   * Check if content has status: published in frontmatter
    */
   private hasPublishFlag(content: string): boolean {
     const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
@@ -365,8 +365,7 @@ export class Publisher {
     }
 
     const frontmatter = match[1];
-    // Simple check for publish: true (could be more robust)
-    return /^publish:\s*true\s*$/m.test(frontmatter);
+    return /^status:\s*published\s*$/m.test(frontmatter);
   }
 
   /**

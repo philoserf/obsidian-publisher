@@ -60,7 +60,7 @@ Existing users default to `usePullRequests = false` (preserves old behavior). Ne
 - **Wikilinks:** `[[Page Name]]` → `[Page Name](page-name.md)` | `[[Page|Custom]]` → `[Custom](page-name.md)`
 - **Images:** `![[image.png]]` → `![image.png](/images/image.png)`
 - **Filename sanitization:** Lowercase, spaces→hyphens, remove special chars (keep alphanumeric/hyphens/underscores/dots), collapse consecutive hyphens, trim edges. Empty → `untitled`
-- **Frontmatter:** Removes `publish` field (if configured), merges template fields, ensures `date` field exists
+- **Frontmatter:** Removes `status` field (if configured), merges template fields, ensures `date` field exists
 
 ## Common Patterns
 

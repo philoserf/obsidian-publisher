@@ -6,7 +6,7 @@ Hugo-compatible markdown and uploads files via the GitHub API.
 
 ## Features
 
-- Publish individual notes or batch publish all notes with `publish: true`
+- Publish individual notes or batch publish all notes with `status: published`
 - Convert `[[wikilinks]]` to standard markdown links
 - Convert `![[images]]` to Hugo-compatible image paths
 - Sanitize filenames for Hugo URLs (lowercase, hyphens, URL-safe)
@@ -61,7 +61,7 @@ In the plugin settings, configure:
 - **Content Directory**: Path to Hugo content (e.g., `content/posts`)
 - **Image Directory**: Path to Hugo static images (e.g., `static/images`)
 - **Additional Frontmatter**: Optional YAML fields to add to all published notes
-- **Remove 'publish' field**: Whether to remove `publish: true` from frontmatter
+- **Remove 'status' field**: Whether to remove `status: published` from frontmatter
 
 ### Test Connection
 
@@ -72,12 +72,12 @@ and repository access.
 
 ### Publishing a Single Note
 
-1. Add `publish: true` to the note's frontmatter:
+1. Add `status: published` to the note's frontmatter:
 
    ```yaml
    ---
    title: My Blog Post
-   publish: true
+   status: published
    ---
    ```
 
@@ -87,7 +87,7 @@ and repository access.
 
 ### Publishing All Notes
 
-1. Ensure all notes you want to publish have `publish: true` in frontmatter
+1. Ensure all notes you want to publish have `status: published` in frontmatter
 2. Open the command palette (Cmd/Ctrl + P)
 3. Run "Publish all notes to GitHub"
 4. View progress notifications and final summary
@@ -124,7 +124,7 @@ Filenames are transformed for Hugo URLs:
 - Existing frontmatter is preserved
 - Additional template fields are added (if not already present)
 - `date` field is added if missing (current timestamp)
-- `publish: true` is optionally removed based on settings
+- `status: published` is optionally removed based on settings
 
 ## Development
 
