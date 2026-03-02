@@ -77,9 +77,9 @@ export class ContentProcessor {
   ): Record<string, unknown> {
     const processed = { ...frontmatter };
 
-    // Remove publish field if configured
+    // Remove status field if configured
     if (this.settings.removePublishFlag) {
-      processed.publish = undefined;
+      processed.status = undefined;
     }
 
     // Add template fields
