@@ -16,16 +16,8 @@
     "validate": "bun run scripts/validate-plugin.ts",
     "version": "bun run version-bump.ts",
     "deploy": "cp main.js manifest.json ~/source/philoserf/notes/.obsidian/plugins/publisher/",
-    "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test": "bun test"
   },
-  "keywords": [
-    "obsidian",
-    "obsidian-plugin",
-    "hugo",
-    "github",
-    "publishing"
-  ],
   "author": "Mark Ayers",
   "license": "MIT",
   "devDependencies": {
