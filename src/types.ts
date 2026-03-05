@@ -85,15 +85,3 @@ export interface BatchPublishResult {
   /** URL to the pull request if created */
   prUrl?: string;
 }
-
-/**
- * GitHub file response
- */
-export interface GitHubFile {
-  /** File SHA for updates */
-  sha: string;
-  /** File content (base64 encoded) */
-  content: string;
-  /** Download URL */
-  download_url: string;
-}
