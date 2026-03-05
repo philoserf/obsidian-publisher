@@ -22,8 +22,8 @@ export class ContentProcessor {
 
     // Convert content
     let processedBody = body;
-    processedBody = this.convertWikilinks(processedBody);
     processedBody = this.convertImageReferences(processedBody);
+    processedBody = this.convertWikilinks(processedBody);
 
     // Reassemble content with frontmatter
     const processedContent = this.assembleFrontmatter(
