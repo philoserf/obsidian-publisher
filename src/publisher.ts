@@ -334,7 +334,8 @@ export class Publisher {
   private async uploadImages(
     imageNames: string[],
     branch?: string,
-  ): Promise<void> {
+  ): Promise<string[]> {
+    const failedImages: string[] = [];
     const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
 
     for (const imageName of imageNames) {
@@ -344,6 +345,7 @@ export class Publisher {
 
         if (!imageFile) {
           console.warn(`Image not found in vault: ${imageName}`);
+          failedImages.push(imageName);
           continue;
         }
 
@@ -362,9 +364,17 @@ export class Publisher {
         );
       } catch (error) {
         console.error(`Failed to upload image ${imageName}:`, error);
-        // Don't throw - continue with other images
+        failedImages.push(imageName);
       }
     }
+
+    if (failedImages.length > 0) {
+      new Notice(
+        `Warning: ${failedImages.length} image(s) failed to upload: ${failedImages.join(", ")}`,
+      );
+    }
+
+    return failedImages;
   }
 
   /**
