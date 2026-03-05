@@ -21,107 +21,39 @@ export class Publisher {
   }
 
   /**
-   * Publish a single note to GitHub
+   * Publish a single note to GitHub (direct commit)
    */
   async publishNote(file: TFile): Promise<PublishResult> {
-    try {
-      // Read file content
-      const content = await this.vault.read(file);
-
-      // Check if file has status: published in frontmatter
-      if (!this.hasPublishFlag(content)) {
-        return {
-          filePath: file.path,
-          success: false,
-          error: "File does not have 'status: published' in frontmatter",
-        };
-      }
-
-      // Process content
-      const processed = this.contentProcessor.process(content, file.name);
-
-      // Upload images
-      await this.uploadImages(processed.images);
-
-      // Upload markdown file
-      const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      const commitMessage = `Publish: ${file.basename}`;
-      const url = await this.githubService.createOrUpdateFile(
-        targetPath,
-        processed.content,
-        commitMessage,
-      );
-
-      return {
-        filePath: file.path,
-        success: true,
-        url,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      return {
-        filePath: file.path,
-        success: false,
-        error: message,
-      };
-    }
+    return this.publishFileToTarget(file);
   }
 
   /**
-   * Publish all notes with status: published
+   * Publish all notes with status: published (direct commit)
    */
   async publishAll(): Promise<BatchPublishResult> {
-    const markdownFiles = this.vault.getMarkdownFiles();
-    const results: PublishResult[] = [];
-
-    new Notice("Scanning vault for publishable notes...");
-
-    // Filter files with status: published
-    const publishableFiles: TFile[] = [];
-    for (const file of markdownFiles) {
-      try {
-        const content = await this.vault.read(file);
-        if (this.hasPublishFlag(content)) {
-          publishableFiles.push(file);
-        }
-      } catch (error) {
-        console.error(`Failed to read file ${file.path}:`, error);
-      }
-    }
-
+    const publishableFiles = await this.getPublishableFiles();
     if (publishableFiles.length === 0) {
       new Notice("No files with 'status: published' found");
-      return {
-        total: 0,
-        successful: 0,
-        failed: 0,
-        results: [],
-      };
+      return { total: 0, successful: 0, failed: 0, results: [] };
     }
 
     new Notice(`Publishing ${publishableFiles.length} notes...`);
+    const baseBranch = this.settings.baseBranch || "main";
 
-    // Publish each file
-    for (const file of publishableFiles) {
-      const result = await this.publishNote(file);
-      results.push(result);
+    const { results, fileEntries } = await this.prepareBatch(publishableFiles);
 
-      // Show progress
+    if (fileEntries.length > 0) {
       const successCount = results.filter((r) => r.success).length;
-      new Notice(
-        `Progress: ${results.length}/${publishableFiles.length} (${successCount} successful)`,
+      await this.githubService.commitFiles(
+        fileEntries,
+        `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
+        baseBranch,
       );
     }
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
-
-    return {
-      total: results.length,
-      successful,
-      failed,
-      results,
-    };
+    return { total: results.length, successful, failed, results };
   }
 
   /**
@@ -130,46 +62,35 @@ export class Publisher {
   async publishNoteWithPR(
     file: TFile,
   ): Promise<PublishResult & { prUrl?: string }> {
+    if (!(await this.canPublish(file))) {
+      return {
+        filePath: file.path,
+        success: false,
+        error: "File does not have 'status: published' in frontmatter",
+      };
+    }
+
     let branchName: string | null = null;
 
     try {
-      // Read file content
-      const content = await this.vault.read(file);
-
-      // Check if file has status: published in frontmatter
-      if (!this.hasPublishFlag(content)) {
-        return {
-          filePath: file.path,
-          success: false,
-          error: "File does not have 'status: published' in frontmatter",
-        };
-      }
-
-      // Generate and create branch
       branchName = await this.githubService.createBranchWithRetry(
         "publish",
         this.settings.baseBranch || "main",
       );
 
-      // Process content
-      const processed = this.contentProcessor.process(content, file.name);
+      const result = await this.publishFileToTarget(file, branchName);
 
-      // Upload images to branch
-      await this.uploadImages(processed.images, branchName);
+      if (!result.success) {
+        try {
+          await this.githubService.deleteBranch(branchName);
+        } catch {
+          // Best-effort cleanup
+        }
+        return result;
+      }
 
-      // Upload markdown file to branch
-      const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      const commitMessage = `Publish: ${file.basename}`;
-      await this.githubService.createOrUpdateFile(
-        targetPath,
-        processed.content,
-        commitMessage,
-        branchName,
-      );
-
-      // Create pull request
       const prTitle = `Publish: ${file.basename}`;
-      const prBody = `Published from Obsidian\n\n**File:** ${file.path}\n**Images:** ${processed.images.length}`;
+      const prBody = `Published from Obsidian\n\n**File:** ${file.path}`;
       const pr = await this.githubService.createPullRequest(
         branchName,
         this.settings.baseBranch || "main",
@@ -178,25 +99,17 @@ export class Publisher {
         this.settings.prLabels || ["published-from-obsidian"],
       );
 
-      return {
-        filePath: file.path,
-        success: true,
-        prUrl: pr.url,
-      };
+      return { ...result, prUrl: pr.url };
     } catch (error) {
       if (branchName) {
         try {
           await this.githubService.deleteBranch(branchName);
         } catch {
-          // Best-effort cleanup — don't mask the original error
+          // Best-effort cleanup
         }
       }
       const message = error instanceof Error ? error.message : "Unknown error";
-      return {
-        filePath: file.path,
-        success: false,
-        error: message,
-      };
+      return { filePath: file.path, success: false, error: message };
     }
   }
 
@@ -204,82 +117,33 @@ export class Publisher {
    * Publish all notes with status: published to a single branch and PR
    */
   async publishAllWithPR(): Promise<BatchPublishResult & { prUrl?: string }> {
-    const markdownFiles = this.vault.getMarkdownFiles();
-    const results: PublishResult[] = [];
-    let branchName: string | null = null;
-
-    new Notice("Scanning vault for publishable notes...");
-
-    // Filter files with status: published
-    const publishableFiles: TFile[] = [];
-    for (const file of markdownFiles) {
-      try {
-        const content = await this.vault.read(file);
-        if (this.hasPublishFlag(content)) {
-          publishableFiles.push(file);
-        }
-      } catch (error) {
-        console.error(`Failed to read file ${file.path}:`, error);
-      }
-    }
-
+    const publishableFiles = await this.getPublishableFiles();
     if (publishableFiles.length === 0) {
       new Notice("No files with 'status: published' found");
-      return {
-        total: 0,
-        successful: 0,
-        failed: 0,
-        results: [],
-      };
+      return { total: 0, successful: 0, failed: 0, results: [] };
     }
 
     new Notice(`Publishing ${publishableFiles.length} notes to branch...`);
+    let branchName: string | null = null;
 
     try {
-      // Generate and create branch
       branchName = await this.githubService.createBranchWithRetry(
         "publish-batch",
         this.settings.baseBranch || "main",
       );
 
-      // Publish each file to the branch
-      for (const file of publishableFiles) {
-        try {
-          const content = await this.vault.read(file);
-          const processed = this.contentProcessor.process(content, file.name);
+      const { results, fileEntries } =
+        await this.prepareBatch(publishableFiles);
 
-          // Upload images to branch
-          await this.uploadImages(processed.images, branchName);
-
-          // Upload markdown file to branch
-          const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-          const commitMessage = `Publish: ${file.basename}`;
-          await this.githubService.createOrUpdateFile(
-            targetPath,
-            processed.content,
-            commitMessage,
-            branchName,
-          );
-
-          results.push({
-            filePath: file.path,
-            success: true,
-          });
-
-          // Show progress
-          new Notice(`Progress: ${results.length}/${publishableFiles.length}`);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
-          results.push({
-            filePath: file.path,
-            success: false,
-            error: message,
-          });
-        }
+      if (fileEntries.length > 0) {
+        const successCount = results.filter((r) => r.success).length;
+        await this.githubService.commitFiles(
+          fileEntries,
+          `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
+          branchName,
+        );
       }
 
-      // Create pull request
       const successful = results.filter((r) => r.success).length;
       const failed = results.filter((r) => !r.success).length;
 
@@ -310,26 +174,176 @@ export class Publisher {
         try {
           await this.githubService.deleteBranch(branchName);
         } catch {
-          // Best-effort cleanup — don't mask the original error
+          // Best-effort cleanup
         }
       }
       const message = error instanceof Error ? error.message : "Unknown error";
       new Notice(`Failed to publish: ${message}`);
-
-      const successful = results.filter((r) => r.success).length;
-      const failed = results.filter((r) => !r.success).length;
-
-      return {
-        total: results.length,
-        successful,
-        failed,
-        results,
-      };
+      return { total: 0, successful: 0, failed: 0, results: [] };
     }
   }
 
   /**
-   * Upload images referenced in a note
+   * Validate settings before publishing
+   */
+  validateSettings(): string | null {
+    if (!this.settings.githubToken) {
+      return "GitHub token is not configured";
+    }
+    if (!this.settings.repoOwner || !this.settings.repoName) {
+      return "Repository owner and name must be configured";
+    }
+    if (!this.settings.contentDir) {
+      return "Content directory must be configured";
+    }
+    if (!this.settings.imageDir) {
+      return "Image directory must be configured";
+    }
+    return null;
+  }
+
+  // === Private helpers ===
+
+  /**
+   * Publish a single file to a target branch (or default branch)
+   */
+  private async publishFileToTarget(
+    file: TFile,
+    branch?: string,
+  ): Promise<PublishResult> {
+    try {
+      const content = await this.vault.read(file);
+
+      if (!this.hasPublishFlag(content)) {
+        return {
+          filePath: file.path,
+          success: false,
+          error: "File does not have 'status: published' in frontmatter",
+        };
+      }
+
+      const processed = this.contentProcessor.process(content, file.name);
+      await this.uploadImages(processed.images, branch);
+
+      const targetPath = `${this.settings.contentDir}/${processed.filename}`;
+      const url = await this.githubService.createOrUpdateFile(
+        targetPath,
+        processed.content,
+        `Publish: ${file.basename}`,
+        branch,
+      );
+
+      return { filePath: file.path, success: true, url };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return { filePath: file.path, success: false, error: message };
+    }
+  }
+
+  /**
+   * Scan the vault for files with status: published
+   */
+  private async getPublishableFiles(): Promise<TFile[]> {
+    const markdownFiles = this.vault.getMarkdownFiles();
+    const publishableFiles: TFile[] = [];
+
+    new Notice("Scanning vault for publishable notes...");
+
+    for (const file of markdownFiles) {
+      try {
+        const content = await this.vault.read(file);
+        if (this.hasPublishFlag(content)) {
+          publishableFiles.push(file);
+        }
+      } catch (error) {
+        console.error(`Failed to read file ${file.path}:`, error);
+      }
+    }
+
+    return publishableFiles;
+  }
+
+  /**
+   * Check if a file can be published (without throwing)
+   */
+  private async canPublish(file: TFile): Promise<boolean> {
+    try {
+      const content = await this.vault.read(file);
+      return this.hasPublishFlag(content);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Prepare all files for a batch commit.
+   * Returns per-file results and collected file entries for commitFiles().
+   */
+  private async prepareBatch(files: TFile[]): Promise<{
+    results: PublishResult[];
+    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
+  }> {
+    const results: PublishResult[] = [];
+    const entryMap = new Map<string, string | ArrayBuffer>();
+    const allFailedImages: string[] = [];
+    const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
+
+    for (const file of files) {
+      try {
+        const content = await this.vault.read(file);
+        const processed = this.contentProcessor.process(content, file.name);
+
+        // Add markdown entry
+        const targetPath = `${this.settings.contentDir}/${processed.filename}`;
+        entryMap.set(targetPath, processed.content);
+
+        // Resolve images
+        for (const imageName of processed.images) {
+          const imageFile = filesByName.get(imageName);
+          if (!imageFile) {
+            allFailedImages.push(imageName);
+            continue;
+          }
+          try {
+            const imageContent = await this.vault.readBinary(imageFile);
+            const sanitizedName =
+              this.contentProcessor.sanitizeImageName(imageName);
+            const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+            entryMap.set(imgPath, imageContent);
+          } catch (error) {
+            console.error(`Failed to read image ${imageName}:`, error);
+            allFailedImages.push(imageName);
+          }
+        }
+
+        results.push({ filePath: file.path, success: true });
+        new Notice(`Prepared: ${results.length}/${files.length}`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        results.push({
+          filePath: file.path,
+          success: false,
+          error: message,
+        });
+      }
+    }
+
+    if (allFailedImages.length > 0) {
+      const unique = [...new Set(allFailedImages)];
+      new Notice(
+        `Warning: ${unique.length} image(s) failed: ${unique.join(", ")}`,
+      );
+    }
+
+    const fileEntries = Array.from(entryMap.entries()).map(
+      ([path, content]) => ({ path, content }),
+    );
+    return { results, fileEntries };
+  }
+
+  /**
+   * Upload images for single-file publish (Contents API, one commit per image)
    */
   private async uploadImages(
     imageNames: string[],
@@ -340,7 +354,6 @@ export class Publisher {
 
     for (const imageName of imageNames) {
       try {
-        // Find the image file in the vault
         const imageFile = filesByName.get(imageName);
 
         if (!imageFile) {
@@ -349,14 +362,10 @@ export class Publisher {
           continue;
         }
 
-        // Read image content
         const imageContent = await this.vault.readBinary(imageFile);
-
-        // Sanitize filename
         const sanitizedName =
           this.contentProcessor.sanitizeImageName(imageName);
 
-        // Upload to GitHub
         await this.githubService.uploadImage(
           sanitizedName,
           imageContent,
@@ -390,28 +399,5 @@ export class Publisher {
 
     const frontmatter = match[1];
     return /^status:\s*published\s*$/m.test(frontmatter);
-  }
-
-  /**
-   * Validate settings before publishing
-   */
-  validateSettings(): string | null {
-    if (!this.settings.githubToken) {
-      return "GitHub token is not configured";
-    }
-
-    if (!this.settings.repoOwner || !this.settings.repoName) {
-      return "Repository owner and name must be configured";
-    }
-
-    if (!this.settings.contentDir) {
-      return "Content directory must be configured";
-    }
-
-    if (!this.settings.imageDir) {
-      return "Image directory must be configured";
-    }
-
-    return null;
   }
 }
