@@ -286,6 +286,75 @@ export class GitHubService {
   }
 
   /**
+   * Commit multiple files in a single atomic commit using the Git Trees API
+   */
+  async commitFiles(
+    files: Array<{ path: string; content: string | ArrayBuffer }>,
+    message: string,
+    branch: string,
+  ): Promise<void> {
+    try {
+      const branchSha = await this.getBranchSha(branch);
+
+      const commitData = await this.octokit.rest.git.getCommit({
+        owner: this.settings.repoOwner,
+        repo: this.settings.repoName,
+        commit_sha: branchSha,
+      });
+
+      const treeEntries = await Promise.all(
+        files.map(async (file) => {
+          const base64 =
+            typeof file.content === "string"
+              ? this.stringToBase64(file.content)
+              : this.arrayBufferToBase64(file.content);
+
+          const blob = await this.octokit.rest.git.createBlob({
+            owner: this.settings.repoOwner,
+            repo: this.settings.repoName,
+            content: base64,
+            encoding: "base64",
+          });
+
+          return {
+            path: file.path,
+            mode: "100644" as const,
+            type: "blob" as const,
+            sha: blob.data.sha,
+          };
+        }),
+      );
+
+      const newTree = await this.octokit.rest.git.createTree({
+        owner: this.settings.repoOwner,
+        repo: this.settings.repoName,
+        base_tree: commitData.data.tree.sha,
+        tree: treeEntries,
+      });
+
+      const newCommit = await this.octokit.rest.git.createCommit({
+        owner: this.settings.repoOwner,
+        repo: this.settings.repoName,
+        message,
+        tree: newTree.data.sha,
+        parents: [branchSha],
+      });
+
+      await this.octokit.rest.git.updateRef({
+        owner: this.settings.repoOwner,
+        repo: this.settings.repoName,
+        ref: `heads/${branch}`,
+        sha: newCommit.data.sha,
+      });
+    } catch (error) {
+      if (error instanceof RequestError) {
+        throw new Error(`Failed to commit files: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Delete a branch from the repository
    */
   async deleteBranch(branchName: string): Promise<void> {
