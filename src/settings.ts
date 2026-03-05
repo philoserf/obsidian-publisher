@@ -70,7 +70,9 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("content/posts")
           .setValue(this.plugin.settings.contentDir)
           .onChange(async (value) => {
-            this.plugin.settings.contentDir = value.trim();
+            this.plugin.settings.contentDir = value
+              .trim()
+              .replace(/^\/+|\/+$/g, "");
             await this.plugin.saveSettings();
           }),
       );
@@ -84,7 +86,9 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("static/images")
           .setValue(this.plugin.settings.imageDir)
           .onChange(async (value) => {
-            this.plugin.settings.imageDir = value.trim();
+            this.plugin.settings.imageDir = value
+              .trim()
+              .replace(/^\/+|\/+$/g, "");
             await this.plugin.saveSettings();
           }),
       );
