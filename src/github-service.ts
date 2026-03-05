@@ -291,6 +291,17 @@ export class GitHubService {
   }
 
   /**
+   * Delete a branch from the repository
+   */
+  async deleteBranch(branchName: string): Promise<void> {
+    await this.octokit.rest.git.deleteRef({
+      owner: this.settings.repoOwner,
+      repo: this.settings.repoName,
+      ref: `heads/${branchName}`,
+    });
+  }
+
+  /**
    * Generate a unique branch name for publishing
    */
   generateBranchName(prefix = "publish"): string {

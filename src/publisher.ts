@@ -184,6 +184,13 @@ export class Publisher {
         prUrl: pr.url,
       };
     } catch (error) {
+      if (branchName) {
+        try {
+          await this.githubService.deleteBranch(branchName);
+        } catch {
+          // Best-effort cleanup — don't mask the original error
+        }
+      }
       const message = error instanceof Error ? error.message : "Unknown error";
       return {
         filePath: file.path,
@@ -299,6 +306,13 @@ export class Publisher {
         prUrl: pr.url,
       };
     } catch (error) {
+      if (branchName) {
+        try {
+          await this.githubService.deleteBranch(branchName);
+        } catch {
+          // Best-effort cleanup — don't mask the original error
+        }
+      }
       const message = error instanceof Error ? error.message : "Unknown error";
       new Notice(`Failed to publish: ${message}`);
 
