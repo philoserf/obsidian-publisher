@@ -335,12 +335,12 @@ export class Publisher {
     imageNames: string[],
     branch?: string,
   ): Promise<void> {
+    const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
+
     for (const imageName of imageNames) {
       try {
         // Find the image file in the vault
-        const imageFile = this.vault
-          .getFiles()
-          .find((f) => f.name === imageName);
+        const imageFile = filesByName.get(imageName);
 
         if (!imageFile) {
           console.warn(`Image not found in vault: ${imageName}`);

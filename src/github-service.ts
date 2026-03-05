@@ -170,13 +170,12 @@ export class GitHubService {
    * Convert string to base64 (cross-platform)
    */
   private stringToBase64(str: string): string {
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(str);
-    let binary = "";
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte);
+    const bytes = new TextEncoder().encode(str);
+    const chunks: string[] = [];
+    for (let i = 0; i < bytes.length; i += 8192) {
+      chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
     }
-    return btoa(binary);
+    return btoa(chunks.join(""));
   }
 
   /**
@@ -184,11 +183,11 @@ export class GitHubService {
    */
   private arrayBufferToBase64(buffer: ArrayBuffer): string {
     const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte);
+    const chunks: string[] = [];
+    for (let i = 0; i < bytes.length; i += 8192) {
+      chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
     }
-    return btoa(binary);
+    return btoa(chunks.join(""));
   }
 
   /**
