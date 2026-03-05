@@ -170,9 +170,7 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).addTextArea((text) => {
       text
-        .setPlaceholder(
-          "author: Your Name\ncategories: [blog]\ntags: [obsidian]",
-        )
+        .setPlaceholder("author: Your Name\ntags: [obsidian]")
         .setValue(
           this.serializeFrontmatter(this.plugin.settings.frontmatterTemplate),
         )
