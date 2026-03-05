@@ -1,0 +1,185 @@
+import { describe, expect, test } from "bun:test";
+import { ContentProcessor } from "./content-processor";
+import type { PublisherSettings } from "./types";
+import { DEFAULT_SETTINGS } from "./types";
+
+function makeProcessor(
+  overrides: Partial<PublisherSettings> = {},
+): ContentProcessor {
+  return new ContentProcessor({ ...DEFAULT_SETTINGS, ...overrides });
+}
+
+function wrap(frontmatter: string, body: string): string {
+  return `---\n${frontmatter}\n---\n${body}`;
+}
+
+describe("Wikilink conversion", () => {
+  const cp = makeProcessor();
+
+  test("converts simple wikilink", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "See [[Page Name]] here"),
+      "test.md",
+    );
+    expect(result.content).toContain("[Page Name](page-name)");
+  });
+
+  test("converts wikilink with display text", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "See [[Page|Custom Text]] here"),
+      "test.md",
+    );
+    expect(result.content).toContain("[Custom Text](page)");
+  });
+
+  test("sanitizes wikilink target", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "[[My Cool Page]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("[My Cool Page](my-cool-page)");
+  });
+
+  test("handles multiple wikilinks", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "[[One]] and [[Two]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("[One](one)");
+    expect(result.content).toContain("[Two](two)");
+  });
+});
+
+describe("Image reference conversion", () => {
+  const cp = makeProcessor();
+
+  test("converts image reference", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[photo.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![photo.png](/images/photo.png)");
+  });
+
+  test("sanitizes image filename", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[My Photo.jpg]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![My Photo.jpg](/images/my-photo.jpg)");
+  });
+
+  test("extracts image names", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[a.png]] text ![[b.jpg]]"),
+      "test.md",
+    );
+    expect(result.images).toEqual(["a.png", "b.jpg"]);
+  });
+
+  test("no images returns empty array", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "no images here"),
+      "test.md",
+    );
+    expect(result.images).toEqual([]);
+  });
+});
+
+describe("Frontmatter processing", () => {
+  test("adds date when missing", () => {
+    const cp = makeProcessor();
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "body"),
+      "test.md",
+    );
+    expect(result.frontmatter.date).toBeDefined();
+  });
+
+  test("preserves existing date", () => {
+    const cp = makeProcessor();
+    const result = cp.process(
+      wrap("title: Test\ndate: 2026-01-01\nstatus: published", "body"),
+      "test.md",
+    );
+    expect(result.frontmatter.date).toBe("2026-01-01");
+  });
+
+  test("removes status field when removePublishFlag is true", () => {
+    const cp = makeProcessor({ removePublishFlag: true });
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "body"),
+      "test.md",
+    );
+    expect(result.frontmatter.status).toBeUndefined();
+    expect("status" in result.frontmatter).toBe(false);
+  });
+
+  test("keeps status field when removePublishFlag is false", () => {
+    const cp = makeProcessor({ removePublishFlag: false });
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "body"),
+      "test.md",
+    );
+    expect(result.frontmatter.status).toBe("published");
+  });
+
+  test("merges template fields without overriding existing", () => {
+    const cp = makeProcessor({
+      frontmatterTemplate: { author: "Mark", tags: ["obsidian"] },
+    });
+    const result = cp.process(
+      wrap("title: Existing\nauthor: Someone Else\nstatus: published", "body"),
+      "test.md",
+    );
+    expect(result.frontmatter.author).toBe("Someone Else");
+    expect(result.frontmatter.tags).toEqual(["obsidian"]);
+  });
+
+  test("adds template fields when not present", () => {
+    const cp = makeProcessor({
+      frontmatterTemplate: { author: "Mark" },
+    });
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "body"),
+      "test.md",
+    );
+    expect(result.frontmatter.author).toBe("Mark");
+  });
+});
+
+describe("Filename sanitization", () => {
+  const cp = makeProcessor();
+
+  test("converts to lowercase with hyphens", () => {
+    expect(cp.sanitizeFilename("My Blog Post.md")).toBe("my-blog-post.md");
+  });
+
+  test("removes special characters", () => {
+    expect(cp.sanitizeFilename("Special!@#$%Chars.md")).toBe("specialchars.md");
+  });
+
+  test("handles empty result", () => {
+    expect(cp.sanitizeFilename("@#$%.md")).toBe("untitled.md");
+  });
+});
+
+describe("Full process pipeline", () => {
+  test("transforms complete note", () => {
+    const cp = makeProcessor({ removePublishFlag: true });
+    const input = wrap(
+      "title: My Post\nstatus: published",
+      "Hello [[World]]!\n\n![[screenshot.png]]\n",
+    );
+    const result = cp.process(input, "My Post.md");
+
+    expect(result.filename).toBe("my-post.md");
+    expect(result.content).toContain("[World](world)");
+    expect(result.content).toContain(
+      "![screenshot.png](/images/screenshot.png)",
+    );
+    expect(result.images).toEqual(["screenshot.png"]);
+    expect(result.frontmatter.title).toBe("My Post");
+    expect("status" in result.frontmatter).toBe(false);
+  });
+});
