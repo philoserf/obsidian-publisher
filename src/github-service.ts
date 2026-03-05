@@ -1,3 +1,4 @@
+import { RequestError } from "@octokit/request-error";
 import { Octokit } from "@octokit/rest";
 import type { PublisherSettings } from "./types";
 
@@ -62,12 +63,7 @@ export class GitHubService {
       return "sha" in response.data ? response.data.sha : null;
     } catch (error) {
       // 404 means file doesn't exist, which is fine
-      if (
-        error &&
-        typeof error === "object" &&
-        "status" in error &&
-        error.status === 404
-      ) {
+      if (error instanceof RequestError && error.status === 404) {
         return null;
       }
       throw error;
@@ -100,7 +96,7 @@ export class GitHubService {
         path,
         message,
         content: this.stringToBase64(content),
-        sha: existingSha || undefined,
+        sha: existingSha ?? undefined,
       };
 
       if (branch) {
@@ -147,7 +143,7 @@ export class GitHubService {
         path,
         message: `Upload image: ${filename}`,
         content: base64Content,
-        sha: existingSha || undefined,
+        sha: existingSha ?? undefined,
       };
 
       if (branch) {
@@ -328,12 +324,7 @@ export class GitHubService {
         return branchName;
       } catch (error) {
         // Check if error is 422 (branch already exists)
-        if (
-          error &&
-          typeof error === "object" &&
-          "status" in error &&
-          error.status === 422
-        ) {
+        if (error instanceof RequestError && error.status === 422) {
           // Branch already exists, try again with suffix
           continue;
         }
