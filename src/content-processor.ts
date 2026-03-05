@@ -79,7 +79,7 @@ export class ContentProcessor {
 
     // Remove status field if configured
     if (this.settings.removePublishFlag) {
-      processed.status = undefined;
+      delete processed.status;
     }
 
     // Add template fields
