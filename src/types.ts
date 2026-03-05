@@ -13,7 +13,7 @@ export interface PublisherSettings {
   /** Image directory path in the Hugo repository (e.g., "static/images") */
   imageDir: string;
   /** Additional frontmatter fields to inject during publishing */
-  frontmatterTemplate: Record<string, string>;
+  frontmatterTemplate: Record<string, unknown>;
   /** Whether to remove the status: published field from frontmatter */
   removePublishFlag: boolean;
   /** Base branch to create PRs against (default: "main") */

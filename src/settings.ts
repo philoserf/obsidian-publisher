@@ -1,4 +1,11 @@
-import { type App, Notice, PluginSettingTab, Setting } from "obsidian";
+import {
+  type App,
+  Notice,
+  PluginSettingTab,
+  parseYaml,
+  Setting,
+  stringifyYaml,
+} from "obsidian";
 import { GitHubService } from "./github-service";
 import type ObsidianPublisher from "./main";
 
@@ -185,31 +192,39 @@ export class PublisherSettingTab extends PluginSettingTab {
       );
   }
 
-  private serializeFrontmatter(template: Record<string, string>): string {
-    return Object.entries(template)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join("\n");
+  private serializeFrontmatter(template: Record<string, unknown>): string {
+    if (Object.keys(template).length === 0) return "";
+    try {
+      return stringifyYaml(template).trim();
+    } catch {
+      return Object.entries(template)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join("\n");
+    }
   }
 
-  private parseFrontmatter(text: string): Record<string, string> {
-    const result: Record<string, string> = {};
-    const lines = text.split("\n");
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      const colonIndex = trimmed.indexOf(":");
-      if (colonIndex === -1) continue;
-
-      const key = trimmed.slice(0, colonIndex).trim();
-      const value = trimmed.slice(colonIndex + 1).trim();
-
-      if (key && value) {
-        result[key] = value;
-      }
+  private parseFrontmatter(text: string): Record<string, unknown> {
+    const trimmed = text.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = parseYaml(trimmed);
+      return typeof parsed === "object" && parsed !== null ? parsed : {};
+    } catch {
+      return this.parseSimpleFrontmatter(trimmed);
     }
+  }
 
+  private parseSimpleFrontmatter(text: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const line of text.split("\n")) {
+      const t = line.trim();
+      if (!t) continue;
+      const colonIndex = t.indexOf(":");
+      if (colonIndex === -1) continue;
+      const key = t.slice(0, colonIndex).trim();
+      const value = t.slice(colonIndex + 1).trim();
+      if (key && value) result[key] = value;
+    }
     return result;
   }
 
