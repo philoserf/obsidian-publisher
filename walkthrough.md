@@ -1,7 +1,7 @@
 # Obsidian Publisher — Code Walkthrough
 
-*2026-03-09T04:15:34Z by Showboat 0.6.1*
-<!-- showboat-id: e82cad1f-9213-4480-88dd-de73566bbab8 -->
+*2026-03-11T23:06:42Z by Showboat 0.6.1*
+<!-- showboat-id: d1ff9c85-2811-4f01-b3ad-a80f0c0cf707 -->
 
 ## Overview
 
@@ -1387,54 +1387,25 @@ cat version-bump.ts
 ```
 
 ```output
-import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
-const bumpType = process.argv[2];
-if (!bumpType || !["patch", "minor", "major"].includes(bumpType)) {
-  console.error("Usage: bun run version <patch|minor|major>");
-  process.exit(1);
-}
-
-// Read current version from manifest.json (authority)
-const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
-const [major, minor, patch] = manifest.version.split(".").map(Number);
-
-// Bump
-let newVersion: string;
-switch (bumpType) {
-  case "major":
-    newVersion = `${major + 1}.0.0`;
-    break;
-  case "minor":
-    newVersion = `${major}.${minor + 1}.0`;
-    break;
-  default:
-    newVersion = `${major}.${minor}.${patch + 1}`;
+const targetVersion = process.env.npm_package_version;
+if (!targetVersion) {
+  throw new Error("No version found in package.json");
 }
 
 // Update manifest.json
-manifest.version = newVersion;
+const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+const { minAppVersion } = manifest;
+manifest.version = targetVersion;
 writeFileSync("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-
-// Update package.json
-const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-pkg.version = newVersion;
-writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
 
 // Update versions.json
 const versions = JSON.parse(readFileSync("versions.json", "utf8"));
-versions[newVersion] = manifest.minAppVersion;
+versions[targetVersion] = minAppVersion;
 writeFileSync("versions.json", `${JSON.stringify(versions, null, 2)}\n`);
 
-// Commit and tag
-execSync("git add manifest.json package.json versions.json");
-execSync(`git commit -m "chore: bump version to ${newVersion}"`);
-execSync(`git tag -a ${newVersion} -m "${newVersion}"`);
-
-console.log(
-  `Bumped to ${newVersion} — commit and tag created. Push with: git push && git push --tags`,
-);
+console.log(`Updated to version ${targetVersion}`);
 ```
 
 The version script:
@@ -1471,13 +1442,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
       - run: bun install
+      - run: bun audit --audit-level=critical
       - run: bun run check
+      - run: bun test
 ```
 
 CI runs `bun run check` on pushes to main and PRs against main. This executes `typecheck && biome check .` — TypeScript strict-mode type checking plus Biome linting/formatting.
@@ -1544,11 +1515,9 @@ cat bunfig.toml && echo '---' && cat src/__mocks__/preload.ts
 
 ```output
 [test]
-preload = ["./src/__mocks__/preload.ts"]
+preload = ["./src/test-preload.ts"]
 ---
-import { mock } from "bun:test";
-
-mock.module("obsidian", () => require("./obsidian"));
+cat: src/__mocks__/preload.ts: No such file or directory
 ```
 
 `bunfig.toml` tells Bun's test runner to preload `src/__mocks__/preload.ts` before every test file. The preload uses `mock.module()` to intercept `import ... from "obsidian"` and replace it with the local mock. This is necessary because the real Obsidian module is only available inside the Obsidian app runtime.
@@ -1560,61 +1529,7 @@ cat src/__mocks__/obsidian.ts
 ```
 
 ```output
-/**
- * Minimal mock of Obsidian APIs for testing.
- * parseYaml/stringifyYaml use JSON as a stand-in since we only need
- * basic object round-tripping in tests.
- */
-
-export function parseYaml(text: string): unknown {
-  // Simple YAML parser for test fixtures: handles key: value lines,
-  // arrays like [a, b], and quoted strings
-  const result: Record<string, unknown> = {};
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = trimmed.slice(0, colonIdx).trim();
-    let value: unknown = trimmed.slice(colonIdx + 1).trim();
-
-    // Parse arrays like [a, b]
-    if (
-      typeof value === "string" &&
-      value.startsWith("[") &&
-      value.endsWith("]")
-    ) {
-      value = value
-        .slice(1, -1)
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    }
-    // Parse booleans and numbers
-    else if (value === "true") value = true;
-    else if (value === "false") value = false;
-    else if (typeof value === "string" && /^\d+$/.test(value))
-      value = Number(value);
-
-    if (key) result[key] = value;
-  }
-  return result;
-}
-
-export function stringifyYaml(obj: Record<string, unknown>): string {
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === undefined) continue;
-    if (Array.isArray(value)) {
-      lines.push(`${key}: [${value.join(", ")}]`);
-    } else {
-      lines.push(`${key}: ${value}`);
-    }
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-export class Notice {}
+cat: src/__mocks__/obsidian.ts: No such file or directory
 ```
 
 The mock provides three things from the `obsidian` module:
@@ -1708,4 +1623,3 @@ These gaps are tracked in issues #46 and #48.
 - Registers commands with proper IDs and names
 - Settings tab follows Obsidian's `PluginSettingTab` pattern
 - No deprecated API usage detected
-
