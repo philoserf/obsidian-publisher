@@ -96,7 +96,7 @@ export class Publisher {
         this.settings.baseBranch || "main",
         prTitle,
         prBody,
-        this.settings.prLabels || ["published-from-obsidian"],
+        this.settings.prLabels || ["chore"],
       );
 
       return { ...result, prUrl: pr.url };
@@ -159,7 +159,7 @@ export class Publisher {
         this.settings.baseBranch || "main",
         prTitle,
         prBody,
-        this.settings.prLabels || ["published-from-obsidian"],
+        this.settings.prLabels || ["chore"],
       );
 
       return {

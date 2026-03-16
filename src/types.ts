@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   frontmatterTemplate: {},
   removePublishFlag: false,
   baseBranch: "main",
-  prLabels: ["published-from-obsidian"],
+  prLabels: ["chore"],
   usePullRequests: true,
 };
 
