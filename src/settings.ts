@@ -137,7 +137,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       .setDesc("Comma-separated labels to add to pull requests")
       .addText((text) =>
         text
-          .setPlaceholder("published-from-obsidian")
+          .setPlaceholder("chore")
           .setValue(this.plugin.settings.prLabels.join(", "))
           .onChange(async (value) => {
             this.plugin.settings.prLabels = value
