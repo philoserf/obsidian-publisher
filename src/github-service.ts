@@ -117,52 +117,6 @@ export class GitHubService {
   }
 
   /**
-   * Upload an image file to the repository
-   */
-  async uploadImage(
-    filename: string,
-    content: ArrayBuffer,
-    branch?: string,
-  ): Promise<string> {
-    const path = `${this.settings.imageDir}/${filename}`;
-    const base64Content = this.arrayBufferToBase64(content);
-    const existingSha = await this.getFileSha(path, branch);
-
-    try {
-      const params: {
-        owner: string;
-        repo: string;
-        path: string;
-        message: string;
-        content: string;
-        sha?: string;
-        branch?: string;
-      } = {
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        path,
-        message: `Upload image: ${filename}`,
-        content: base64Content,
-        sha: existingSha ?? undefined,
-      };
-
-      if (branch) {
-        params.branch = branch;
-      }
-
-      const response =
-        await this.octokit.repos.createOrUpdateFileContents(params);
-
-      return response.data.content?.html_url || "";
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Failed to upload image ${filename}: ${error.message}`);
-      }
-      throw error;
-    }
-  }
-
-  /**
    * Convert string to base64 (cross-platform)
    */
   private stringToBase64(str: string): string {
