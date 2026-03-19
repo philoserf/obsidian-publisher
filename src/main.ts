@@ -10,13 +10,11 @@ import {
 
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
-
-  private get publisher(): Publisher {
-    return new Publisher(this.app.vault, this.settings);
-  }
+  private _publisher!: Publisher;
 
   async onload() {
     await this.loadSettings();
+    this._publisher = new Publisher(this.app.vault, this.settings);
 
     // Register settings tab
     this.addSettingTab(new PublisherSettingTab(this.app, this));
@@ -60,6 +58,7 @@ export default class ObsidianPublisher extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    this._publisher = new Publisher(this.app.vault, this.settings);
   }
 
   /**
@@ -67,7 +66,7 @@ export default class ObsidianPublisher extends Plugin {
    */
   private async publishCurrentNote(file: TFile) {
     // Validate settings
-    const validationError = this.publisher.validateSettings();
+    const validationError = this._publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
       return;
@@ -80,7 +79,7 @@ export default class ObsidianPublisher extends Plugin {
 
       if (this.settings.usePullRequests) {
         // Use PR workflow
-        result = await this.publisher.publishNoteWithPR(file);
+        result = await this._publisher.publishNoteWithPR(file);
 
         if (result.success && result.prUrl) {
           new Notice(`✓ Pull request created for ${file.basename}`);
@@ -90,7 +89,7 @@ export default class ObsidianPublisher extends Plugin {
         }
       } else {
         // Fallback to direct commit workflow
-        result = await this.publisher.publishNote(file);
+        result = await this._publisher.publishNote(file);
 
         if (result.success) {
           new Notice(`✓ Successfully published ${file.basename}`);
@@ -113,7 +112,7 @@ export default class ObsidianPublisher extends Plugin {
    */
   private async publishAllNotes() {
     // Validate settings
-    const validationError = this.publisher.validateSettings();
+    const validationError = this._publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
       return;
@@ -124,7 +123,7 @@ export default class ObsidianPublisher extends Plugin {
 
       if (this.settings.usePullRequests) {
         // Use PR workflow
-        result = await this.publisher.publishAllWithPR();
+        result = await this._publisher.publishAllWithPR();
 
         if (result.total === 0) {
           new Notice("No publishable notes found");
@@ -140,7 +139,7 @@ export default class ObsidianPublisher extends Plugin {
         }
       } else {
         // Fallback to direct commit workflow
-        result = await this.publisher.publishAll();
+        result = await this._publisher.publishAll();
 
         if (result.total === 0) {
           new Notice("No publishable notes found");

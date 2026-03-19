@@ -256,12 +256,15 @@ export class ContentProcessor {
    */
   private convertNoteEmbeds(content: string): string {
     return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const name = this.stripImageSize(raw);
-      if (IMAGE_EXTENSIONS.test(name)) {
+      const nameForCheck = this.stripImageSize(raw);
+      if (IMAGE_EXTENSIONS.test(nameForCheck)) {
         return _match; // leave for convertImageReferences (already processed)
       }
+      // For note embeds, pipe is display text: ![[Note|Display]]
+      const [name, displayText] = raw.split("|");
+      const display = displayText ?? name;
       const slug = this.sanitizeSlug(name);
-      return `[${name}]({{< ref "${slug}" >}})`;
+      return `[${display}]({{< ref "${slug}" >}})`;
     });
   }
 
