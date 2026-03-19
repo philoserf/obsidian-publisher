@@ -26,6 +26,7 @@ export class ContentProcessor {
     let processedBody = body;
     processedBody = this.stripComments(processedBody);
     processedBody = this.convertHighlights(processedBody);
+    processedBody = this.convertCallouts(processedBody);
     processedBody = this.convertImageReferences(processedBody);
     processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
@@ -145,6 +146,52 @@ export class ContentProcessor {
    */
   private convertHighlights(content: string): string {
     return content.replace(/==((?!=).+?)==/g, "<mark>$1</mark>");
+  }
+
+  private static readonly CALLOUT_TYPE_MAP: Record<string, string> = {
+    note: "note",
+    abstract: "note",
+    summary: "note",
+    tldr: "note",
+    info: "info",
+    todo: "info",
+    tip: "tip",
+    hint: "tip",
+    important: "tip",
+    success: "tip",
+    check: "tip",
+    done: "tip",
+    question: "question",
+    help: "question",
+    faq: "question",
+    warning: "warning",
+    caution: "warning",
+    attention: "warning",
+    failure: "error",
+    fail: "error",
+    missing: "error",
+    danger: "error",
+    error: "error",
+    bug: "error",
+    example: "example",
+    quote: "note",
+    cite: "note",
+  };
+
+  /**
+   * Convert Obsidian callouts to hugo-coder notice shortcodes
+   */
+  private convertCallouts(content: string): string {
+    return content.replace(
+      /^> \[!([\w-]+)\][-+]?(?: (.+))?\n((?:^> .*(?:\n|$))*)/gm,
+      (_match, type: string, title: string | undefined, body: string) => {
+        const noticeType =
+          ContentProcessor.CALLOUT_TYPE_MAP[type.toLowerCase()] ?? "note";
+        const cleanBody = body.replace(/^> ?/gm, "").trim();
+        const titleAttr = title ? ` "${title}"` : "";
+        return `{{< notice ${noticeType}${titleAttr} >}}\n${cleanBody}\n{{< /notice >}}`;
+      },
+    );
   }
 
   /**
