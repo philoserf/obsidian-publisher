@@ -207,6 +207,13 @@ export class ContentProcessor {
   }
 
   /**
+   * Strip Obsidian sizing suffix (|300 or |300x200) from an embed name
+   */
+  private stripImageSize(name: string): string {
+    return name.split("|")[0];
+  }
+
+  /**
    * Extract image references from content (only actual images, not note embeds)
    */
   private extractImages(content: string): string[] {
@@ -215,8 +222,9 @@ export class ContentProcessor {
 
     let match = embedRegex.exec(content);
     while (match !== null) {
-      if (IMAGE_EXTENSIONS.test(match[1])) {
-        images.push(match[1]);
+      const name = this.stripImageSize(match[1]);
+      if (IMAGE_EXTENSIONS.test(name)) {
+        images.push(name);
       }
       match = embedRegex.exec(content);
     }
@@ -247,7 +255,8 @@ export class ContentProcessor {
    * Only matches embeds that are NOT image files.
    */
   private convertNoteEmbeds(content: string): string {
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, name) => {
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
+      const name = this.stripImageSize(raw);
       if (IMAGE_EXTENSIONS.test(name)) {
         return _match; // leave for convertImageReferences (already processed)
       }
@@ -262,7 +271,8 @@ export class ContentProcessor {
    */
   private convertImageReferences(content: string): string {
     const urlPath = this.imageUrlPath();
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, imageName) => {
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
+      const imageName = this.stripImageSize(raw);
       if (!IMAGE_EXTENSIONS.test(imageName)) {
         return _match; // not an image — leave for convertNoteEmbeds
       }
