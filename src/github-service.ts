@@ -256,28 +256,27 @@ export class GitHubService {
         commit_sha: branchSha,
       });
 
-      const treeEntries = await Promise.all(
-        files.map(async (file) => {
-          const base64 =
-            typeof file.content === "string"
-              ? this.stringToBase64(file.content)
-              : this.arrayBufferToBase64(file.content);
+      const treeEntries = [];
+      for (const file of files) {
+        const base64 =
+          typeof file.content === "string"
+            ? this.stringToBase64(file.content)
+            : this.arrayBufferToBase64(file.content);
 
-          const blob = await this.octokit.rest.git.createBlob({
-            owner: this.settings.repoOwner,
-            repo: this.settings.repoName,
-            content: base64,
-            encoding: "base64",
-          });
+        const blob = await this.octokit.rest.git.createBlob({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          content: base64,
+          encoding: "base64",
+        });
 
-          return {
-            path: file.path,
-            mode: "100644" as const,
-            type: "blob" as const,
-            sha: blob.data.sha,
-          };
-        }),
-      );
+        treeEntries.push({
+          path: file.path,
+          mode: "100644" as const,
+          type: "blob" as const,
+          sha: blob.data.sha,
+        });
+      }
 
       const newTree = await this.octokit.rest.git.createTree({
         owner: this.settings.repoOwner,
