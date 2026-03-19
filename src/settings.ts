@@ -27,7 +27,7 @@ export class PublisherSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("GitHub Personal Access Token")
       .setDesc(
-        "Create a token at github.com/settings/tokens with 'repo' scope. Token is stored securely.",
+        "Create a fine-grained token at github.com/settings/tokens with contents:write permission scoped to your target repo. Token is stored in plugin data (unencrypted).",
       )
       .addText((text) =>
         text
