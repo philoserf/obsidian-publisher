@@ -308,6 +308,123 @@ describe("Highlight conversion", () => {
   });
 });
 
+describe("Callout conversion", () => {
+  const cp = makeProcessor();
+
+  test("converts basic callout with title", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "> [!note] Important\n> This is a note",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      '{{< notice note "Important" >}}\nThis is a note\n{{< /notice >}}',
+    );
+  });
+
+  test("converts callout without title", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "> [!warning]\n> Be careful"),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      "{{< notice warning >}}\nBe careful\n{{< /notice >}}",
+    );
+  });
+
+  test("converts multiline callout body", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "> [!tip] Hint\n> Line one\n> Line two\n> Line three",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      '{{< notice tip "Hint" >}}\nLine one\nLine two\nLine three\n{{< /notice >}}',
+    );
+  });
+
+  test("maps Obsidian callout aliases to hugo-coder types", () => {
+    const cases: [string, string][] = [
+      ["abstract", "note"],
+      ["summary", "note"],
+      ["tldr", "note"],
+      ["info", "info"],
+      ["todo", "info"],
+      ["tip", "tip"],
+      ["hint", "tip"],
+      ["important", "tip"],
+      ["success", "tip"],
+      ["check", "tip"],
+      ["done", "tip"],
+      ["question", "question"],
+      ["help", "question"],
+      ["faq", "question"],
+      ["warning", "warning"],
+      ["caution", "warning"],
+      ["attention", "warning"],
+      ["failure", "error"],
+      ["fail", "error"],
+      ["missing", "error"],
+      ["danger", "error"],
+      ["error", "error"],
+      ["bug", "error"],
+      ["example", "example"],
+      ["quote", "note"],
+      ["cite", "note"],
+    ];
+    for (const [obsidian, hugo] of cases) {
+      const result = cp.process(
+        wrap("title: Test\nstatus: published", `> [!${obsidian}]\n> content`),
+        "test.md",
+      );
+      expect(result.content).toContain(`{{< notice ${hugo} >}}`);
+    }
+  });
+
+  test("strips foldable markers (+ and -)", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "> [!note]+ Title\n> Content"),
+      "test.md",
+    );
+    expect(result.content).toContain('{{< notice note "Title" >}}');
+
+    const result2 = cp.process(
+      wrap("title: Test\nstatus: published", "> [!note]- Title\n> Content"),
+      "test.md",
+    );
+    expect(result2.content).toContain('{{< notice note "Title" >}}');
+  });
+
+  test("defaults unknown callout type to note", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "> [!custom]\n> Content"),
+      "test.md",
+    );
+    expect(result.content).toContain("{{< notice note >}}");
+  });
+
+  test("handles callout type case-insensitively", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "> [!WARNING]\n> Content"),
+      "test.md",
+    );
+    expect(result.content).toContain("{{< notice warning >}}");
+  });
+
+  test("leaves regular blockquotes untouched", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "> Just a regular quote"),
+      "test.md",
+    );
+    expect(result.content).toContain("> Just a regular quote");
+    expect(result.content).not.toContain("notice");
+  });
+});
+
 describe("Full process pipeline", () => {
   test("transforms complete note", () => {
     const cp = makeProcessor({ removePublishFlag: true });
