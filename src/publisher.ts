@@ -43,12 +43,23 @@ export class Publisher {
     const { results, fileEntries } = await this.prepareBatch(publishableFiles);
 
     if (fileEntries.length > 0) {
-      const successCount = results.filter((r) => r.success).length;
-      await this.githubService.commitFiles(
-        fileEntries,
-        `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
-        baseBranch,
-      );
+      try {
+        const successCount = results.filter((r) => r.success).length;
+        await this.githubService.commitFiles(
+          fileEntries,
+          `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
+          baseBranch,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        for (const r of results) {
+          if (r.success) {
+            r.success = false;
+            r.error = `Commit failed: ${message}`;
+          }
+        }
+      }
     }
 
     const successful = results.filter((r) => r.success).length;
@@ -136,12 +147,23 @@ export class Publisher {
         await this.prepareBatch(publishableFiles);
 
       if (fileEntries.length > 0) {
-        const successCount = results.filter((r) => r.success).length;
-        await this.githubService.commitFiles(
-          fileEntries,
-          `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
-          branchName,
-        );
+        try {
+          const successCount = results.filter((r) => r.success).length;
+          await this.githubService.commitFiles(
+            fileEntries,
+            `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
+            branchName,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          for (const r of results) {
+            if (r.success) {
+              r.success = false;
+              r.error = `Commit failed: ${message}`;
+            }
+          }
+        }
       }
 
       const successful = results.filter((r) => r.success).length;
