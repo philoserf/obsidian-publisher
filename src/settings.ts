@@ -49,7 +49,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("username")
           .setValue(this.plugin.settings.repoOwner)
           .onChange(async (value) => {
-            this.plugin.settings.repoOwner = value.trim();
+            this.plugin.settings.repoOwner = this.sanitizeGitHubName(value, 39);
             await this.plugin.saveSettings();
           }),
       );
@@ -63,7 +63,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("my-blog")
           .setValue(this.plugin.settings.repoName)
           .onChange(async (value) => {
-            this.plugin.settings.repoName = value.trim();
+            this.plugin.settings.repoName = this.sanitizeGitHubName(value, 100);
             await this.plugin.saveSettings();
           }),
       );
@@ -77,9 +77,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("content/posts")
           .setValue(this.plugin.settings.contentDir)
           .onChange(async (value) => {
-            this.plugin.settings.contentDir = value
-              .trim()
-              .replace(/^\/+|\/+$/g, "");
+            this.plugin.settings.contentDir = this.sanitizePath(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -93,9 +91,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("static/images")
           .setValue(this.plugin.settings.imageDir)
           .onChange(async (value) => {
-            this.plugin.settings.imageDir = value
-              .trim()
-              .replace(/^\/+|\/+$/g, "");
+            this.plugin.settings.imageDir = this.sanitizePath(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -228,6 +224,21 @@ export class PublisherSettingTab extends PluginSettingTab {
       if (key && value) result[key] = value;
     }
     return result;
+  }
+
+  private sanitizeGitHubName(value: string, maxLength: number): string {
+    return value
+      .trim()
+      .replace(/[^a-zA-Z0-9-]/g, "")
+      .slice(0, maxLength);
+  }
+
+  private sanitizePath(value: string): string {
+    return value
+      .trim()
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/\.\./g, "")
+      .replace(/~/g, "");
   }
 
   private async testConnection(): Promise<void> {
