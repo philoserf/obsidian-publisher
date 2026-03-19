@@ -125,6 +125,37 @@ describe("Image reference conversion", () => {
     );
     expect(result.content).toContain("![hero.png](/assets/img/hero.png)");
   });
+
+  test("strips width sizing from image reference", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[photo.png|300]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![photo.png](/images/photo.png)");
+    expect(result.images).toEqual(["photo.png"]);
+  });
+
+  test("strips dimension sizing from image reference", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[photo.png|300x200]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![photo.png](/images/photo.png)");
+    expect(result.images).toEqual(["photo.png"]);
+  });
+
+  test("strips pipe suffix from image in mixed content", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "![[a.png|100]] and ![[b.jpg]] and ![[My Note]]",
+      ),
+      "test.md",
+    );
+    expect(result.images).toEqual(["a.png", "b.jpg"]);
+    expect(result.content).toContain("![a.png](/images/a.png)");
+    expect(result.content).toContain("![b.jpg](/images/b.jpg)");
+  });
 });
 
 describe("Note embed conversion", () => {
