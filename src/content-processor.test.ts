@@ -16,12 +16,12 @@ function wrap(frontmatter: string, body: string): string {
 describe("Wikilink conversion", () => {
   const cp = makeProcessor();
 
-  test("converts simple wikilink", () => {
+  test("converts simple wikilink to Hugo ref shortcode", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: published", "See [[Page Name]] here"),
       "test.md",
     );
-    expect(result.content).toContain("[Page Name](page-name)");
+    expect(result.content).toContain('[Page Name]({{< ref "page-name" >}})');
   });
 
   test("converts wikilink with display text", () => {
@@ -29,7 +29,7 @@ describe("Wikilink conversion", () => {
       wrap("title: Test\nstatus: published", "See [[Page|Custom Text]] here"),
       "test.md",
     );
-    expect(result.content).toContain("[Custom Text](page)");
+    expect(result.content).toContain('[Custom Text]({{< ref "page" >}})');
   });
 
   test("sanitizes wikilink target", () => {
@@ -37,7 +37,9 @@ describe("Wikilink conversion", () => {
       wrap("title: Test\nstatus: published", "[[My Cool Page]]"),
       "test.md",
     );
-    expect(result.content).toContain("[My Cool Page](my-cool-page)");
+    expect(result.content).toContain(
+      '[My Cool Page]({{< ref "my-cool-page" >}})',
+    );
   });
 
   test("handles multiple wikilinks", () => {
@@ -45,8 +47,26 @@ describe("Wikilink conversion", () => {
       wrap("title: Test\nstatus: published", "[[One]] and [[Two]]"),
       "test.md",
     );
-    expect(result.content).toContain("[One](one)");
-    expect(result.content).toContain("[Two](two)");
+    expect(result.content).toContain('[One]({{< ref "one" >}})');
+    expect(result.content).toContain('[Two]({{< ref "two" >}})');
+  });
+
+  test("handles heading anchors", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "[[Page#My Heading]]"),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      '[Page#My Heading]({{< ref "page#my-heading" >}})',
+    );
+  });
+
+  test("handles heading anchors with display text", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "[[Page#Section|see this]]"),
+      "test.md",
+    );
+    expect(result.content).toContain('[see this]({{< ref "page#section" >}})');
   });
 });
 
@@ -69,9 +89,12 @@ describe("Image reference conversion", () => {
     expect(result.content).toContain("![My Photo.jpg](/images/my-photo.jpg)");
   });
 
-  test("extracts image names", () => {
+  test("extracts only image names, not note embeds", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[a.png]] text ![[b.jpg]]"),
+      wrap(
+        "title: Test\nstatus: published",
+        "![[a.png]] text ![[b.jpg]] and ![[My Note]]",
+      ),
       "test.md",
     );
     expect(result.images).toEqual(["a.png", "b.jpg"]);
@@ -83,6 +106,47 @@ describe("Image reference conversion", () => {
       "test.md",
     );
     expect(result.images).toEqual([]);
+  });
+
+  test("derives image URL path from imageDir setting", () => {
+    const cp2 = makeProcessor({ imageDir: "static/media/photos" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: published", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/media/photos/hero.png)");
+  });
+
+  test("handles imageDir without static prefix", () => {
+    const cp2 = makeProcessor({ imageDir: "assets/img" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: published", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/assets/img/hero.png)");
+  });
+});
+
+describe("Note embed conversion", () => {
+  const cp = makeProcessor();
+
+  test("converts note embed to ref link", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[My Other Post]]"),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      '[My Other Post]({{< ref "my-other-post" >}})',
+    );
+  });
+
+  test("does not treat image embeds as note embeds", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "![[photo.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![photo.png]");
+    expect(result.content).not.toContain("ref");
   });
 });
 
@@ -174,7 +238,7 @@ describe("Full process pipeline", () => {
     const result = cp.process(input, "My Post.md");
 
     expect(result.filename).toBe("my-post.md");
-    expect(result.content).toContain("[World](world)");
+    expect(result.content).toContain('[World]({{< ref "world" >}})');
     expect(result.content).toContain(
       "![screenshot.png](/images/screenshot.png)",
     );
