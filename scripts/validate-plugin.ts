@@ -42,6 +42,16 @@ if (checkResult.exitCode === 0) {
   errors++;
 }
 
+// Run tests
+console.log("\n🧪 Running tests...");
+const testResult = await $`bun test`.nothrow();
+if (testResult.exitCode === 0) {
+  console.log("✓ All tests passed");
+} else {
+  console.error("✗ Tests failed");
+  errors++;
+}
+
 // Build the plugin
 console.log("\n📦 Building plugin...");
 const buildResult = await $`bun run build.ts`.nothrow();
