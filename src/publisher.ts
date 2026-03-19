@@ -24,6 +24,60 @@ export class Publisher {
     return this.settings.baseBranch || "main";
   }
 
+  private get prLabels(): string[] {
+    return this.settings.prLabels || ["chore"];
+  }
+
+  private markResultsFailed(results: PublishResult[], error: unknown): void {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    for (const r of results) {
+      if (r.success) {
+        r.success = false;
+        r.error = `Commit failed: ${message}`;
+      }
+    }
+  }
+
+  private async cleanupBranch(branchName: string): Promise<void> {
+    try {
+      await this.githubService.deleteBranch(branchName);
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
+  private async resolveImages(
+    imageNames: string[],
+    filesByName: Map<string, TFile>,
+  ): Promise<{
+    entries: Array<{ path: string; content: ArrayBuffer }>;
+    failedImages: string[];
+  }> {
+    const entries: Array<{ path: string; content: ArrayBuffer }> = [];
+    const failedImages: string[] = [];
+
+    for (const imageName of imageNames) {
+      const imageFile = filesByName.get(imageName);
+      if (!imageFile) {
+        console.warn(`Image not found in vault: ${imageName}`);
+        failedImages.push(imageName);
+        continue;
+      }
+      try {
+        const imageContent = await this.vault.readBinary(imageFile);
+        const sanitizedName =
+          this.contentProcessor.sanitizeImageName(imageName);
+        const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+        entries.push({ path: imgPath, content: imageContent });
+      } catch (error) {
+        console.error(`Failed to read image ${imageName}:`, error);
+        failedImages.push(imageName);
+      }
+    }
+
+    return { entries, failedImages };
+  }
+
   /**
    * Publish a single note to GitHub (direct commit)
    */
@@ -53,14 +107,7 @@ export class Publisher {
           this.baseBranch,
         );
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
-        for (const r of results) {
-          if (r.success) {
-            r.success = false;
-            r.error = `Commit failed: ${message}`;
-          }
-        }
+        this.markResultsFailed(results, error);
       }
     }
 
@@ -105,11 +152,7 @@ export class Publisher {
       const result = await this.publishFileToTarget(file, branchName, content);
 
       if (!result.success) {
-        try {
-          await this.githubService.deleteBranch(branchName);
-        } catch {
-          // Best-effort cleanup
-        }
+        await this.cleanupBranch(branchName);
         return result;
       }
 
@@ -120,17 +163,13 @@ export class Publisher {
         this.baseBranch,
         prTitle,
         prBody,
-        this.settings.prLabels || ["chore"],
+        this.prLabels,
       );
 
       return { ...result, prUrl: pr.url };
     } catch (error) {
       if (branchName) {
-        try {
-          await this.githubService.deleteBranch(branchName);
-        } catch {
-          // Best-effort cleanup
-        }
+        await this.cleanupBranch(branchName);
       }
       const message = error instanceof Error ? error.message : "Unknown error";
       return { filePath: file.path, success: false, error: message };
@@ -183,11 +222,7 @@ export class Publisher {
       const failed = results.filter((r) => !r.success).length;
 
       if (successful === 0) {
-        try {
-          await this.githubService.deleteBranch(branchName);
-        } catch {
-          // Best-effort cleanup
-        }
+        await this.cleanupBranch(branchName);
         new Notice("All files failed to process. No PR created.");
         return { total: results.length, successful: 0, failed, results };
       }
@@ -204,7 +239,7 @@ export class Publisher {
         this.baseBranch,
         prTitle,
         prBody,
-        this.settings.prLabels || ["chore"],
+        this.prLabels,
       );
 
       return {
@@ -216,11 +251,7 @@ export class Publisher {
       };
     } catch (error) {
       if (branchName) {
-        try {
-          await this.githubService.deleteBranch(branchName);
-        } catch {
-          // Best-effort cleanup
-        }
+        await this.cleanupBranch(branchName);
       }
       const message = error instanceof Error ? error.message : "Unknown error";
       new Notice(`Failed to publish: ${message}`);
@@ -271,45 +302,25 @@ export class Publisher {
       const processed = this.contentProcessor.process(content, file.name);
       const targetBranch = branch ?? this.baseBranch;
 
-      const fileEntries: Array<{
-        path: string;
-        content: string | ArrayBuffer;
-      }> = [];
-
-      // Add markdown file
       const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      fileEntries.push({ path: targetPath, content: processed.content });
-
-      // Resolve and add images
       const filesByName = new Map(
         this.vault.getFiles().map((f) => [f.name, f]),
       );
-      const failedImages: string[] = [];
-
-      for (const imageName of processed.images) {
-        const imageFile = filesByName.get(imageName);
-        if (!imageFile) {
-          console.warn(`Image not found in vault: ${imageName}`);
-          failedImages.push(imageName);
-          continue;
-        }
-        try {
-          const imageContent = await this.vault.readBinary(imageFile);
-          const sanitizedName =
-            this.contentProcessor.sanitizeImageName(imageName);
-          const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
-          fileEntries.push({ path: imgPath, content: imageContent });
-        } catch (error) {
-          console.error(`Failed to read image ${imageName}:`, error);
-          failedImages.push(imageName);
-        }
-      }
+      const { entries: imageEntries, failedImages } = await this.resolveImages(
+        processed.images,
+        filesByName,
+      );
 
       if (failedImages.length > 0) {
         new Notice(
           `Warning: ${failedImages.length} image(s) failed: ${failedImages.join(", ")}`,
         );
       }
+
+      const fileEntries: Array<{
+        path: string;
+        content: string | ArrayBuffer;
+      }> = [{ path: targetPath, content: processed.content }, ...imageEntries];
 
       await this.githubService.commitFiles(
         fileEntries,
@@ -368,28 +379,15 @@ export class Publisher {
       try {
         const processed = this.contentProcessor.process(content, file.name);
 
-        // Add markdown entry
         const targetPath = `${this.settings.contentDir}/${processed.filename}`;
         entryMap.set(targetPath, processed.content);
 
-        // Resolve images
-        for (const imageName of processed.images) {
-          const imageFile = filesByName.get(imageName);
-          if (!imageFile) {
-            allFailedImages.push(imageName);
-            continue;
-          }
-          try {
-            const imageContent = await this.vault.readBinary(imageFile);
-            const sanitizedName =
-              this.contentProcessor.sanitizeImageName(imageName);
-            const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
-            entryMap.set(imgPath, imageContent);
-          } catch (error) {
-            console.error(`Failed to read image ${imageName}:`, error);
-            allFailedImages.push(imageName);
-          }
+        const { entries: imageEntries, failedImages } =
+          await this.resolveImages(processed.images, filesByName);
+        for (const entry of imageEntries) {
+          entryMap.set(entry.path, entry.content);
         }
+        allFailedImages.push(...failedImages);
 
         results.push({ filePath: file.path, success: true });
         new Notice(`Prepared: ${results.length}/${files.length}`);
