@@ -24,6 +24,7 @@ export class ContentProcessor {
 
     // Convert content
     let processedBody = body;
+    processedBody = this.stripComments(processedBody);
     processedBody = this.convertImageReferences(processedBody);
     processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
@@ -129,6 +130,13 @@ export class ContentProcessor {
    */
   private imageUrlPath(): string {
     return `/${this.settings.imageDir.replace(/^static\/?/, "")}`;
+  }
+
+  /**
+   * Strip Obsidian comments (%%...%%) including multiline
+   */
+  private stripComments(content: string): string {
+    return content.replace(/%%[\s\S]*?%%/g, "");
   }
 
   /**

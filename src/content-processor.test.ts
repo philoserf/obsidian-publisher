@@ -228,6 +228,50 @@ describe("Filename sanitization", () => {
   });
 });
 
+describe("Comment stripping", () => {
+  const cp = makeProcessor();
+
+  test("strips inline comment", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "before %%secret%% after"),
+      "test.md",
+    );
+    expect(result.content).toContain("before  after");
+    expect(result.content).not.toContain("secret");
+  });
+
+  test("strips multiline comment", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "before\n%%\nthis is\na secret\n%%\nafter",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain("before\n");
+    expect(result.content).toContain("\nafter");
+    expect(result.content).not.toContain("secret");
+  });
+
+  test("strips multiple comments", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "%%one%% middle %%two%%"),
+      "test.md",
+    );
+    expect(result.content).toContain(" middle ");
+    expect(result.content).not.toContain("one");
+    expect(result.content).not.toContain("two");
+  });
+
+  test("leaves single percent signs alone", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "100% complete"),
+      "test.md",
+    );
+    expect(result.content).toContain("100% complete");
+  });
+});
+
 describe("Full process pipeline", () => {
   test("transforms complete note", () => {
     const cp = makeProcessor({ removePublishFlag: true });
