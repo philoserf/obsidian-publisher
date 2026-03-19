@@ -75,7 +75,18 @@ export class Publisher {
   async publishNoteWithPR(
     file: TFile,
   ): Promise<PublishResult & { prUrl?: string }> {
-    if (!(await this.canPublish(file))) {
+    let content: string;
+    try {
+      content = await this.vault.read(file);
+    } catch {
+      return {
+        filePath: file.path,
+        success: false,
+        error: "Failed to read file",
+      };
+    }
+
+    if (!this.hasPublishFlag(content)) {
       return {
         filePath: file.path,
         success: false,
@@ -91,7 +102,7 @@ export class Publisher {
         this.baseBranch,
       );
 
-      const result = await this.publishFileToTarget(file, branchName);
+      const result = await this.publishFileToTarget(file, branchName, content);
 
       if (!result.success) {
         try {
@@ -244,9 +255,10 @@ export class Publisher {
   private async publishFileToTarget(
     file: TFile,
     branch?: string,
+    prereadContent?: string,
   ): Promise<PublishResult> {
     try {
-      const content = await this.vault.read(file);
+      const content = prereadContent ?? (await this.vault.read(file));
 
       if (!this.hasPublishFlag(content)) {
         return {
@@ -315,9 +327,11 @@ export class Publisher {
   /**
    * Scan the vault for files with status: published
    */
-  private async getPublishableFiles(): Promise<TFile[]> {
+  private async getPublishableFiles(): Promise<
+    Array<{ file: TFile; content: string }>
+  > {
     const markdownFiles = this.vault.getMarkdownFiles();
-    const publishableFiles: TFile[] = [];
+    const publishableFiles: Array<{ file: TFile; content: string }> = [];
 
     new Notice("Scanning vault for publishable notes...");
 
@@ -325,7 +339,7 @@ export class Publisher {
       try {
         const content = await this.vault.read(file);
         if (this.hasPublishFlag(content)) {
-          publishableFiles.push(file);
+          publishableFiles.push({ file, content });
         }
       } catch (error) {
         console.error(`Failed to read file ${file.path}:`, error);
@@ -336,22 +350,12 @@ export class Publisher {
   }
 
   /**
-   * Check if a file can be published (without throwing)
-   */
-  private async canPublish(file: TFile): Promise<boolean> {
-    try {
-      const content = await this.vault.read(file);
-      return this.hasPublishFlag(content);
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * Prepare all files for a batch commit.
    * Returns per-file results and collected file entries for commitFiles().
    */
-  private async prepareBatch(files: TFile[]): Promise<{
+  private async prepareBatch(
+    files: Array<{ file: TFile; content: string }>,
+  ): Promise<{
     results: PublishResult[];
     fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
   }> {
@@ -360,9 +364,8 @@ export class Publisher {
     const allFailedImages: string[] = [];
     const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
 
-    for (const file of files) {
+    for (const { file, content } of files) {
       try {
-        const content = await this.vault.read(file);
         const processed = this.contentProcessor.process(content, file.name);
 
         // Add markdown entry
