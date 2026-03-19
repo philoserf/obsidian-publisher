@@ -147,6 +147,16 @@ export class Publisher {
       const successful = results.filter((r) => r.success).length;
       const failed = results.filter((r) => !r.success).length;
 
+      if (successful === 0) {
+        try {
+          await this.githubService.deleteBranch(branchName);
+        } catch {
+          // Best-effort cleanup
+        }
+        new Notice("All files failed to process. No PR created.");
+        return { total: results.length, successful: 0, failed, results };
+      }
+
       const prTitle = `Batch Publish: ${successful} notes`;
       const fileList = results
         .filter((r) => r.success)
