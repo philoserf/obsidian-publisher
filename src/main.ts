@@ -10,13 +10,13 @@ import {
 
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
-  private publisher!: Publisher;
+
+  private get publisher(): Publisher {
+    return new Publisher(this.app.vault, this.settings);
+  }
 
   async onload() {
     await this.loadSettings();
-
-    // Initialize publisher
-    this.publisher = new Publisher(this.app.vault, this.settings);
 
     // Register settings tab
     this.addSettingTab(new PublisherSettingTab(this.app, this));
@@ -64,8 +64,6 @@ export default class ObsidianPublisher extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
-    // Reinitialize publisher with new settings
-    this.publisher = new Publisher(this.app.vault, this.settings);
   }
 
   /**
