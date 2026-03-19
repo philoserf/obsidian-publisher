@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1
+
+### Bug Fixes
+
+- Fix wikilink conversion, image paths, note embeds, and heading anchors
+
+### Chores
+
+- Update @biomejs/biome and @types/node
+- Converge CI, build config, and repo structure to canonical pattern
+
 ## 1.1.0
 
 ### Features
