@@ -272,6 +272,42 @@ describe("Comment stripping", () => {
   });
 });
 
+describe("Highlight conversion", () => {
+  const cp = makeProcessor();
+
+  test("converts highlight to mark tag", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "this is ==important== text"),
+      "test.md",
+    );
+    expect(result.content).toContain("this is <mark>important</mark> text");
+  });
+
+  test("converts multiple highlights on one line", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "==one== and ==two=="),
+      "test.md",
+    );
+    expect(result.content).toContain("<mark>one</mark> and <mark>two</mark>");
+  });
+
+  test("leaves single equals signs alone", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "a = b"),
+      "test.md",
+    );
+    expect(result.content).toContain("a = b");
+  });
+
+  test("leaves triple equals alone", () => {
+    const result = cp.process(
+      wrap("title: Test\nstatus: published", "a === b"),
+      "test.md",
+    );
+    expect(result.content).toContain("a === b");
+  });
+});
+
 describe("Full process pipeline", () => {
   test("transforms complete note", () => {
     const cp = makeProcessor({ removePublishFlag: true });
