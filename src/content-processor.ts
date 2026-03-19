@@ -25,6 +25,7 @@ export class ContentProcessor {
     // Convert content
     let processedBody = body;
     processedBody = this.stripComments(processedBody);
+    processedBody = this.convertHighlights(processedBody);
     processedBody = this.convertImageReferences(processedBody);
     processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
@@ -137,6 +138,13 @@ export class ContentProcessor {
    */
   private stripComments(content: string): string {
     return content.replace(/%%[\s\S]*?%%/g, "");
+  }
+
+  /**
+   * Convert Obsidian highlight syntax (==text==) to HTML mark tags
+   */
+  private convertHighlights(content: string): string {
+    return content.replace(/==((?!=).+?)==/g, "<mark>$1</mark>");
   }
 
   /**
