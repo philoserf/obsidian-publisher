@@ -1,15 +1,7 @@
 import { mock } from "bun:test";
 
 mock.module("obsidian", () => ({
-  /**
-   * Minimal mock of Obsidian APIs for testing.
-   * parseYaml/stringifyYaml use simple parsing as a stand-in since we only need
-   * basic object round-tripping in tests.
-   */
-
   parseYaml(text: string): unknown {
-    // Simple YAML parser for test fixtures: handles key: value lines,
-    // arrays like [a, b], and quoted strings
     const result: Record<string, unknown> = {};
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
@@ -19,7 +11,6 @@ mock.module("obsidian", () => ({
       const key = trimmed.slice(0, colonIdx).trim();
       let value: unknown = trimmed.slice(colonIdx + 1).trim();
 
-      // Parse arrays like [a, b]
       if (
         typeof value === "string" &&
         value.startsWith("[") &&
@@ -30,9 +21,7 @@ mock.module("obsidian", () => ({
           .split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
-      }
-      // Parse booleans and numbers
-      else if (value === "true") value = true;
+      } else if (value === "true") value = true;
       else if (value === "false") value = false;
       else if (typeof value === "string" && /^\d+$/.test(value))
         value = Number(value);
@@ -56,4 +45,43 @@ mock.module("obsidian", () => ({
   },
 
   Notice: class Notice {},
+
+  Plugin: class Plugin {},
+
+  PluginSettingTab: class PluginSettingTab {},
+
+  Setting: class Setting {
+    setName() {
+      return this;
+    }
+    setDesc() {
+      return this;
+    }
+    addText() {
+      return this;
+    }
+    addToggle() {
+      return this;
+    }
+    addTextArea() {
+      return this;
+    }
+    addButton() {
+      return this;
+    }
+  },
+}));
+
+mock.module("@octokit/rest", () => ({
+  Octokit: class MockOctokit {},
+}));
+
+mock.module("@octokit/request-error", () => ({
+  RequestError: class RequestError extends Error {
+    status: number;
+    constructor(message: string, statusCode: number) {
+      super(message);
+      this.status = statusCode;
+    }
+  },
 }));
