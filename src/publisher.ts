@@ -20,6 +20,10 @@ export class Publisher {
     this.githubService = new GitHubService(settings);
   }
 
+  private get baseBranch(): string {
+    return this.settings.baseBranch || "main";
+  }
+
   /**
    * Publish a single note to GitHub (direct commit)
    */
@@ -38,8 +42,6 @@ export class Publisher {
     }
 
     new Notice(`Publishing ${publishableFiles.length} notes...`);
-    const baseBranch = this.settings.baseBranch || "main";
-
     const { results, fileEntries } = await this.prepareBatch(publishableFiles);
 
     if (fileEntries.length > 0) {
@@ -48,7 +50,7 @@ export class Publisher {
         await this.githubService.commitFiles(
           fileEntries,
           `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
-          baseBranch,
+          this.baseBranch,
         );
       } catch (error) {
         const message =
@@ -86,7 +88,7 @@ export class Publisher {
     try {
       branchName = await this.githubService.createBranchWithRetry(
         "publish",
-        this.settings.baseBranch || "main",
+        this.baseBranch,
       );
 
       const result = await this.publishFileToTarget(file, branchName);
@@ -104,7 +106,7 @@ export class Publisher {
       const prBody = `Published from Obsidian\n\n**File:** ${file.path}`;
       const pr = await this.githubService.createPullRequest(
         branchName,
-        this.settings.baseBranch || "main",
+        this.baseBranch,
         prTitle,
         prBody,
         this.settings.prLabels || ["chore"],
@@ -140,7 +142,7 @@ export class Publisher {
     try {
       branchName = await this.githubService.createBranchWithRetry(
         "publish-batch",
-        this.settings.baseBranch || "main",
+        this.baseBranch,
       );
 
       const { results, fileEntries } =
@@ -188,7 +190,7 @@ export class Publisher {
 
       const pr = await this.githubService.createPullRequest(
         branchName,
-        this.settings.baseBranch || "main",
+        this.baseBranch,
         prTitle,
         prBody,
         this.settings.prLabels || ["chore"],
@@ -255,7 +257,7 @@ export class Publisher {
       }
 
       const processed = this.contentProcessor.process(content, file.name);
-      const targetBranch = branch ?? this.settings.baseBranch ?? "main";
+      const targetBranch = branch ?? this.baseBranch;
 
       const fileEntries: Array<{
         path: string;
