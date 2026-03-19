@@ -1,6 +1,8 @@
 import { parseYaml, stringifyYaml } from "obsidian";
 import type { ProcessedContent, PublisherSettings } from "./types";
 
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
+
 export class ContentProcessor {
   private settings: PublisherSettings;
 
@@ -23,6 +25,7 @@ export class ContentProcessor {
     // Convert content
     let processedBody = body;
     processedBody = this.convertImageReferences(processedBody);
+    processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
 
     // Reassemble content with frontmatter
@@ -121,55 +124,95 @@ export class ContentProcessor {
   }
 
   /**
-   * Extract all image references from content
+   * Derive the URL path for images from the imageDir setting.
+   * Strips "static/" prefix since Hugo serves static/ at the root.
+   */
+  private imageUrlPath(): string {
+    return `/${this.settings.imageDir.replace(/^static\/?/, "")}`;
+  }
+
+  /**
+   * Extract image references from content (only actual images, not note embeds)
    */
   private extractImages(content: string): string[] {
-    const imageRegex = /!\[\[([^\]]+)\]\]/g;
+    const embedRegex = /!\[\[([^\]]+)\]\]/g;
     const images: string[] = [];
 
-    let match = imageRegex.exec(content);
+    let match = embedRegex.exec(content);
     while (match !== null) {
-      images.push(match[1]);
-      match = imageRegex.exec(content);
+      if (IMAGE_EXTENSIONS.test(match[1])) {
+        images.push(match[1]);
+      }
+      match = embedRegex.exec(content);
     }
 
     return images;
   }
 
   /**
-   * Convert Obsidian wikilinks to markdown links
-   * Handles: [[Page]] and [[Page|Display Text]]
+   * Convert Obsidian wikilinks to Hugo ref shortcodes
+   * Handles: [[Page]], [[Page|Display]], [[Page#Heading]], [[Page#Heading|Display]]
    */
   private convertWikilinks(content: string): string {
     return content.replace(
-      /\[\[([^\]|]+)(\|([^\]]+))?\]\]/g,
-      (_match, page, _, displayText) => {
-        const display = displayText || page;
-        const slug = this.sanitizeFilename(page);
-        return `[${display}](${slug})`;
+      /\[\[([^\]|#]+)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
+      (_match, page, _hashGroup, heading, _pipeGroup, displayText) => {
+        const display = displayText || (heading ? `${page}#${heading}` : page);
+        const slug = this.sanitizeSlug(page);
+        const fragment = heading
+          ? `#${heading.toLowerCase().replace(/\s+/g, "-")}`
+          : "";
+        return `[${display}]({{< ref "${slug}${fragment}" >}})`;
       },
     );
   }
 
   /**
-   * Convert Obsidian image references to Hugo-compatible markdown
-   * Handles: ![[image.png]]
+   * Convert note embeds (![[Note Name]]) to Hugo ref links.
+   * Only matches embeds that are NOT image files.
    */
-  private convertImageReferences(content: string): string {
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, imageName) => {
-      const sanitizedName = this.sanitizeFilename(imageName);
-      // Hugo paths are relative to content directory
-      // Images in static/images are referenced as /images/
-      return `![${imageName}](/images/${sanitizedName})`;
+  private convertNoteEmbeds(content: string): string {
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, name) => {
+      if (IMAGE_EXTENSIONS.test(name)) {
+        return _match; // leave for convertImageReferences (already processed)
+      }
+      const slug = this.sanitizeSlug(name);
+      return `[${name}]({{< ref "${slug}" >}})`;
     });
   }
 
   /**
+   * Convert Obsidian image references to Hugo-compatible markdown.
+   * Derives the URL path from the imageDir setting.
+   */
+  private convertImageReferences(content: string): string {
+    const urlPath = this.imageUrlPath();
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, imageName) => {
+      if (!IMAGE_EXTENSIONS.test(imageName)) {
+        return _match; // not an image — leave for convertNoteEmbeds
+      }
+      const sanitizedName = this.sanitizeFilename(imageName);
+      return `![${imageName}](${urlPath}/${sanitizedName})`;
+    });
+  }
+
+  /**
+   * Sanitize a page name into a slug (no extension)
+   */
+  private sanitizeSlug(page: string): string {
+    return (
+      page
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9\-_]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "") || "untitled"
+    );
+  }
+
+  /**
    * Sanitize filename for Hugo URLs
-   * - Convert to lowercase
-   * - Replace spaces with hyphens
-   * - Remove special characters
-   * - Keep alphanumeric, hyphens, underscores, and dots
    */
   sanitizeFilename(filename: string): string {
     // Extract extension if present
