@@ -27,6 +27,7 @@ export class ContentProcessor {
     processedBody = this.stripComments(processedBody);
     processedBody = this.convertHighlights(processedBody);
     processedBody = this.convertCallouts(processedBody);
+    processedBody = this.convertMermaid(processedBody);
     processedBody = this.convertImageReferences(processedBody);
     processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
@@ -191,6 +192,17 @@ export class ContentProcessor {
         const titleAttr = title ? ` "${title}"` : "";
         return `{{< notice ${noticeType}${titleAttr} >}}\n${cleanBody}\n{{< /notice >}}`;
       },
+    );
+  }
+
+  /**
+   * Convert mermaid fenced code blocks to hugo-coder mermaid shortcodes
+   */
+  private convertMermaid(content: string): string {
+    return content.replace(
+      /```mermaid\n([\s\S]*?)```/g,
+      (_match, body: string) =>
+        `{{< mermaid >}}\n${body.trimEnd()}\n{{< /mermaid >}}`,
     );
   }
 

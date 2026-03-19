@@ -425,6 +425,64 @@ describe("Callout conversion", () => {
   });
 });
 
+describe("Mermaid conversion", () => {
+  const cp = makeProcessor();
+
+  test("converts mermaid code block to shortcode", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "```mermaid\ngraph TD; A-->B\n```",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      "{{< mermaid >}}\ngraph TD; A-->B\n{{< /mermaid >}}",
+    );
+  });
+
+  test("converts multiline mermaid diagram", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "```mermaid\ngraph TD\n  A-->B\n  B-->C\n```",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      "{{< mermaid >}}\ngraph TD\n  A-->B\n  B-->C\n{{< /mermaid >}}",
+    );
+  });
+
+  test("leaves non-mermaid code blocks untouched", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "```javascript\nconst x = 1;\n```",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain("```javascript\nconst x = 1;\n```");
+    expect(result.content).not.toContain("mermaid");
+  });
+
+  test("handles multiple mermaid blocks", () => {
+    const result = cp.process(
+      wrap(
+        "title: Test\nstatus: published",
+        "```mermaid\ngraph TD; A-->B\n```\n\ntext\n\n```mermaid\ngraph LR; X-->Y\n```",
+      ),
+      "test.md",
+    );
+    expect(result.content).toContain(
+      "{{< mermaid >}}\ngraph TD; A-->B\n{{< /mermaid >}}",
+    );
+    expect(result.content).toContain(
+      "{{< mermaid >}}\ngraph LR; X-->Y\n{{< /mermaid >}}",
+    );
+  });
+});
+
 describe("Full process pipeline", () => {
   test("transforms complete note", () => {
     const cp = makeProcessor({ removePublishFlag: true });
