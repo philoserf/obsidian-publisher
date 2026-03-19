@@ -1,51 +1,157 @@
-# Obsidian Publisher — Code Walkthrough
+# Obsidian Publisher Walkthrough
 
-*2026-03-11T23:06:42Z by Showboat 0.6.1*
-<!-- showboat-id: d1ff9c85-2811-4f01-b3ad-a80f0c0cf707 -->
+*2026-03-19T18:35:16Z by Showboat 0.6.1*
+<!-- showboat-id: 7ae473d2-195c-465e-95c9-ce88323bbf92 -->
 
 ## Overview
 
-Obsidian Publisher is an Obsidian plugin that publishes notes to a GitHub repository for Hugo static site processing. It converts Obsidian-flavored markdown (wikilinks, embedded images) into Hugo-compatible formats, uploads images, and commits everything via the GitHub REST API.
+Obsidian Publisher is an [Obsidian](https://obsidian.md) plugin that publishes notes to a GitHub repository for [Hugo](https://gohugo.io) static-site processing. It converts Obsidian-flavored markdown (wikilinks, image embeds, note embeds) into Hugo-compatible formats, uploads images, and commits everything via the GitHub REST API using [Octokit](https://github.com/octokit/rest.js).
 
-**Key design constraint:** All GitHub operations use the REST API through Octokit — no local Git commands. This allows the plugin to work on iOS where Obsidian has no shell access.
+**Key constraint:** All GitHub operations use the REST API — no local Git CLI — so the plugin works on iOS.
 
-### Architecture
+**Publishing trigger:** Notes must have `status: published` in their YAML frontmatter to be eligible.
 
-    User triggers command
-      → main.ts (plugin entry, command routing, settings migration)
-        → publisher.ts (orchestration: single/batch, direct/PR workflows)
-          → content-processor.ts (wikilinks, images, frontmatter, filename sanitization)
-          → github-service.ts (Octokit wrapper: Contents API, Git Trees API, PRs, branches)
+### Two workflows
 
-### Source Files
+1. **Direct commit** (`usePullRequests = false`) — files committed straight to the base branch via the Contents API.
+2. **Branch + PR** (`usePullRequests = true`, default) — creates a timestamped branch, commits via the Git Trees API, and opens a pull request.
 
-| File | Lines | Role |
-|------|-------|------|
-| `src/types.ts` | 88 | Type definitions and defaults |
-| `src/main.ts` | 185 | Plugin entry point |
-| `src/settings.ts` | 258 | Settings UI tab |
-| `src/content-processor.ts` | 213 | Markdown transformation |
-| `src/publisher.ts` | 403 | Publishing orchestration |
-| `src/github-service.ts` | 407 | GitHub API operations |
-| `build.ts` | 19 | Bun bundler config |
-| `version-bump.ts` | 48 | Version management script |
+## Architecture
 
-Let's walk through the code in the order it executes.
-
----
-
-## 1. Types and Defaults (`src/types.ts`)
-
-Everything starts with the type system. This file defines the shapes that flow through every other module.
+### Directory layout
 
 ```bash
-sed -n '1,41p' src/types.ts
+cat <<'HEREDOC'
+src/
+  main.ts                  # Plugin entry point, command registration
+  publisher.ts             # Orchestration: single & batch publishing
+  content-processor.ts     # Obsidian → Hugo markdown conversion
+  github-service.ts        # GitHub REST API wrapper (Octokit)
+  settings.ts              # Settings UI tab
+  types.ts                 # Shared interfaces and defaults
+  content-processor.test.ts
+  sanitizer.test.ts
+  test-preload.ts          # Mock setup for bun:test
+HEREDOC
 ```
 
 ```output
-/**
- * Plugin settings interface
- */
+src/
+  main.ts                  # Plugin entry point, command registration
+  publisher.ts             # Orchestration: single & batch publishing
+  content-processor.ts     # Obsidian → Hugo markdown conversion
+  github-service.ts        # GitHub REST API wrapper (Octokit)
+  settings.ts              # Settings UI tab
+  types.ts                 # Shared interfaces and defaults
+  content-processor.test.ts
+  sanitizer.test.ts
+  test-preload.ts          # Mock setup for bun:test
+```
+
+### Data flow
+
+    User triggers command
+      → main.ts (validates settings, routes to Publisher)
+        → publisher.ts (orchestrates workflow)
+          → content-processor.ts (converts markdown, extracts images)
+          → github-service.ts (creates branch, uploads files, opens PR)
+
+### Dependencies
+
+- **obsidian** — Plugin API, vault access, YAML parsing, UI components
+- **@octokit/rest** — GitHub REST API client
+- **@octokit/request-error** — Typed error handling for API responses
+
+## Entry Point: `main.ts`
+
+The plugin class extends Obsidian's `Plugin` base class. On load, it initializes the `Publisher`, registers the settings tab, and adds two commands.
+
+```bash
+sed -n '11,22p' src/main.ts
+```
+
+```output
+export default class ObsidianPublisher extends Plugin {
+  settings!: PublisherSettings;
+  private publisher!: Publisher;
+
+  async onload() {
+    await this.loadSettings();
+
+    // Initialize publisher
+    this.publisher = new Publisher(this.app.vault, this.settings);
+
+    // Register settings tab
+    this.addSettingTab(new PublisherSettingTab(this.app, this));
+```
+
+### Settings migration
+
+Existing users who upgrade get `usePullRequests = false` (preserving the old direct-commit behavior). New installs default to `true`. The migration checks for `undefined` — not `false` — so it only fires once.
+
+```bash
+sed -n '54,63p' src/main.ts
+```
+
+```output
+  async loadSettings() {
+    const data = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+
+    // Migration: for existing users, default to false to preserve current behavior
+    if (data && data.usePullRequests === undefined) {
+      this.settings.usePullRequests = false;
+      await this.saveSettings();
+    }
+  }
+```
+
+### Command routing
+
+Both commands validate settings, then branch on `usePullRequests` to choose the workflow. Single-note publish uses the active editor file; batch publish scans the vault for `status: published`.
+
+```bash
+sed -n '84,109p' src/main.ts
+```
+
+```output
+    try {
+      let result: PublishResult & { prUrl?: string };
+
+      if (this.settings.usePullRequests) {
+        // Use PR workflow
+        result = await this.publisher.publishNoteWithPR(file);
+
+        if (result.success && result.prUrl) {
+          new Notice(`✓ Pull request created for ${file.basename}`);
+          console.log(`Pull Request: ${result.prUrl}`);
+        } else {
+          new Notice(`✗ Failed to publish: ${result.error}`);
+        }
+      } else {
+        // Fallback to direct commit workflow
+        result = await this.publisher.publishNote(file);
+
+        if (result.success) {
+          new Notice(`✓ Successfully published ${file.basename}`);
+          if (result.url) {
+            console.log(`Published to: ${result.url}`);
+          }
+        } else {
+          new Notice(`✗ Failed to publish: ${result.error}`);
+        }
+      }
+```
+
+## Types: `types.ts`
+
+Shared interfaces define the contract between modules. `DEFAULT_SETTINGS` provides zero-config defaults with sensible Hugo paths.
+
+```bash
+sed -n '4,41p' src/types.ts
+```
+
+```output
 export interface PublisherSettings {
   /** GitHub personal access token */
   githubToken: string;
@@ -81,237 +187,225 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   frontmatterTemplate: {},
   removePublishFlag: false,
   baseBranch: "main",
-  prLabels: ["published-from-obsidian"],
+  prLabels: ["chore"],
   usePullRequests: true,
 };
 ```
 
-`PublisherSettings` is the single configuration object — GitHub credentials, repo coordinates, Hugo directory paths, and workflow preferences. The defaults assume Hugo conventions (`content/posts`, `static/images`) and the PR workflow.
+## Orchestration: `publisher.ts`
 
-Note: `usePullRequests` defaults to `true` for new installs but gets migrated to `false` for existing users (handled in `main.ts`).
+`Publisher` coordinates content processing and GitHub operations. It exposes four public methods matching the two workflows × two modes (single/batch).
 
-The result types track what happened during publishing:
+### Publish gate: `hasPublishFlag`
+
+Only notes with `status: published` in YAML frontmatter are eligible. The check uses a regex over the raw frontmatter block.
 
 ```bash
-sed -n '43,88p' src/types.ts
+sed -n '392,402p' src/publisher.ts
 ```
 
 ```output
-/**
- * Processed content result
- */
-export interface ProcessedContent {
-  /** Processed markdown content */
-  content: string;
-  /** Sanitized filename */
-  filename: string;
-  /** List of image references found in the content */
-  images: string[];
-  /** Processed frontmatter */
-  frontmatter: Record<string, unknown>;
-}
+  private hasPublishFlag(content: string): boolean {
+    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+    const match = content.match(frontmatterRegex);
 
-/**
- * Publishing result for a single note
- */
-export interface PublishResult {
-  /** Original file path */
-  filePath: string;
-  /** Whether the publish was successful */
-  success: boolean;
-  /** Error message if failed */
-  error?: string;
-  /** URL to the published file on GitHub */
-  url?: string;
-  /** URL to the pull request if created */
-  prUrl?: string;
-}
-
-/**
- * Batch publishing summary
- */
-export interface BatchPublishResult {
-  /** Total number of notes attempted */
-  total: number;
-  /** Number of successful publishes */
-  successful: number;
-  /** Number of failed publishes */
-  failed: number;
-  /** Individual results */
-  results: PublishResult[];
-  /** URL to the pull request if created */
-  prUrl?: string;
-}
-```
-
-`ProcessedContent` is the intermediate representation after content transformation — the processed markdown, sanitized filename, extracted image list, and processed frontmatter. `PublishResult` and `BatchPublishResult` are the return types from the publishing workflows, carrying success/failure status and GitHub URLs.
-
----
-
-## 2. Plugin Entry Point (`src/main.ts`)
-
-This is where Obsidian loads the plugin. The `ObsidianPublisher` class extends Obsidian's `Plugin` base class and wires everything together.
-
-```bash
-sed -n '1,48p' src/main.ts
-```
-
-```output
-import { Notice, Plugin, type TFile } from "obsidian";
-import { Publisher } from "./publisher";
-import { PublisherSettingTab } from "./settings";
-import {
-  type BatchPublishResult,
-  DEFAULT_SETTINGS,
-  type PublisherSettings,
-  type PublishResult,
-} from "./types";
-
-export default class ObsidianPublisher extends Plugin {
-  settings!: PublisherSettings;
-  private publisher!: Publisher;
-
-  async onload() {
-    await this.loadSettings();
-
-    // Initialize publisher
-    this.publisher = new Publisher(this.app.vault, this.settings);
-
-    // Register settings tab
-    this.addSettingTab(new PublisherSettingTab(this.app, this));
-
-    // Register commands
-    this.addCommand({
-      id: "publish-current-note",
-      name: "Publish current note to GitHub",
-      editorCallback: async (_editor, view) => {
-        const file = view.file;
-        if (!file) {
-          new Notice("No active file");
-          return;
-        }
-
-        await this.publishCurrentNote(file);
-      },
-    });
-
-    this.addCommand({
-      id: "publish-all-notes",
-      name: "Publish all notes to GitHub",
-      callback: async () => {
-        await this.publishAllNotes();
-      },
-    });
-
-    console.log("Obsidian Publisher plugin loaded");
-  }
-```
-
-`onload()` does three things:
-1. Loads settings from Obsidian's data store (with migration logic)
-2. Creates a `Publisher` instance with the vault and settings
-3. Registers two commands: "Publish current note" (editor command, needs an active file) and "Publish all notes" (global command, scans the vault)
-
-The `editorCallback` variant only appears in the command palette when an editor is active, while `callback` is always available.
-
-### Settings Migration
-
-The migration logic handles the transition when the PR workflow was added:
-
-```bash
-sed -n '54,69p' src/main.ts
-```
-
-```output
-  async loadSettings() {
-    const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
-
-    // Migration: for existing users, default to false to preserve current behavior
-    if (data && data.usePullRequests === undefined) {
-      this.settings.usePullRequests = false;
-      await this.saveSettings();
-    }
-  }
-
-  async saveSettings() {
-    await this.saveData(this.settings);
-    // Reinitialize publisher with new settings
-    this.publisher = new Publisher(this.app.vault, this.settings);
-  }
-```
-
-When `usePullRequests` was added, existing users had saved data without that field. The migration detects this (`data.usePullRequests === undefined`) and defaults them to `false` (direct commit), preserving their existing behavior. New users get `true` from `DEFAULT_SETTINGS`.
-
-Note that `saveSettings()` recreates the `Publisher` instance. This ensures the publisher always reflects current settings after a change in the settings tab.
-
-### Command Routing
-
-Both commands follow the same pattern — validate settings, then branch on `usePullRequests`:
-
-```bash
-sed -n '74,115p' src/main.ts
-```
-
-```output
-  private async publishCurrentNote(file: TFile) {
-    // Validate settings
-    const validationError = this.publisher.validateSettings();
-    if (validationError) {
-      new Notice(`Cannot publish: ${validationError}`);
-      return;
+    if (!match) {
+      return false;
     }
 
-    new Notice(`Publishing ${file.basename}...`);
+    const frontmatter = match[1];
+    return /^status:\s*published\s*$/m.test(frontmatter);
+  }
+```
 
+### Single-file publish: `publishFileToTarget`
+
+The core publish helper reads the file, checks the flag, processes content, uploads images, then commits the markdown. An optional `branch` parameter directs the commit to a feature branch instead of the default.
+
+```bash
+sed -n '210,241p' src/publisher.ts
+```
+
+```output
+  private async publishFileToTarget(
+    file: TFile,
+    branch?: string,
+  ): Promise<PublishResult> {
     try {
-      let result: PublishResult & { prUrl?: string };
+      const content = await this.vault.read(file);
 
-      if (this.settings.usePullRequests) {
-        // Use PR workflow
-        result = await this.publisher.publishNoteWithPR(file);
-
-        if (result.success && result.prUrl) {
-          new Notice(`✓ Pull request created for ${file.basename}`);
-          console.log(`Pull Request: ${result.prUrl}`);
-        } else {
-          new Notice(`✗ Failed to publish: ${result.error}`);
-        }
-      } else {
-        // Fallback to direct commit workflow
-        result = await this.publisher.publishNote(file);
-
-        if (result.success) {
-          new Notice(`✓ Successfully published ${file.basename}`);
-          if (result.url) {
-            console.log(`Published to: ${result.url}`);
-          }
-        } else {
-          new Notice(`✗ Failed to publish: ${result.error}`);
-        }
+      if (!this.hasPublishFlag(content)) {
+        return {
+          filePath: file.path,
+          success: false,
+          error: "File does not have 'status: published' in frontmatter",
+        };
       }
+
+      const processed = this.contentProcessor.process(content, file.name);
+      await this.uploadImages(processed.images, branch);
+
+      const targetPath = `${this.settings.contentDir}/${processed.filename}`;
+      const url = await this.githubService.createOrUpdateFile(
+        targetPath,
+        processed.content,
+        `Publish: ${file.basename}`,
+        branch,
+      );
+
+      return { filePath: file.path, success: true, url };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      new Notice(`✗ Error: ${message}`);
-      console.error("Publish error:", error);
+      return { filePath: file.path, success: false, error: message };
     }
   }
 ```
 
-The `publishAllNotes()` method follows the same pattern but calls `publishAll()` / `publishAllWithPR()` and logs batch results. The UI layer (`main.ts`) handles user-facing notifications via `new Notice()` while errors go to `console.error()`.
+### Batch publish: `prepareBatch`
 
----
-
-## 3. Content Processing (`src/content-processor.ts`)
-
-This is the transformation engine. It converts Obsidian-flavored markdown into Hugo-compatible markdown by processing frontmatter, converting wikilinks, converting image embeds, and sanitizing filenames.
-
-### The Process Pipeline
-
-The `process()` method runs transformations in a specific order:
+Batch mode collects all publishable files into a single atomic commit using the Git Trees API. It deduplicates images across notes using a `Map` keyed by target path.
 
 ```bash
-sed -n '14,43p' src/content-processor.ts
+sed -n '282,343p' src/publisher.ts
+```
+
+```output
+  private async prepareBatch(files: TFile[]): Promise<{
+    results: PublishResult[];
+    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
+  }> {
+    const results: PublishResult[] = [];
+    const entryMap = new Map<string, string | ArrayBuffer>();
+    const allFailedImages: string[] = [];
+    const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
+
+    for (const file of files) {
+      try {
+        const content = await this.vault.read(file);
+        const processed = this.contentProcessor.process(content, file.name);
+
+        // Add markdown entry
+        const targetPath = `${this.settings.contentDir}/${processed.filename}`;
+        entryMap.set(targetPath, processed.content);
+
+        // Resolve images
+        for (const imageName of processed.images) {
+          const imageFile = filesByName.get(imageName);
+          if (!imageFile) {
+            allFailedImages.push(imageName);
+            continue;
+          }
+          try {
+            const imageContent = await this.vault.readBinary(imageFile);
+            const sanitizedName =
+              this.contentProcessor.sanitizeImageName(imageName);
+            const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+            entryMap.set(imgPath, imageContent);
+          } catch (error) {
+            console.error(`Failed to read image ${imageName}:`, error);
+            allFailedImages.push(imageName);
+          }
+        }
+
+        results.push({ filePath: file.path, success: true });
+        new Notice(`Prepared: ${results.length}/${files.length}`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        results.push({
+          filePath: file.path,
+          success: false,
+          error: message,
+        });
+      }
+    }
+
+    if (allFailedImages.length > 0) {
+      const unique = [...new Set(allFailedImages)];
+      new Notice(
+        `Warning: ${unique.length} image(s) failed: ${unique.join(", ")}`,
+      );
+    }
+
+    const fileEntries = Array.from(entryMap.entries()).map(
+      ([path, content]) => ({ path, content }),
+    );
+    return { results, fileEntries };
+  }
+```
+
+### PR workflow: `publishNoteWithPR`
+
+The PR workflow wraps `publishFileToTarget` with branch creation and PR opening. If publishing fails, the orphaned branch is cleaned up (best-effort).
+
+```bash
+sed -n '62,114p' src/publisher.ts
+```
+
+```output
+  async publishNoteWithPR(
+    file: TFile,
+  ): Promise<PublishResult & { prUrl?: string }> {
+    if (!(await this.canPublish(file))) {
+      return {
+        filePath: file.path,
+        success: false,
+        error: "File does not have 'status: published' in frontmatter",
+      };
+    }
+
+    let branchName: string | null = null;
+
+    try {
+      branchName = await this.githubService.createBranchWithRetry(
+        "publish",
+        this.settings.baseBranch || "main",
+      );
+
+      const result = await this.publishFileToTarget(file, branchName);
+
+      if (!result.success) {
+        try {
+          await this.githubService.deleteBranch(branchName);
+        } catch {
+          // Best-effort cleanup
+        }
+        return result;
+      }
+
+      const prTitle = `Publish: ${file.basename}`;
+      const prBody = `Published from Obsidian\n\n**File:** ${file.path}`;
+      const pr = await this.githubService.createPullRequest(
+        branchName,
+        this.settings.baseBranch || "main",
+        prTitle,
+        prBody,
+        this.settings.prLabels || ["chore"],
+      );
+
+      return { ...result, prUrl: pr.url };
+    } catch (error) {
+      if (branchName) {
+        try {
+          await this.githubService.deleteBranch(branchName);
+        } catch {
+          // Best-effort cleanup
+        }
+      }
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return { filePath: file.path, success: false, error: message };
+    }
+  }
+```
+
+## Content Processing: `content-processor.ts`
+
+The processor converts Obsidian-flavored markdown to Hugo-compatible markdown. Processing order matters: images first, then note embeds, then wikilinks — because all three use the `![[...]]` or `[[...]]` syntax.
+
+### Processing pipeline
+
+```bash
+sed -n '16,46p' src/content-processor.ts
 ```
 
 ```output
@@ -327,6 +421,7 @@ sed -n '14,43p' src/content-processor.ts
     // Convert content
     let processedBody = body;
     processedBody = this.convertImageReferences(processedBody);
+    processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
 
     // Reassemble content with frontmatter
@@ -347,46 +442,119 @@ sed -n '14,43p' src/content-processor.ts
   }
 ```
 
-**Order matters:** Image references (`![[image.png]]`) are converted before wikilinks (`[[Page]]`). If wikilinks ran first, it would incorrectly match the image syntax since `![[...]]` contains `[[...]]`. The image regex consumes `![[...]]` patterns first, leaving only true wikilinks for the second pass.
+### Wikilink conversion
 
-Images are extracted *before* conversion so the original filenames (not sanitized versions) are available for vault lookup later.
-
-### Frontmatter Extraction and Processing
+Converts `[[Page]]`, `[[Page|Display]]`, `[[Page#Heading]]`, and `[[Page#Heading|Display]]` into Hugo `ref` shortcodes with slugified paths and lowercased heading anchors.
 
 ```bash
-sed -n '48,70p' src/content-processor.ts
+sed -n '156,168p' src/content-processor.ts
 ```
 
 ```output
-  private extractFrontmatter(content: string): {
-    frontmatter: Record<string, unknown>;
-    body: string;
-  } {
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-    const match = content.match(frontmatterRegex);
-
-    if (!match) {
-      return { frontmatter: {}, body: content };
-    }
-
-    try {
-      const frontmatter = parseYaml(match[1]) || {};
-      const body = match[2];
-      return {
-        frontmatter: typeof frontmatter === "object" ? frontmatter : {},
-        body,
-      };
-    } catch (error) {
-      console.error("Failed to parse frontmatter:", error);
-      return { frontmatter: {}, body: content };
-    }
+  private convertWikilinks(content: string): string {
+    return content.replace(
+      /\[\[([^\]|#]+)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
+      (_match, page, _hashGroup, heading, _pipeGroup, displayText) => {
+        const display = displayText || (heading ? `${page}#${heading}` : page);
+        const slug = this.sanitizeSlug(page);
+        const fragment = heading
+          ? `#${heading.toLowerCase().replace(/\s+/g, "-")}`
+          : "";
+        return `[${display}]({{< ref "${slug}${fragment}" >}})`;
+      },
+    );
   }
 ```
 
-The regex `^---\n([\s\S]*?)\n---\n([\s\S]*)$` splits content at YAML frontmatter delimiters. It uses a non-greedy match (`*?`) to capture the first `---` block only. Obsidian's `parseYaml()` handles the actual YAML parsing. On parse failure, the content is returned as-is with empty frontmatter — a safe fallback.
+### Image and note embed conversion
+
+Image embeds (`![[photo.png]]`) are converted to standard markdown with a URL path derived from `imageDir` (stripping Hugo's `static/` prefix). Non-image embeds (`![[Some Note]]`) become Hugo ref links.
 
 ```bash
-sed -n '75,101p' src/content-processor.ts
+sed -n '126,197p' src/content-processor.ts
+```
+
+```output
+  /**
+   * Derive the URL path for images from the imageDir setting.
+   * Strips "static/" prefix since Hugo serves static/ at the root.
+   */
+  private imageUrlPath(): string {
+    return `/${this.settings.imageDir.replace(/^static\/?/, "")}`;
+  }
+
+  /**
+   * Extract image references from content (only actual images, not note embeds)
+   */
+  private extractImages(content: string): string[] {
+    const embedRegex = /!\[\[([^\]]+)\]\]/g;
+    const images: string[] = [];
+
+    let match = embedRegex.exec(content);
+    while (match !== null) {
+      if (IMAGE_EXTENSIONS.test(match[1])) {
+        images.push(match[1]);
+      }
+      match = embedRegex.exec(content);
+    }
+
+    return images;
+  }
+
+  /**
+   * Convert Obsidian wikilinks to Hugo ref shortcodes
+   * Handles: [[Page]], [[Page|Display]], [[Page#Heading]], [[Page#Heading|Display]]
+   */
+  private convertWikilinks(content: string): string {
+    return content.replace(
+      /\[\[([^\]|#]+)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
+      (_match, page, _hashGroup, heading, _pipeGroup, displayText) => {
+        const display = displayText || (heading ? `${page}#${heading}` : page);
+        const slug = this.sanitizeSlug(page);
+        const fragment = heading
+          ? `#${heading.toLowerCase().replace(/\s+/g, "-")}`
+          : "";
+        return `[${display}]({{< ref "${slug}${fragment}" >}})`;
+      },
+    );
+  }
+
+  /**
+   * Convert note embeds (![[Note Name]]) to Hugo ref links.
+   * Only matches embeds that are NOT image files.
+   */
+  private convertNoteEmbeds(content: string): string {
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, name) => {
+      if (IMAGE_EXTENSIONS.test(name)) {
+        return _match; // leave for convertImageReferences (already processed)
+      }
+      const slug = this.sanitizeSlug(name);
+      return `[${name}]({{< ref "${slug}" >}})`;
+    });
+  }
+
+  /**
+   * Convert Obsidian image references to Hugo-compatible markdown.
+   * Derives the URL path from the imageDir setting.
+   */
+  private convertImageReferences(content: string): string {
+    const urlPath = this.imageUrlPath();
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, imageName) => {
+      if (!IMAGE_EXTENSIONS.test(imageName)) {
+        return _match; // not an image — leave for convertNoteEmbeds
+      }
+      const sanitizedName = this.sanitizeFilename(imageName);
+      return `![${imageName}](${urlPath}/${sanitizedName})`;
+    });
+  }
+```
+
+### Frontmatter processing
+
+Frontmatter is parsed with Obsidian's `parseYaml`, processed (optional status removal, template merge, date injection), then serialized back with `stringifyYaml`.
+
+```bash
+sed -n '78,104p' src/content-processor.ts
 ```
 
 ```output
@@ -419,80 +587,12 @@ sed -n '75,101p' src/content-processor.ts
   }
 ```
 
-Frontmatter processing does three things:
-1. **Optionally strips `status`** — removes the publishing flag so Hugo doesn't see it
-2. **Merges template fields** — adds configured fields without overriding user-set values
-3. **Ensures `date` exists** — Hugo requires a date field; auto-generates one if missing
+### Filename sanitization
 
-The non-override behavior (`if (!(key in processed))`) is important: user-authored frontmatter always takes precedence over template defaults.
-
-### Wikilink and Image Conversion
+Filenames are lowercased, spaces replaced with hyphens, special characters stripped, and consecutive hyphens collapsed. The extension is preserved. Empty results become `untitled`.
 
 ```bash
-sed -n '126,165p' src/content-processor.ts
-```
-
-```output
-  private extractImages(content: string): string[] {
-    const imageRegex = /!\[\[([^\]]+)\]\]/g;
-    const images: string[] = [];
-
-    let match = imageRegex.exec(content);
-    while (match !== null) {
-      images.push(match[1]);
-      match = imageRegex.exec(content);
-    }
-
-    return images;
-  }
-
-  /**
-   * Convert Obsidian wikilinks to markdown links
-   * Handles: [[Page]] and [[Page|Display Text]]
-   */
-  private convertWikilinks(content: string): string {
-    return content.replace(
-      /\[\[([^\]|]+)(\|([^\]]+))?\]\]/g,
-      (_match, page, _, displayText) => {
-        const display = displayText || page;
-        const slug = this.sanitizeFilename(page);
-        return `[${display}](${slug})`;
-      },
-    );
-  }
-
-  /**
-   * Convert Obsidian image references to Hugo-compatible markdown
-   * Handles: ![[image.png]]
-   */
-  private convertImageReferences(content: string): string {
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, imageName) => {
-      const sanitizedName = this.sanitizeFilename(imageName);
-      // Hugo paths are relative to content directory
-      // Images in static/images are referenced as /images/
-      return `![${imageName}](/images/${sanitizedName})`;
-    });
-  }
-```
-
-The conversions:
-
-| Obsidian | Hugo |
-|----------|------|
-| `[[Page Name]]` | `[Page Name](page-name)` |
-| `[[Page\|Custom Text]]` | `[Custom Text](page)` |
-| `![[photo.png]]` | `![photo.png](/images/photo.png)` |
-
-Wikilink targets are sanitized (lowercased, hyphenated) to produce URL-safe slugs. Image alt text preserves the original filename for readability while the path uses the sanitized version.
-
-Note the image path is hardcoded to `/images/` — this matches Hugo's convention where `static/images/foo.png` becomes `/images/foo.png` in the rendered site. The `imageDir` setting controls where files are uploaded to GitHub, but the *reference* path is always `/images/`.
-
-**Concern:** The hardcoded `/images/` prefix means if a user sets `imageDir` to something like `static/assets/img`, their image references will still point to `/images/`, breaking the link. This coupling between the upload path and the reference path should be configurable or derived from `imageDir`.
-
-### Filename Sanitization
-
-```bash
-sed -n '174,205p' src/content-processor.ts
+sed -n '217,248p' src/content-processor.ts
 ```
 
 ```output
@@ -530,112 +630,19 @@ sed -n '174,205p' src/content-processor.ts
   }
 ```
 
-The sanitizer produces Hugo-friendly URL slugs:
+## GitHub Service: `github-service.ts`
 
-1. Separate name from extension (preserves `.md`, `.png`, etc.)
-2. Lowercase everything
-3. Spaces → hyphens
-4. Strip special characters (keep `a-z`, `0-9`, `-`, `_`)
-5. Collapse consecutive hyphens
-6. Trim leading/trailing hyphens
-7. Empty result → `"untitled"`
+All GitHub API interactions go through `GitHubService`. It wraps Octokit and provides two commit strategies.
 
-This is well-tested — see the test suite below. The extension is *not* sanitized (just preserved as-is), which is fine since extensions are typically already clean.
+### Contents API (single-file)
 
----
-
-## 4. GitHub Service (`src/github-service.ts`)
-
-This is the API layer — all GitHub communication goes through this class. It wraps Octokit and provides two commit strategies.
+Used by `publishFileToTarget` for direct commits. Each file is a separate API call and a separate commit.
 
 ```bash
-sed -n '1,33p' src/github-service.ts
+sed -n '76,117p' src/github-service.ts
 ```
 
 ```output
-import { RequestError } from "@octokit/request-error";
-import { Octokit } from "@octokit/rest";
-import type { PublisherSettings } from "./types";
-
-export class GitHubService {
-  private octokit: Octokit;
-  private settings: PublisherSettings;
-
-  constructor(settings: PublisherSettings) {
-    this.settings = settings;
-    this.octokit = new Octokit({
-      auth: settings.githubToken,
-    });
-  }
-
-  /**
-   * Validate that the GitHub connection and repository access works
-   */
-  async validateConnection(): Promise<void> {
-    try {
-      await this.octokit.repos.get({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-      });
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Failed to access repository: ${error.message}. Check your token and repository settings.`,
-        );
-      }
-      throw error;
-    }
-  }
-```
-
-The constructor creates an Octokit instance with the user's GitHub token. `validateConnection()` is used by the "Test Connection" button in settings — it attempts a `repos.get()` call to verify both the token and repository access.
-
-### Strategy 1: Contents API (Single-File Commits)
-
-For single-file publishing, the Contents API creates one commit per file:
-
-```bash
-sed -n '39,117p' src/github-service.ts
-```
-
-```output
-  async getFileSha(path: string, branch?: string): Promise<string | null> {
-    try {
-      const params: {
-        owner: string;
-        repo: string;
-        path: string;
-        ref?: string;
-      } = {
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        path,
-      };
-
-      if (branch) {
-        params.ref = branch;
-      }
-
-      const response = await this.octokit.repos.getContent(params);
-
-      // GitHub API returns an array for directories, object for files
-      if (Array.isArray(response.data)) {
-        return null;
-      }
-
-      return "sha" in response.data ? response.data.sha : null;
-    } catch (error) {
-      // 404 means file doesn't exist, which is fine
-      if (error instanceof RequestError && error.status === 404) {
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Create or update a file in the repository
-   */
   async createOrUpdateFile(
     path: string,
     content: string,
@@ -680,18 +687,9 @@ sed -n '39,117p' src/github-service.ts
   }
 ```
 
-The Contents API pattern:
+### Git Trees API (batch commit)
 
-1. `getFileSha()` checks if the file exists — returns the SHA for updates, `null` for creates
-2. `createOrUpdateFile()` sends the file content (base64-encoded) with the SHA if updating
-
-GitHub's Contents API requires the existing file's SHA for updates (optimistic concurrency). The 404 → `null` pattern in `getFileSha()` is standard for GitHub API consumers.
-
-**Concern:** Each file creates a separate commit. For single-note publishing this is fine, but `uploadImages()` in `publisher.ts` calls `uploadImage()` per image via the Contents API. A note with 5 images produces 6 commits (5 images + 1 markdown). This is noisy in the git history.
-
-### Strategy 2: Git Trees API (Atomic Batch Commits)
-
-For batch publishing, the lower-level Git Trees API creates one atomic commit for all files:
+Used by `prepareBatch` for atomic multi-file commits. Creates blobs for each file in parallel, builds a new tree, creates a commit, and updates the branch ref — all in one logical operation.
 
 ```bash
 sed -n '291,355p' src/github-service.ts
@@ -765,130 +763,15 @@ sed -n '291,355p' src/github-service.ts
   }
 ```
 
-The Git Trees API workflow:
+### Branch management and collision handling
 
-1. **Get branch SHA** — find the current tip of the target branch
-2. **Get commit** — retrieve the commit to find its tree SHA
-3. **Create blobs** — upload each file as a blob object (parallelized with `Promise.all`)
-4. **Create tree** — build a new tree with the blobs, based on the existing tree
-5. **Create commit** — create a commit pointing to the new tree with the branch tip as parent
-6. **Update ref** — fast-forward the branch to the new commit
-
-This produces a single, atomic commit regardless of how many files are included. The `base_tree` parameter ensures existing files in the repo are preserved — only the specified paths are added or updated.
-
-**Concern:** Blob creation is parallelized (`Promise.all`), which is good for performance but could hit GitHub's rate limits with many files. No rate-limit handling exists.
-
-### Branch Management and PR Creation
+Branches are named with ISO timestamps (e.g., `publish/2026-03-19T18-21-46`). `createBranchWithRetry` handles 422 collisions by appending a suffix (`-1`, `-2`), retrying up to 3 times.
 
 ```bash
-sed -n '199,286p' src/github-service.ts
+sed -n '371,406p' src/github-service.ts
 ```
 
 ```output
-  async getBranchSha(branch: string): Promise<string> {
-    try {
-      const response = await this.octokit.rest.git.getRef({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        ref: `heads/${branch}`,
-      });
-      return response.data.object.sha;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Failed to get SHA for branch ${branch}: ${error.message}`,
-        );
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Create a new branch from a base branch
-   * Returns the branch name
-   */
-  async createBranch(branchName: string, baseBranch = "main"): Promise<string> {
-    try {
-      // Get the SHA of the base branch
-      const baseSha = await this.getBranchSha(baseBranch);
-
-      // Create new reference
-      await this.octokit.rest.git.createRef({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        ref: `refs/heads/${branchName}`,
-        sha: baseSha,
-      });
-
-      return branchName;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Failed to create branch ${branchName}: ${error.message}`,
-        );
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Create a pull request
-   * Returns the PR URL and PR number
-   */
-  async createPullRequest(
-    head: string,
-    base: string,
-    title: string,
-    body: string,
-    labels?: string[],
-  ): Promise<{ url: string; number: number }> {
-    try {
-      const response = await this.octokit.rest.pulls.create({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        title,
-        head,
-        base,
-        body,
-      });
-
-      // Add labels if provided
-      if (labels && labels.length > 0) {
-        await this.octokit.rest.issues.addLabels({
-          owner: this.settings.repoOwner,
-          repo: this.settings.repoName,
-          issue_number: response.data.number,
-          labels,
-        });
-      }
-
-      return {
-        url: response.data.html_url,
-        number: response.data.number,
-      };
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Failed to create pull request: ${error.message}`);
-      }
-      throw error;
-    }
-  }
-```
-
-Branch creation gets the base branch SHA and creates a new Git ref pointing to it. PR creation uses the Pulls API, then adds labels via the Issues API (GitHub treats PR labels as issue labels).
-
-Labels are added in a separate API call after PR creation. If label addition fails, the PR still exists but lacks labels — a reasonable tradeoff.
-
-### Branch Collision Handling
-
-```bash
-sed -n '368,407p' src/github-service.ts
-```
-
-```output
-  /**
-   * Generate a unique branch name for publishing
-   */
   generateBranchName(prefix = "publish"): string {
     const timestamp = new Date()
       .toISOString()
@@ -925,23 +808,17 @@ sed -n '368,407p' src/github-service.ts
 
     throw new Error(`Failed to create branch after ${maxRetries} attempts`);
   }
-}
 ```
 
-Branch names follow the pattern `publish/2026-03-08T14-30-22` (ISO timestamp with colons/dots replaced by hyphens). If a collision occurs (HTTP 422), it retries with `-1`, `-2` suffixes up to 3 attempts.
+### Cross-platform base64 encoding
 
-**Concern:** The retry calls `generateBranchName()` again on each iteration, generating a *new* timestamp. If the loop takes more than a second between iterations, the second attempt gets a different timestamp entirely (which would likely succeed anyway, making the suffix logic dead code in practice). The suffix would only matter if two publishes happened within the same second.
-
-### Base64 Encoding
+The plugin avoids Node.js `Buffer` for iOS compatibility. Instead, it uses `TextEncoder` + `btoa` with chunked processing (8192-byte chunks to avoid stack overflow from `String.fromCharCode` spread).
 
 ```bash
-sed -n '165,187p' src/github-service.ts
+sed -n '168,187p' src/github-service.ts
 ```
 
 ```output
-  /**
-   * Convert string to base64 (cross-platform)
-   */
   private stringToBase64(str: string): string {
     const bytes = new TextEncoder().encode(str);
     const chunks: string[] = [];
@@ -964,348 +841,17 @@ sed -n '165,187p' src/github-service.ts
   }
 ```
 
-Both methods chunk the byte array into 8192-byte segments before calling `String.fromCharCode()`. This avoids the "Maximum call stack size exceeded" error that occurs when spreading large arrays (`String.fromCharCode(...hugeArray)`). The `btoa()` call then base64-encodes the joined string.
+## Settings UI: `settings.ts`
 
-Two methods exist because the GitHub API needs base64 for both text content (markdown files → `string`) and binary content (images → `ArrayBuffer`). The logic is identical — the only difference is the input type.
+`PublisherSettingTab` extends Obsidian's `PluginSettingTab` to render a form for all settings. Notable details:
 
----
-
-## 5. Publisher Orchestration (`src/publisher.ts`)
-
-The Publisher ties content processing and GitHub operations together. It implements four publishing methods:
-
-| Method | Scope | Strategy |
-|--------|-------|----------|
-| `publishNote()` | Single file | Direct commit (Contents API) |
-| `publishAll()` | All flagged files | Atomic batch commit (Git Trees API) |
-| `publishNoteWithPR()` | Single file | Branch + PR |
-| `publishAllWithPR()` | All flagged files | Branch + atomic batch + PR |
+- **Token field** uses `type="password"` to mask the value
+- **Directory fields** strip leading/trailing slashes on save
+- **Frontmatter template** uses Obsidian's `parseYaml`/`stringifyYaml` with a simple `key: value` fallback parser
+- **Test Connection** button instantiates a temporary `GitHubService` to validate credentials
 
 ```bash
-sed -n '210,241p' src/publisher.ts
-```
-
-```output
-  private async publishFileToTarget(
-    file: TFile,
-    branch?: string,
-  ): Promise<PublishResult> {
-    try {
-      const content = await this.vault.read(file);
-
-      if (!this.hasPublishFlag(content)) {
-        return {
-          filePath: file.path,
-          success: false,
-          error: "File does not have 'status: published' in frontmatter",
-        };
-      }
-
-      const processed = this.contentProcessor.process(content, file.name);
-      await this.uploadImages(processed.images, branch);
-
-      const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      const url = await this.githubService.createOrUpdateFile(
-        targetPath,
-        processed.content,
-        `Publish: ${file.basename}`,
-        branch,
-      );
-
-      return { filePath: file.path, success: true, url };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      return { filePath: file.path, success: false, error: message };
-    }
-  }
-```
-
-`publishFileToTarget()` is the core single-file workflow:
-
-1. Read file from vault
-2. Check for `status: published` frontmatter flag
-3. Process content (wikilinks, images, frontmatter)
-4. Upload referenced images
-5. Upload the markdown file
-6. Return result with GitHub URL
-
-This is used by both `publishNote()` (direct commit) and `publishNoteWithPR()` (branch workflow). The optional `branch` parameter routes uploads to either the base branch or a feature branch.
-
-### Batch Publishing
-
-```bash
-sed -n '282,343p' src/publisher.ts
-```
-
-```output
-  private async prepareBatch(files: TFile[]): Promise<{
-    results: PublishResult[];
-    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
-  }> {
-    const results: PublishResult[] = [];
-    const entryMap = new Map<string, string | ArrayBuffer>();
-    const allFailedImages: string[] = [];
-    const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
-
-    for (const file of files) {
-      try {
-        const content = await this.vault.read(file);
-        const processed = this.contentProcessor.process(content, file.name);
-
-        // Add markdown entry
-        const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-        entryMap.set(targetPath, processed.content);
-
-        // Resolve images
-        for (const imageName of processed.images) {
-          const imageFile = filesByName.get(imageName);
-          if (!imageFile) {
-            allFailedImages.push(imageName);
-            continue;
-          }
-          try {
-            const imageContent = await this.vault.readBinary(imageFile);
-            const sanitizedName =
-              this.contentProcessor.sanitizeImageName(imageName);
-            const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
-            entryMap.set(imgPath, imageContent);
-          } catch (error) {
-            console.error(`Failed to read image ${imageName}:`, error);
-            allFailedImages.push(imageName);
-          }
-        }
-
-        results.push({ filePath: file.path, success: true });
-        new Notice(`Prepared: ${results.length}/${files.length}`);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
-        results.push({
-          filePath: file.path,
-          success: false,
-          error: message,
-        });
-      }
-    }
-
-    if (allFailedImages.length > 0) {
-      const unique = [...new Set(allFailedImages)];
-      new Notice(
-        `Warning: ${unique.length} image(s) failed: ${unique.join(", ")}`,
-      );
-    }
-
-    const fileEntries = Array.from(entryMap.entries()).map(
-      ([path, content]) => ({ path, content }),
-    );
-    return { results, fileEntries };
-  }
-```
-
-`prepareBatch()` collects all files and images into a single `Map<path, content>` for atomic commit via `commitFiles()`. Key behaviors:
-
-- **Deduplication:** Using a `Map` means if two notes reference the same image, it's only included once
-- **Image resolution:** Images are looked up by filename from the vault's file index (`getFiles()`)
-- **Progress feedback:** Shows `Prepared: N/M` notices as files are processed
-- **Graceful degradation:** Failed images are collected and reported but don't block the batch
-
-The vault file index is built once with `this.vault.getFiles().map(f => [f.name, f])` — a `Map` for O(1) lookups by filename. This is efficient for vaults with many files.
-
-**Concern:** Image lookup is by filename only (`filesByName.get(imageName)`). If two images in different vault folders share the same name (e.g., `attachments/photo.png` and `archive/photo.png`), only the last one in the file list wins. This could silently upload the wrong image.
-
-### Publish Flag Detection
-
-```bash
-sed -n '392,402p' src/publisher.ts
-```
-
-```output
-  private hasPublishFlag(content: string): boolean {
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
-    const match = content.match(frontmatterRegex);
-
-    if (!match) {
-      return false;
-    }
-
-    const frontmatter = match[1];
-    return /^status:\s*published\s*$/m.test(frontmatter);
-  }
-```
-
-This uses regex rather than YAML parsing — faster for scanning the entire vault. It extracts the frontmatter block, then checks for a `status: published` line.
-
-**Concern:** The match is case-sensitive. `status: Published` or `status: PUBLISHED` won't trigger publishing. This is tracked in issue #50. Also note the duplicate frontmatter extraction: `hasPublishFlag()` extracts frontmatter with regex, then `ContentProcessor.extractFrontmatter()` does it again with YAML parsing. A minor inefficiency — the file content is read and regex-matched twice per publish.
-
-### PR Workflow with Cleanup
-
-```bash
-sed -n '62,114p' src/publisher.ts
-```
-
-```output
-  async publishNoteWithPR(
-    file: TFile,
-  ): Promise<PublishResult & { prUrl?: string }> {
-    if (!(await this.canPublish(file))) {
-      return {
-        filePath: file.path,
-        success: false,
-        error: "File does not have 'status: published' in frontmatter",
-      };
-    }
-
-    let branchName: string | null = null;
-
-    try {
-      branchName = await this.githubService.createBranchWithRetry(
-        "publish",
-        this.settings.baseBranch || "main",
-      );
-
-      const result = await this.publishFileToTarget(file, branchName);
-
-      if (!result.success) {
-        try {
-          await this.githubService.deleteBranch(branchName);
-        } catch {
-          // Best-effort cleanup
-        }
-        return result;
-      }
-
-      const prTitle = `Publish: ${file.basename}`;
-      const prBody = `Published from Obsidian\n\n**File:** ${file.path}`;
-      const pr = await this.githubService.createPullRequest(
-        branchName,
-        this.settings.baseBranch || "main",
-        prTitle,
-        prBody,
-        this.settings.prLabels || ["published-from-obsidian"],
-      );
-
-      return { ...result, prUrl: pr.url };
-    } catch (error) {
-      if (branchName) {
-        try {
-          await this.githubService.deleteBranch(branchName);
-        } catch {
-          // Best-effort cleanup
-        }
-      }
-      const message = error instanceof Error ? error.message : "Unknown error";
-      return { filePath: file.path, success: false, error: message };
-    }
-  }
-```
-
-The PR workflow wraps the direct-commit workflow with branch lifecycle management:
-
-1. Check publish flag (early exit if missing)
-2. Create a timestamped branch
-3. Publish file to that branch
-4. If publishing fails → delete the branch (best-effort cleanup)
-5. If publishing succeeds → create a PR
-6. If anything throws → delete the branch (best-effort cleanup)
-
-The cleanup is best-effort (`catch {}`) because a failed cleanup shouldn't mask the original error. Orphaned branches are a minor annoyance, not a data loss risk.
-
-**Concern:** `canPublish()` reads the file and checks the flag, then `publishFileToTarget()` reads the file again and checks the flag again. Three reads of the same file content in the PR path (plus the frontmatter extraction in ContentProcessor). Not a correctness issue, but wasteful for large files.
-
----
-
-## 6. Settings UI (`src/settings.ts`)
-
-The settings tab provides the configuration UI within Obsidian's settings panel.
-
-```bash
-sed -n '20,41p' src/settings.ts
-```
-
-```output
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    containerEl.createEl("h2", { text: "Obsidian Publisher Settings" });
-
-    // GitHub Token
-    new Setting(containerEl)
-      .setName("GitHub Personal Access Token")
-      .setDesc(
-        "Create a token at github.com/settings/tokens with 'repo' scope. Token is stored securely.",
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("ghp_xxxxxxxxxxxx")
-          .setValue(this.plugin.settings.githubToken)
-          .onChange(async (value) => {
-            this.plugin.settings.githubToken = value;
-            await this.plugin.saveSettings();
-          })
-          .inputEl.setAttribute("type", "password"),
-      );
-```
-
-**Concern:** The description says "Token is stored securely" but the token is saved to Obsidian's `data.json` in plaintext on disk. The `type="password"` attribute only masks the input in the UI. This is tracked in issue #45. Obsidian doesn't provide a secure credential storage API, so this is a platform limitation, but the description shouldn't claim security it doesn't have.
-
-Each setting field calls `this.plugin.saveSettings()` on change, which also reinstantiates the Publisher. This means settings take effect immediately without requiring a plugin reload.
-
-### Frontmatter Template Parsing
-
-```bash
-sed -n '197,231p' src/settings.ts
-```
-
-```output
-  private serializeFrontmatter(template: Record<string, unknown>): string {
-    if (Object.keys(template).length === 0) return "";
-    try {
-      return stringifyYaml(template).trim();
-    } catch {
-      return Object.entries(template)
-        .map(([key, value]) => `${key}: ${value}`)
-        .join("\n");
-    }
-  }
-
-  private parseFrontmatter(text: string): Record<string, unknown> {
-    const trimmed = text.trim();
-    if (!trimmed) return {};
-    try {
-      const parsed = parseYaml(trimmed);
-      return typeof parsed === "object" && parsed !== null ? parsed : {};
-    } catch {
-      return this.parseSimpleFrontmatter(trimmed);
-    }
-  }
-
-  private parseSimpleFrontmatter(text: string): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const line of text.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      const colonIndex = t.indexOf(":");
-      if (colonIndex === -1) continue;
-      const key = t.slice(0, colonIndex).trim();
-      const value = t.slice(colonIndex + 1).trim();
-      if (key && value) result[key] = value;
-    }
-    return result;
-  }
-```
-
-The frontmatter template textarea accepts YAML input. Parsing has two tiers:
-
-1. **YAML parser** (`parseYaml()` from Obsidian) — handles full YAML syntax including arrays, nested objects
-2. **Fallback parser** (`parseSimpleFrontmatter()`) — handles simple `key: value` lines when YAML parsing fails
-
-The fallback only produces string values. If a user types `count: 5`, YAML parsing returns `{ count: 5 }` (number), but the fallback returns `{ count: "5" }` (string). This inconsistency could cause subtle frontmatter differences depending on whether the input is valid YAML.
-
-### Connection Test
-
-```bash
-sed -n '233,258p' src/settings.ts
+sed -n '233,257p' src/settings.ts
 ```
 
 ```output
@@ -1334,19 +880,29 @@ sed -n '233,258p' src/settings.ts
       console.error("GitHub connection test failed:", error);
     }
   }
-}
 ```
 
-The connection test creates a temporary `GitHubService` instance and calls `validateConnection()`. This verifies the token is valid and the repository is accessible. Note that it creates its own GitHubService rather than using the publisher's instance — this is correct because the settings may have just changed and the publisher hasn't been reinstantiated yet (though `saveSettings()` does reinstantiate, the test button doesn't call save first).
+## Testing
 
----
-
-## 7. Build System
-
-### Bun Bundler (`build.ts`)
+Tests use Bun's built-in runner with mocks preloaded via `bunfig.toml`. The mock provides stubs for `parseYaml`, `stringifyYaml`, and `Notice`.
 
 ```bash
-cat build.ts
+grep -c 'test(' src/content-processor.test.ts src/sanitizer.test.ts
+```
+
+```output
+src/content-processor.test.ts:24
+src/sanitizer.test.ts:10
+```
+
+Test coverage focuses on content processing (24 tests) and filename sanitization (10 tests). There are no tests for `publisher.ts`, `github-service.ts`, or `settings.ts` — these would require mocking the Obsidian Vault API and Octokit.
+
+## Build
+
+The plugin bundles to a single `main.js` via Bun's bundler, externalizing `obsidian` and `electron`, and bundling `@octokit/rest` inline.
+
+```bash
+sed -n '1,19p' build.ts
 ```
 
 ```output
@@ -1371,255 +927,25 @@ if (watch) console.log("Watching for changes...");
 export {};
 ```
 
-The build bundles everything into a single `main.js` file:
+## Concerns
 
-- **Format:** CommonJS (`cjs`) — required by Obsidian's plugin loader
-- **Externals:** `obsidian` and `electron` are provided by the runtime
-- **Bundled:** `@octokit/rest` and its dependencies are inlined
-- **Minification:** Enabled for production builds, disabled in watch mode for readable source maps
+### Code quality
 
-The `export {}` at the end makes TypeScript treat this as a module (required for top-level `await`).
+1. **`version-bump.ts` doesn't bump** — The script reads `npm_package_version` from the environment (set by `bun run` from `package.json`), so it only syncs `manifest.json`/`versions.json` to match. The actual version bump must be done manually in `package.json` first, making the `bun run version patch` command misleading.
 
-### Version Management (`version-bump.ts`)
+2. **Duplicated `hasPublishFlag` check** — `publishNoteWithPR` calls `canPublish` (which reads the file and checks the flag), then `publishFileToTarget` reads the file again and re-checks. The file is read twice and the flag is checked twice.
 
-```bash
-cat version-bump.ts
-```
+3. **Duplicated base64 methods** — `stringToBase64` and `arrayBufferToBase64` share identical chunking logic; only the input-to-bytes step differs. Could be a single method accepting `Uint8Array`.
 
-```output
-import { readFileSync, writeFileSync } from "node:fs";
+4. **No test coverage for publisher or GitHub service** — The orchestration and API layers are untested. Integration tests with mocked Octokit would catch regressions in the publish pipeline.
 
-const targetVersion = process.env.npm_package_version;
-if (!targetVersion) {
-  throw new Error("No version found in package.json");
-}
+5. **`baseBranch` fallback scattered** — `this.settings.baseBranch || "main"` appears 5 times across `publisher.ts`. The default is already `"main"` in `DEFAULT_SETTINGS`, so the fallback is redundant if settings are loaded correctly — or it should be centralized.
 
-// Update manifest.json
-const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
-const { minAppVersion } = manifest;
-manifest.version = targetVersion;
-writeFileSync("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+### Community standards
 
-// Update versions.json
-const versions = JSON.parse(readFileSync("versions.json", "utf8"));
-versions[targetVersion] = minAppVersion;
-writeFileSync("versions.json", `${JSON.stringify(versions, null, 2)}\n`);
+6. **Open issues for Obsidian syntax gaps** — Issues #80–85 track missing transformations: Obsidian comments pass through as visible text, callouts aren't converted to Hugo shortcodes, highlight syntax (`==text==`) isn't handled, and mermaid code blocks need shortcode conversion.
 
-console.log(`Updated to version ${targetVersion}`);
-```
+7. **Token stored unencrypted** — The GitHub PAT is stored in Obsidian's plugin data file (plain JSON). The settings UI documents this, but it's worth noting as a security consideration.
 
-The version script:
+8. **No LICENSE file** — `package.json` declares MIT but no `LICENSE` file exists in the repo root.
 
-1. Reads the current version from `manifest.json` (the authority)
-2. Bumps according to semver (`patch`, `minor`, or `major`)
-3. Updates three files: `manifest.json`, `package.json`, `versions.json`
-4. Creates a git commit and annotated tag
-5. Tells the user to push manually
-
-`versions.json` maps plugin versions to minimum Obsidian versions (required by the Obsidian plugin ecosystem). The tag push triggers the release workflow.
-
----
-
-## 8. CI/CD
-
-### CI Pipeline (`.github/workflows/main.yml`)
-
-```bash
-cat .github/workflows/main.yml
-```
-
-```output
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-      - run: bun install
-      - run: bun audit --audit-level=critical
-      - run: bun run check
-      - run: bun test
-```
-
-CI runs `bun run check` on pushes to main and PRs against main. This executes `typecheck && biome check .` — TypeScript strict-mode type checking plus Biome linting/formatting.
-
-**Concern:** CI doesn't run tests (`bun test` is not called). The `check` script runs typecheck and lint but skips the test suite entirely. Tests only run if a developer remembers to run `bun test` locally.
-
-### Release Pipeline (`.github/workflows/release.yml`)
-
-```bash
-cat .github/workflows/release.yml
-```
-
-```output
-name: Release
-
-on:
-  push:
-    tags:
-      - "*"
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - run: |
-          bun install
-          bun run build
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            main.js
-            manifest.json
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-The release workflow triggers on any tag push, builds the plugin, and creates a GitHub release with `main.js` and `manifest.json`. `fail_on_unmatched_files: true` ensures the release fails if the build didn't produce the expected artifacts.
-
-Note that `bun run build` includes `bun run check` (typecheck + lint) as a prerequisite, so the release won't be created if there are type errors or lint violations.
-
----
-
-## 9. Test Suite
-
-The test suite uses Bun's built-in test runner with an Obsidian module mock.
-
-### Test Infrastructure
-
-```bash
-cat bunfig.toml && echo '---' && cat src/__mocks__/preload.ts
-```
-
-```output
-[test]
-preload = ["./src/test-preload.ts"]
----
-cat: src/__mocks__/preload.ts: No such file or directory
-```
-
-`bunfig.toml` tells Bun's test runner to preload `src/__mocks__/preload.ts` before every test file. The preload uses `mock.module()` to intercept `import ... from "obsidian"` and replace it with the local mock. This is necessary because the real Obsidian module is only available inside the Obsidian app runtime.
-
-### Obsidian Mock
-
-```bash
-cat src/__mocks__/obsidian.ts
-```
-
-```output
-cat: src/__mocks__/obsidian.ts: No such file or directory
-```
-
-The mock provides three things from the `obsidian` module:
-
-1. **`parseYaml()`** — a simplified YAML parser that handles `key: value` lines, arrays (`[a, b]`), booleans, and numbers
-2. **`stringifyYaml()`** — serializes objects back to YAML-like format
-3. **`Notice`** — a no-op class (the real one shows toast notifications)
-
-This is sufficient for testing content processing. The mock's `parseYaml()` doesn't handle nested objects, multi-line strings, or complex YAML features — but the test fixtures don't need them.
-
-### Test Coverage
-
-```bash
-grep -c 'test(' src/content-processor.test.ts src/sanitizer.test.ts
-```
-
-```output
-src/content-processor.test.ts:18
-src/sanitizer.test.ts:10
-```
-
-```bash
-grep -c 'describe(' src/content-processor.test.ts src/sanitizer.test.ts
-```
-
-```output
-src/content-processor.test.ts:5
-src/sanitizer.test.ts:1
-```
-
-28 test cases across 6 describe blocks, covering:
-
-- **content-processor.test.ts** (18 tests): Wikilink conversion (4), image reference conversion (4), frontmatter processing (5), filename sanitization (3), full pipeline (1), plus a helper to verify end-to-end transformation
-- **sanitizer.test.ts** (10 tests): Dedicated tests for the `sanitizeFilename()` function — spaces, case, special chars, hyphens/underscores, consecutive hyphens, extensionless files, empty names, images, complex filenames, leading/trailing hyphens
-
-Note that `sanitizer.test.ts` duplicates the sanitization logic rather than importing from `content-processor.ts`. The comment says this avoids Obsidian dependencies, but the content-processor tests already handle this via the mock. This duplication means a bug fix to the real sanitizer could pass `content-processor.test.ts` while the duplicated copy in `sanitizer.test.ts` retains the old behavior (or vice versa).
-
-**What's not tested:**
-- `github-service.ts` (0 tests) — the entire GitHub API layer
-- `publisher.ts` (0 tests) — publishing orchestration, batch logic, error handling
-- `main.ts` (0 tests) — plugin lifecycle, command routing
-- `settings.ts` (0 tests) — frontmatter template parsing, connection test
-
-These gaps are tracked in issues #46 and #48.
-
----
-
-## 10. Concerns and Community Standards
-
-### Issues Found
-
-| Concern | Severity | Location |
-|---------|----------|----------|
-| Hardcoded `/images/` path in image references doesn't match configurable `imageDir` | Medium | `content-processor.ts:163` |
-| Token described as "stored securely" but saved in plaintext | Medium | `settings.ts:30` |
-| CI doesn't run tests | Medium | `.github/workflows/main.yml` |
-| No tests for GitHub API layer or publisher orchestration | High | `github-service.ts`, `publisher.ts` |
-| Duplicate sanitization logic in test file | Low | `sanitizer.test.ts:11-33` |
-| `hasPublishFlag()` is case-sensitive | Low | `publisher.ts:401` |
-| File content read multiple times per publish | Low | `publisher.ts` |
-| Image lookup by filename ignores vault folder paths | Low | `publisher.ts:289` |
-| Branch retry regenerates timestamp, making suffix logic mostly dead code | Low | `github-service.ts:389` |
-| GitHub Actions not pinned to specific versions | Low | `.github/workflows/*.yml` |
-
-### Community Standards Compliance
-
-**Good:**
-- TypeScript with strict mode enabled
-- Biome for linting and formatting (modern alternative to ESLint + Prettier)
-- Clean separation of concerns across modules
-- Proper error handling with typed errors (`RequestError`)
-- MIT license
-- Conventional commit messages (`chore:`, `fix:`, `feat:`)
-- GitHub Actions CI/CD pipeline
-
-**Could improve:**
-- README is minimal (4 lines) — no installation guide, usage docs, or screenshots
-- No CHANGELOG.md
-- No CONTRIBUTING.md
-- No `.github/ISSUE_TEMPLATE` or PR template
-- Tests don't run in CI
-- No code coverage reporting
-- No JSDoc on public API methods in `publisher.ts` and `github-service.ts`
-
-### Obsidian Plugin Standards
-
-- `manifest.json` includes all required fields (`id`, `name`, `version`, `minAppVersion`, `description`, `author`)
-- `isDesktopOnly: false` — correctly signals mobile compatibility
-- `versions.json` maintained by version-bump script
-- Uses Obsidian's `Plugin` base class correctly
-- Registers commands with proper IDs and names
-- Settings tab follows Obsidian's `PluginSettingTab` pattern
-- No deprecated API usage detected
