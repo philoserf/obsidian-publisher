@@ -255,17 +255,55 @@ export class Publisher {
       }
 
       const processed = this.contentProcessor.process(content, file.name);
-      await this.uploadImages(processed.images, branch);
+      const targetBranch = branch ?? this.settings.baseBranch ?? "main";
 
+      const fileEntries: Array<{
+        path: string;
+        content: string | ArrayBuffer;
+      }> = [];
+
+      // Add markdown file
       const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      const url = await this.githubService.createOrUpdateFile(
-        targetPath,
-        processed.content,
+      fileEntries.push({ path: targetPath, content: processed.content });
+
+      // Resolve and add images
+      const filesByName = new Map(
+        this.vault.getFiles().map((f) => [f.name, f]),
+      );
+      const failedImages: string[] = [];
+
+      for (const imageName of processed.images) {
+        const imageFile = filesByName.get(imageName);
+        if (!imageFile) {
+          console.warn(`Image not found in vault: ${imageName}`);
+          failedImages.push(imageName);
+          continue;
+        }
+        try {
+          const imageContent = await this.vault.readBinary(imageFile);
+          const sanitizedName =
+            this.contentProcessor.sanitizeImageName(imageName);
+          const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+          fileEntries.push({ path: imgPath, content: imageContent });
+        } catch (error) {
+          console.error(`Failed to read image ${imageName}:`, error);
+          failedImages.push(imageName);
+        }
+      }
+
+      if (failedImages.length > 0) {
+        new Notice(
+          `Warning: ${failedImages.length} image(s) failed: ${failedImages.join(", ")}`,
+        );
+      }
+
+      await this.githubService.commitFiles(
+        fileEntries,
         `Publish: ${file.basename}`,
-        branch,
+        targetBranch,
       );
 
-      return { filePath: file.path, success: true, url };
+      return { filePath: file.path, success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return { filePath: file.path, success: false, error: message };
@@ -372,50 +410,6 @@ export class Publisher {
       ([path, content]) => ({ path, content }),
     );
     return { results, fileEntries };
-  }
-
-  /**
-   * Upload images for single-file publish (Contents API, one commit per image)
-   */
-  private async uploadImages(
-    imageNames: string[],
-    branch?: string,
-  ): Promise<string[]> {
-    const failedImages: string[] = [];
-    const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
-
-    for (const imageName of imageNames) {
-      try {
-        const imageFile = filesByName.get(imageName);
-
-        if (!imageFile) {
-          console.warn(`Image not found in vault: ${imageName}`);
-          failedImages.push(imageName);
-          continue;
-        }
-
-        const imageContent = await this.vault.readBinary(imageFile);
-        const sanitizedName =
-          this.contentProcessor.sanitizeImageName(imageName);
-
-        await this.githubService.uploadImage(
-          sanitizedName,
-          imageContent,
-          branch,
-        );
-      } catch (error) {
-        console.error(`Failed to upload image ${imageName}:`, error);
-        failedImages.push(imageName);
-      }
-    }
-
-    if (failedImages.length > 0) {
-      new Notice(
-        `Warning: ${failedImages.length} image(s) failed to upload: ${failedImages.join(", ")}`,
-      );
-    }
-
-    return failedImages;
   }
 
   /**
