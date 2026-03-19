@@ -43,13 +43,9 @@ export default class ObsidianPublisher extends Plugin {
         await this.publishAllNotes();
       },
     });
-
-    console.log("Obsidian Publisher plugin loaded");
   }
 
-  onunload() {
-    console.log("Obsidian Publisher plugin unloaded");
-  }
+  onunload() {}
 
   async loadSettings() {
     const data = await this.loadData();
