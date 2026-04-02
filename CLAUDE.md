@@ -10,7 +10,6 @@ Obsidian Publisher is a plugin that publishes Obsidian notes to GitHub for Hugo 
 bun install          # Install dependencies
 bun run dev          # Watch mode with source maps
 bun run build        # Production build (runs typecheck + lint first)
-bun run validate     # Full validation: types, tests, lint, build
 bun test             # Run all tests
 bun run test:watch   # Watch mode for tests
 bun run typecheck    # Type checking only
