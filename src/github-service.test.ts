@@ -19,10 +19,6 @@ function makeOctokit(overrides: Record<string, unknown> = {}) {
   return {
     repos: {
       get: mock(async () => ({ data: {} })),
-      getContent: mock(async () => ({ data: { sha: "abc123" } })),
-      createOrUpdateFileContents: mock(async () => ({
-        data: { content: { html_url: "https://github.com/test/file" } },
-      })),
     },
     rest: {
       git: {
@@ -96,27 +92,6 @@ describe("GitHubService.validateConnection", () => {
     await expect(service.validateConnection()).rejects.toThrow(
       "Failed to access repository",
     );
-  });
-});
-
-describe("GitHubService.getFileSha", () => {
-  test("returns sha for existing file", async () => {
-    const { service } = makeService();
-    const sha = await service.getFileSha("content/test.md");
-    expect(sha).toBe("abc123");
-  });
-
-  test("returns null for 404", async () => {
-    const { service, octokit } = makeService();
-    const { RequestError } = await import("@octokit/request-error");
-    octokit.repos.getContent.mockImplementation(async () => {
-      throw new (RequestError as new (...args: unknown[]) => Error)(
-        "Not Found",
-        404,
-      );
-    });
-    const sha = await service.getFileSha("missing.md");
-    expect(sha).toBeNull();
   });
 });
 
