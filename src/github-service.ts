@@ -187,6 +187,9 @@ export class GitHubService {
 
       return branchName;
     } catch (error) {
+      if (error instanceof RequestError) {
+        throw error;
+      }
       if (error instanceof Error) {
         throw new Error(
           `Failed to create branch ${branchName}: ${error.message}`,
