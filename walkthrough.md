@@ -100,7 +100,7 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
 `main.ts` is the Obsidian plugin class. It registers two commands (publish current note, publish all), manages settings with migration logic, and provides a cached `Publisher` instance that rebuilds on settings change.
 
 ```bash
-sed -n '11,22p' src/main.ts
+sed -n '12,23p' src/main.ts
 ```
 
 ```output
@@ -121,10 +121,11 @@ export default class ObsidianPublisher extends Plugin {
 Settings migration: existing users who upgrade from pre-PR versions get `usePullRequests = false` to preserve their workflow. New users get `true` from `DEFAULT_SETTINGS`.
 
 ```bash
-sed -n '50,63p' src/main.ts
+sed -n '50,64p' src/main.ts
 ```
 
 ```output
+    const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 
     // Migration: for existing users, default to false to preserve current behavior
@@ -335,7 +336,7 @@ sed -n '237,270p' src/content-processor.ts
 `publisher.ts` provides four publish methods: `publishNote()`, `publishAll()`, `publishNoteWithPR()`, and `publishAllWithPR()`. Shared helpers handle branch cleanup, image resolution, and commit failure propagation.
 
 ```bash
-sed -n '23,77p' src/publisher.ts
+sed -n '24,80p' src/publisher.ts
 ```
 
 ```output
@@ -348,7 +349,7 @@ sed -n '23,77p' src/publisher.ts
   }
 
   private markResultsFailed(results: PublishResult[], error: unknown): void {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const message = errorMessage(error);
     for (const r of results) {
       if (r.success) {
         r.success = false;
@@ -394,6 +395,8 @@ sed -n '23,77p' src/publisher.ts
       }
     }
 
+    return { entries, failedImages };
+  }
 ```
 
 ### Single File Publish with PR
@@ -401,11 +404,10 @@ sed -n '23,77p' src/publisher.ts
 The PR workflow reads the file once, checks the publish flag, creates a branch, commits markdown + images atomically via `publishFileToTarget`, then opens a PR. On failure, the branch is cleaned up.
 
 ```bash
-sed -n '126,168p' src/publisher.ts
+sed -n '126,170p' src/publisher.ts
 ```
 
 ```output
-    try {
       content = await this.vault.read(file);
     } catch {
       return {
@@ -448,6 +450,9 @@ sed -n '126,168p' src/publisher.ts
         this.prLabels,
       );
 
+      return { ...result, prUrl: pr.url };
+    } catch (error) {
+      if (branchName) {
 ```
 
 ## GitHub Service
@@ -455,7 +460,7 @@ sed -n '126,168p' src/publisher.ts
 `github-service.ts` wraps Octokit for all GitHub API interactions. The key method is `commitFiles()` which uses the Git Trees API for atomic multi-file commits. Blobs are created sequentially to avoid rate limits.
 
 ```bash
-sed -n '245,308p' src/github-service.ts
+sed -n '155,215p' src/github-service.ts
 ```
 
 ```output
@@ -475,10 +480,7 @@ sed -n '245,308p' src/github-service.ts
 
       const treeEntries = [];
       for (const file of files) {
-        const base64 =
-          typeof file.content === "string"
-            ? this.stringToBase64(file.content)
-            : this.arrayBufferToBase64(file.content);
+        const base64 = this.toBase64(file.content);
 
         const blob = await this.octokit.rest.git.createBlob({
           owner: this.settings.repoOwner,
@@ -527,10 +529,10 @@ sed -n '245,308p' src/github-service.ts
 
 ### Branch Creation with Retry
 
-`createBranchWithRetry` generates timestamped branch names and retries with a suffix on 422 (branch exists). Note: there is a latent bug — `createBranch` wraps `RequestError` as a plain `Error`, so the `instanceof RequestError` check in the retry loop never matches. The retry logic is effectively dead code.
+`createBranchWithRetry` generates timestamped branch names and retries with a suffix on 422 (branch exists). `createBranch` preserves `RequestError` so the `instanceof` check in the retry loop works correctly.
 
 ```bash
-sed -n '335,359p' src/github-service.ts
+sed -n '242,266p' src/github-service.ts
 ```
 
 ```output
@@ -566,11 +568,22 @@ sed -n '335,359p' src/github-service.ts
 `settings.ts` renders the Obsidian settings tab. Input validation sanitizes GitHub names (alphanumeric + hyphens, length-limited) and directory paths (strips `..` and `~`).
 
 ```bash
-sed -n '233,249p' src/settings.ts
+sed -n '230,252p' src/settings.ts
 ```
 
 ```output
-      .slice(0, maxLength);
+  private sanitizeGitHubOwner(value: string): string {
+    return value
+      .trim()
+      .replace(/[^a-zA-Z0-9-]/g, "")
+      .slice(0, 39);
+  }
+
+  private sanitizeRepoName(value: string): string {
+    return value
+      .trim()
+      .replace(/[^a-zA-Z0-9-_.]/g, "")
+      .slice(0, 100);
   }
 
   private sanitizePath(value: string): string {
@@ -582,11 +595,6 @@ sed -n '233,249p' src/settings.ts
   }
 
   private async testConnection(): Promise<void> {
-    const settings = this.plugin.settings;
-
-    // Validate settings
-    if (!settings.githubToken) {
-      new Notice("GitHub token is required");
 ```
 
 ## Build and Tooling
@@ -619,18 +627,12 @@ grep -c 'test(' src/content-processor.test.ts src/publisher.test.ts src/github-s
 ```output
 src/content-processor.test.ts:47
 src/publisher.test.ts:19
-src/github-service.test.ts:13
+src/github-service.test.ts:11
 ```
 
 ## Concerns
 
-1. **`createBranchWithRetry` retry logic is dead code.** `createBranch` wraps `RequestError` as a plain `Error`, so the `instanceof RequestError` check at line 349 of `github-service.ts` never matches. Branch collisions will throw on first attempt instead of retrying.
+1. **Settings save on every keystroke.** The `onChange` handlers in `settings.ts` call `saveSettings()` (disk write + Publisher rebuild) per character. A debounce or save-on-blur would reduce churn.
 
-2. **`createOrUpdateFile` is unused.** After the atomic commit refactor (#59), single-file publish uses `commitFiles` exclusively. `createOrUpdateFile` remains as dead code in `github-service.ts`.
-
-3. **Settings save on every keystroke.** The `onChange` handlers in `settings.ts` call `saveSettings()` (disk write + Publisher rebuild) per character. A debounce or save-on-blur would reduce churn.
-
-4. **No test coverage for settings UI.** `settings.ts` sanitization helpers are tested only implicitly through manual use. The sanitization logic could be extracted and unit-tested.
-
-5. **`publishAllWithPR` error handling inconsistency.** The `markResultsFailed` helper is used in `publishAll()` but the `publishAllWithPR()` path still has an inline copy of the same logic (lines 209-218 of `publisher.ts`).
+2. **No test coverage for settings UI.** `settings.ts` sanitization helpers are tested only implicitly through manual use. The sanitization logic could be extracted and unit-tested.
 

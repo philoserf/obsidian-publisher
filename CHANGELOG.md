@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.0
+
+### Fixed
+
+- Add build step to CI workflow
+- Align frontmatter regex in publisher with content-processor
+- Allow dots and underscores in repo name sanitization
+- Preserve RequestError in createBranch for retry logic
+- Add types to tsconfig for TypeScript 6 compatibility
+
+### Changed
+
+- Consolidate sanitize functions into shared sanitizeName
+- Extract shared errorMessage utility
+- Unify base64 encoding into single toBase64 helper
+- Remove unused getFileSha and createOrUpdateFile
+- Remove redundant prUrl type intersections
+- Use markResultsFailed in publishAllWithPR
+
+### Internal
+
+- CI workflows, dependency updates
+
 ## 1.2.0
 
 ### Features
