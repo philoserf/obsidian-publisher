@@ -75,7 +75,7 @@ export default class ObsidianPublisher extends Plugin {
     new Notice(`Publishing ${file.basename}...`);
 
     try {
-      let result: PublishResult & { prUrl?: string };
+      let result: PublishResult;
 
       if (this.settings.usePullRequests) {
         // Use PR workflow
@@ -119,7 +119,7 @@ export default class ObsidianPublisher extends Plugin {
     }
 
     try {
-      let result: BatchPublishResult & { prUrl?: string };
+      let result: BatchPublishResult;
 
       if (this.settings.usePullRequests) {
         // Use PR workflow
