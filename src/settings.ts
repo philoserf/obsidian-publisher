@@ -8,6 +8,7 @@ import {
 } from "obsidian";
 import { GitHubService } from "./github-service";
 import type ObsidianPublisher from "./main";
+import { errorMessage } from "./types";
 
 export class PublisherSettingTab extends PluginSettingTab {
   plugin: ObsidianPublisher;
@@ -268,7 +269,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       await github.validateConnection();
       new Notice("✓ Connection successful! Repository is accessible.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = errorMessage(error);
       new Notice(`✗ Connection failed: ${message}`);
       console.error("GitHub connection test failed:", error);
     }

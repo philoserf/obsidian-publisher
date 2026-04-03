@@ -85,3 +85,10 @@ export interface BatchPublishResult {
   /** URL to the pull request if created */
   prUrl?: string;
 }
+
+/**
+ * Extract a human-readable message from an unknown catch value
+ */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}

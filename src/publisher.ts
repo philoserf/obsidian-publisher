@@ -1,10 +1,11 @@
 import { Notice, type TFile, type Vault } from "obsidian";
 import { ContentProcessor } from "./content-processor";
 import { GitHubService } from "./github-service";
-import type {
-  BatchPublishResult,
-  PublisherSettings,
-  PublishResult,
+import {
+  type BatchPublishResult,
+  errorMessage,
+  type PublisherSettings,
+  type PublishResult,
 } from "./types";
 
 export class Publisher {
@@ -29,7 +30,7 @@ export class Publisher {
   }
 
   private markResultsFailed(results: PublishResult[], error: unknown): void {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const message = errorMessage(error);
     for (const r of results) {
       if (r.success) {
         r.success = false;
@@ -169,7 +170,7 @@ export class Publisher {
       if (branchName) {
         await this.cleanupBranch(branchName);
       }
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = errorMessage(error);
       return { filePath: file.path, success: false, error: message };
     }
   }
@@ -244,7 +245,7 @@ export class Publisher {
       if (branchName) {
         await this.cleanupBranch(branchName);
       }
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = errorMessage(error);
       new Notice(`Failed to publish: ${message}`);
       return { total: 0, successful: 0, failed: 0, results: [] };
     }
@@ -321,7 +322,7 @@ export class Publisher {
 
       return { filePath: file.path, success: true };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = errorMessage(error);
       return { filePath: file.path, success: false, error: message };
     }
   }

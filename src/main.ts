@@ -4,6 +4,7 @@ import { PublisherSettingTab } from "./settings";
 import {
   type BatchPublishResult,
   DEFAULT_SETTINGS,
+  errorMessage,
   type PublisherSettings,
   type PublishResult,
 } from "./types";
@@ -101,7 +102,7 @@ export default class ObsidianPublisher extends Plugin {
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = errorMessage(error);
       new Notice(`✗ Error: ${message}`);
       console.error("Publish error:", error);
     }
@@ -170,7 +171,7 @@ export default class ObsidianPublisher extends Plugin {
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = errorMessage(error);
       new Notice(`✗ Error: ${message}`);
       console.error("Batch publish error:", error);
     }
