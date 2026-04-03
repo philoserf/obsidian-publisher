@@ -419,7 +419,7 @@ export class Publisher {
    * Check if content has status: published in frontmatter
    */
   private hasPublishFlag(content: string): boolean {
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+    const frontmatterRegex = /^---\n([\s\S]*?)\n---\n/;
     const match = content.match(frontmatterRegex);
 
     if (!match) {
