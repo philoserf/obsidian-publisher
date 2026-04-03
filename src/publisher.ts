@@ -119,9 +119,7 @@ export class Publisher {
   /**
    * Publish a single note to GitHub with branch and PR creation
    */
-  async publishNoteWithPR(
-    file: TFile,
-  ): Promise<PublishResult & { prUrl?: string }> {
+  async publishNoteWithPR(file: TFile): Promise<PublishResult> {
     let content: string;
     try {
       content = await this.vault.read(file);
@@ -179,7 +177,7 @@ export class Publisher {
   /**
    * Publish all notes with status: published to a single branch and PR
    */
-  async publishAllWithPR(): Promise<BatchPublishResult & { prUrl?: string }> {
+  async publishAllWithPR(): Promise<BatchPublishResult> {
     const publishableFiles = await this.getPublishableFiles();
     if (publishableFiles.length === 0) {
       new Notice("No files with 'status: published' found");
