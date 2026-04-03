@@ -49,7 +49,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("username")
           .setValue(this.plugin.settings.repoOwner)
           .onChange(async (value) => {
-            this.plugin.settings.repoOwner = this.sanitizeGitHubName(value, 39);
+            this.plugin.settings.repoOwner = this.sanitizeGitHubOwner(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -63,7 +63,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("my-blog")
           .setValue(this.plugin.settings.repoName)
           .onChange(async (value) => {
-            this.plugin.settings.repoName = this.sanitizeGitHubName(value, 100);
+            this.plugin.settings.repoName = this.sanitizeRepoName(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -226,11 +226,18 @@ export class PublisherSettingTab extends PluginSettingTab {
     return result;
   }
 
-  private sanitizeGitHubName(value: string, maxLength: number): string {
+  private sanitizeGitHubOwner(value: string): string {
     return value
       .trim()
       .replace(/[^a-zA-Z0-9-]/g, "")
-      .slice(0, maxLength);
+      .slice(0, 39);
+  }
+
+  private sanitizeRepoName(value: string): string {
+    return value
+      .trim()
+      .replace(/[^a-zA-Z0-9-_.]/g, "")
+      .slice(0, 100);
   }
 
   private sanitizePath(value: string): string {
