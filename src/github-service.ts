@@ -33,22 +33,13 @@ export class GitHubService {
   }
 
   /**
-   * Convert string to base64 (cross-platform)
+   * Convert string or ArrayBuffer to base64 (cross-platform, chunked for large payloads)
    */
-  private stringToBase64(str: string): string {
-    const bytes = new TextEncoder().encode(str);
-    const chunks: string[] = [];
-    for (let i = 0; i < bytes.length; i += 8192) {
-      chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
-    }
-    return btoa(chunks.join(""));
-  }
-
-  /**
-   * Convert ArrayBuffer to base64 string
-   */
-  private arrayBufferToBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer);
+  private toBase64(input: string | ArrayBuffer): string {
+    const bytes =
+      typeof input === "string"
+        ? new TextEncoder().encode(input)
+        : new Uint8Array(input);
     const chunks: string[] = [];
     for (let i = 0; i < bytes.length; i += 8192) {
       chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
@@ -177,10 +168,7 @@ export class GitHubService {
 
       const treeEntries = [];
       for (const file of files) {
-        const base64 =
-          typeof file.content === "string"
-            ? this.stringToBase64(file.content)
-            : this.arrayBufferToBase64(file.content);
+        const base64 = this.toBase64(file.content);
 
         const blob = await this.octokit.rest.git.createBlob({
           owner: this.settings.repoOwner,
