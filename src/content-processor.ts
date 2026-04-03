@@ -285,11 +285,12 @@ export class ContentProcessor {
   }
 
   /**
-   * Sanitize a page name into a slug (no extension)
+   * Core sanitization: lowercase, spaces→hyphens, strip special chars,
+   * collapse hyphens, trim edges, fallback to "untitled".
    */
-  private sanitizeSlug(page: string): string {
+  private sanitizeName(value: string): string {
     return (
-      page
+      value
         .trim()
         .toLowerCase()
         .replace(/\s+/g, "-")
@@ -300,43 +301,30 @@ export class ContentProcessor {
   }
 
   /**
-   * Sanitize filename for Hugo URLs
+   * Sanitize a page name into a slug (no extension)
+   */
+  private sanitizeSlug(page: string): string {
+    return this.sanitizeName(page);
+  }
+
+  /**
+   * Sanitize filename for Hugo URLs (preserves extension)
    */
   sanitizeFilename(filename: string): string {
-    // Extract extension if present
     const lastDotIndex = filename.lastIndexOf(".");
     const hasExtension = lastDotIndex > 0 && lastDotIndex < filename.length - 1;
 
-    let name = filename;
-    let extension = "";
-
-    if (hasExtension) {
-      name = filename.slice(0, lastDotIndex);
-      extension = filename.slice(lastDotIndex); // includes the dot
+    if (!hasExtension) {
+      return this.sanitizeName(filename);
     }
 
-    // Convert to lowercase and replace spaces with hyphens
-    name = name.toLowerCase().replace(/\s+/g, "-");
-
-    // Remove special characters, keep only alphanumeric, hyphens, and underscores
-    name = name.replace(/[^a-z0-9\-_]/g, "");
-
-    // Remove consecutive hyphens
-    name = name.replace(/-+/g, "-");
-
-    // Remove leading/trailing hyphens
-    name = name.replace(/^-+|-+$/g, "");
-
-    // If name is empty after sanitization, use a default
-    if (!name) {
-      name = "untitled";
-    }
-
+    const name = this.sanitizeName(filename.slice(0, lastDotIndex));
+    const extension = filename.slice(lastDotIndex);
     return name + extension;
   }
 
   /**
-   * Get the sanitized image filename
+   * Sanitize an image filename (preserves extension)
    */
   sanitizeImageName(imageName: string): string {
     return this.sanitizeFilename(imageName);
