@@ -207,14 +207,7 @@ export class Publisher {
             branchName,
           );
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
-          for (const r of results) {
-            if (r.success) {
-              r.success = false;
-              r.error = `Commit failed: ${message}`;
-            }
-          }
+          this.markResultsFailed(results, error);
         }
       }
 
