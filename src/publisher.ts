@@ -109,6 +109,7 @@ export class Publisher {
     }
 
     const { results, fileEntries } = await this.prepareBatch(publishableFiles);
+    let commitError: string | undefined;
 
     if (fileEntries.length > 0) {
       try {
@@ -120,12 +121,19 @@ export class Publisher {
         );
       } catch (error) {
         this.markResultsFailed(results, error);
+        commitError = errorMessage(error);
       }
     }
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
-    return { total: results.length, successful, failed, results };
+    return {
+      total: results.length,
+      successful,
+      failed,
+      results,
+      error: commitError,
+    };
   }
 
   /**
@@ -201,6 +209,7 @@ export class Publisher {
       const prepared = await this.prepareBatch(publishableFiles);
       results = prepared.results;
       const { fileEntries } = prepared;
+      let commitError: string | undefined;
 
       if (fileEntries.length > 0) {
         try {
@@ -212,6 +221,7 @@ export class Publisher {
           );
         } catch (error) {
           this.markResultsFailed(results, error);
+          commitError = errorMessage(error);
         }
       }
 
@@ -221,7 +231,13 @@ export class Publisher {
 
       if (successful === 0) {
         await this.cleanupBranch(branchName);
-        return { total: results.length, successful: 0, failed, results };
+        return {
+          total: results.length,
+          successful: 0,
+          failed,
+          results,
+          error: commitError,
+        };
       }
 
       const prTitle = `Batch Publish: ${successful} notes`;
@@ -248,12 +264,17 @@ export class Publisher {
         await this.cleanupBranch(branchName);
       }
       const message = errorMessage(error);
-      const failed =
-        results.length > 0 ? results.length : publishableFiles.length;
+      if (results.length === 0) {
+        for (const { file } of publishableFiles) {
+          results.push(failedResult(file.path, message));
+        }
+      } else {
+        this.markResultsFailed(results, error);
+      }
       return {
-        total: failed,
+        total: results.length,
         successful: 0,
-        failed,
+        failed: results.length,
         results,
         error: message,
       };

@@ -143,7 +143,11 @@ export default class ObsidianPublisher extends Plugin {
       if (result.error) {
         new Notice(`✗ Failed to publish: ${result.error}`);
       } else if (result.successful === 0) {
-        new Notice("All files failed to process. No PR created.");
+        new Notice(
+          this.settings.usePullRequests
+            ? "All files failed to process. No PR created."
+            : "All files failed to process.",
+        );
       } else {
         const summary = this.settings.usePullRequests
           ? `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`
