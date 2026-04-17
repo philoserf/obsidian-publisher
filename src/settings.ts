@@ -8,7 +8,77 @@ import {
 } from "obsidian";
 import { GitHubService } from "./github-service";
 import type ObsidianPublisher from "./main";
-import { errorMessage } from "./types";
+import { errorMessage, type PublisherSettings } from "./types";
+
+export function sanitizeGitHubOwner(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9-]/g, "")
+    .slice(0, 39);
+}
+
+export function sanitizeRepoName(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9-_.]/g, "")
+    .slice(0, 100);
+}
+
+export function sanitizePath(value: string): string {
+  return value
+    .trim()
+    .replace(/\.\./g, "")
+    .replace(/~/g, "")
+    .replace(/^\/+|\/+$/g, "");
+}
+
+export function serializeFrontmatter(
+  template: Record<string, unknown>,
+): string {
+  if (Object.keys(template).length === 0) return "";
+  try {
+    return stringifyYaml(template).trim();
+  } catch {
+    return Object.entries(template)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n");
+  }
+}
+
+export function parseFrontmatter(text: string): Record<string, unknown> {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  try {
+    const parsed = parseYaml(trimmed);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return parseSimpleFrontmatter(trimmed);
+  }
+}
+
+function parseSimpleFrontmatter(text: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const colonIndex = t.indexOf(":");
+    if (colonIndex === -1) continue;
+    const key = t.slice(0, colonIndex).trim();
+    const value = t.slice(colonIndex + 1).trim();
+    if (key && value) result[key] = value;
+  }
+  return result;
+}
+
+export function validateConnectionSettings(
+  settings: PublisherSettings,
+): string | null {
+  if (!settings.githubToken) return "GitHub token is required";
+  if (!settings.repoOwner || !settings.repoName) {
+    return "Repository owner and name are required";
+  }
+  return null;
+}
 
 export class PublisherSettingTab extends PluginSettingTab {
   plugin: ObsidianPublisher;
@@ -50,7 +120,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("username")
           .setValue(this.plugin.settings.repoOwner)
           .onChange(async (value) => {
-            this.plugin.settings.repoOwner = this.sanitizeGitHubOwner(value);
+            this.plugin.settings.repoOwner = sanitizeGitHubOwner(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -64,7 +134,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("my-blog")
           .setValue(this.plugin.settings.repoName)
           .onChange(async (value) => {
-            this.plugin.settings.repoName = this.sanitizeRepoName(value);
+            this.plugin.settings.repoName = sanitizeRepoName(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -78,7 +148,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("content/posts")
           .setValue(this.plugin.settings.contentDir)
           .onChange(async (value) => {
-            this.plugin.settings.contentDir = this.sanitizePath(value);
+            this.plugin.settings.contentDir = sanitizePath(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -92,7 +162,7 @@ export class PublisherSettingTab extends PluginSettingTab {
           .setPlaceholder("static/images")
           .setValue(this.plugin.settings.imageDir)
           .onChange(async (value) => {
-            this.plugin.settings.imageDir = this.sanitizePath(value);
+            this.plugin.settings.imageDir = sanitizePath(value);
             await this.plugin.saveSettings();
           }),
       );
@@ -169,11 +239,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       text
         .setPlaceholder("author: Your Name\ntags: [obsidian]")
         .setValue(
-          this.serializeFrontmatter(this.plugin.settings.frontmatterTemplate),
+          serializeFrontmatter(this.plugin.settings.frontmatterTemplate),
         )
         .onChange(async (value) => {
-          this.plugin.settings.frontmatterTemplate =
-            this.parseFrontmatter(value);
+          this.plugin.settings.frontmatterTemplate = parseFrontmatter(value);
           await this.plugin.saveSettings();
         });
       text.inputEl.rows = 6;
@@ -191,75 +260,12 @@ export class PublisherSettingTab extends PluginSettingTab {
       );
   }
 
-  private serializeFrontmatter(template: Record<string, unknown>): string {
-    if (Object.keys(template).length === 0) return "";
-    try {
-      return stringifyYaml(template).trim();
-    } catch {
-      return Object.entries(template)
-        .map(([key, value]) => `${key}: ${value}`)
-        .join("\n");
-    }
-  }
-
-  private parseFrontmatter(text: string): Record<string, unknown> {
-    const trimmed = text.trim();
-    if (!trimmed) return {};
-    try {
-      const parsed = parseYaml(trimmed);
-      return typeof parsed === "object" && parsed !== null ? parsed : {};
-    } catch {
-      return this.parseSimpleFrontmatter(trimmed);
-    }
-  }
-
-  private parseSimpleFrontmatter(text: string): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const line of text.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      const colonIndex = t.indexOf(":");
-      if (colonIndex === -1) continue;
-      const key = t.slice(0, colonIndex).trim();
-      const value = t.slice(colonIndex + 1).trim();
-      if (key && value) result[key] = value;
-    }
-    return result;
-  }
-
-  private sanitizeGitHubOwner(value: string): string {
-    return value
-      .trim()
-      .replace(/[^a-zA-Z0-9-]/g, "")
-      .slice(0, 39);
-  }
-
-  private sanitizeRepoName(value: string): string {
-    return value
-      .trim()
-      .replace(/[^a-zA-Z0-9-_.]/g, "")
-      .slice(0, 100);
-  }
-
-  private sanitizePath(value: string): string {
-    return value
-      .trim()
-      .replace(/^\/+|\/+$/g, "")
-      .replace(/\.\./g, "")
-      .replace(/~/g, "");
-  }
-
   private async testConnection(): Promise<void> {
     const settings = this.plugin.settings;
 
-    // Validate settings
-    if (!settings.githubToken) {
-      new Notice("GitHub token is required");
-      return;
-    }
-
-    if (!settings.repoOwner || !settings.repoName) {
-      new Notice("Repository owner and name are required");
+    const validationError = validateConnectionSettings(settings);
+    if (validationError) {
+      new Notice(validationError);
       return;
     }
 
