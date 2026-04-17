@@ -378,7 +378,7 @@ describe("Callout conversion", () => {
     );
   });
 
-  test("maps Obsidian callout aliases to hugo-coder types", () => {
+  test("maps Obsidian callout aliases to the seven notice types", () => {
     const cases: [string, string][] = [
       ["abstract", "note"],
       ["summary", "note"],

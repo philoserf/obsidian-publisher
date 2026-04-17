@@ -158,7 +158,7 @@ export class ContentProcessor {
   };
 
   /**
-   * Convert Obsidian callouts to hugo-coder notice shortcodes
+   * Convert Obsidian callouts to notice shortcodes
    */
   private convertCallouts(content: string): string {
     return content.replace(
@@ -174,7 +174,7 @@ export class ContentProcessor {
   }
 
   /**
-   * Convert mermaid fenced code blocks to hugo-coder mermaid shortcodes
+   * Convert mermaid fenced code blocks to mermaid shortcodes
    */
   private convertMermaid(content: string): string {
     return content.replace(
