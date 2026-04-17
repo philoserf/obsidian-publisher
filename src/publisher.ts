@@ -94,7 +94,7 @@ export class Publisher {
       }
 
       if (matches.length > 1) {
-        const paths = matches.map((f) => f.path);
+        const paths = matches.map((f) => f.path).sort();
         console.warn(
           `Image basename collision for ${imageName}: ${paths.join(", ")}`,
         );
