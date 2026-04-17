@@ -55,6 +55,12 @@ export interface ProcessedContent {
 }
 
 /**
+ * Non-fatal condition noticed during publish. Tagged for test stability
+ * and per-kind display in main.ts.
+ */
+export type PublishWarning = { kind: "image-failed"; name: string };
+
+/**
  * Publishing result for a single note
  */
 export interface PublishResult {
@@ -64,9 +70,9 @@ export interface PublishResult {
   success: boolean;
   /** Error message if failed */
   error?: string;
-  /** URL to the published file on GitHub */
-  url?: string;
-  /** URL to the pull request if created */
+  /** Non-fatal conditions noticed during publish; always present, [] when none */
+  warnings: PublishWarning[];
+  /** URL to the pull request if created (single-file PR workflow only) */
   prUrl?: string;
 }
 
@@ -84,6 +90,8 @@ export interface BatchPublishResult {
   results: PublishResult[];
   /** URL to the pull request if created */
   prUrl?: string;
+  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
+  error?: string;
 }
 
 /**

@@ -7,7 +7,15 @@ import {
   errorMessage,
   type PublisherSettings,
   type PublishResult,
+  type PublishWarning,
 } from "./types";
+
+function notifyWarnings(warnings: PublishWarning[]): void {
+  const imageFails = warnings.filter((w) => w.kind === "image-failed");
+  if (imageFails.length === 0) return;
+  const names = [...new Set(imageFails.map((w) => w.name))];
+  new Notice(`Warning: ${names.length} image(s) failed: ${names.join(", ")}`);
+}
 
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
@@ -15,7 +23,7 @@ export default class ObsidianPublisher extends Plugin {
 
   async onload() {
     await this.loadSettings();
-    this._publisher = new Publisher(this.app.vault, this.settings);
+    this._publisher = this.makePublisher();
 
     // Register settings tab
     this.addSettingTab(new PublisherSettingTab(this.app, this));
@@ -59,14 +67,19 @@ export default class ObsidianPublisher extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
-    this._publisher = new Publisher(this.app.vault, this.settings);
+    this._publisher = this.makePublisher();
+  }
+
+  private makePublisher(): Publisher {
+    return new Publisher(this.app.vault, this.settings, (done, total) => {
+      new Notice(`Prepared: ${done}/${total}`);
+    });
   }
 
   /**
    * Publish the current note
    */
   private async publishCurrentNote(file: TFile) {
-    // Validate settings
     const validationError = this._publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
@@ -79,7 +92,6 @@ export default class ObsidianPublisher extends Plugin {
       let result: PublishResult;
 
       if (this.settings.usePullRequests) {
-        // Use PR workflow
         result = await this._publisher.publishNoteWithPR(file);
 
         if (result.success && result.prUrl) {
@@ -89,18 +101,16 @@ export default class ObsidianPublisher extends Plugin {
           new Notice(`✗ Failed to publish: ${result.error}`);
         }
       } else {
-        // Fallback to direct commit workflow
         result = await this._publisher.publishNote(file);
 
         if (result.success) {
           new Notice(`✓ Successfully published ${file.basename}`);
-          if (result.url) {
-            console.log(`Published to: ${result.url}`);
-          }
         } else {
           new Notice(`✗ Failed to publish: ${result.error}`);
         }
       }
+
+      notifyWarnings(result.warnings);
     } catch (error) {
       const message = errorMessage(error);
       new Notice(`✗ Error: ${message}`);
@@ -112,46 +122,42 @@ export default class ObsidianPublisher extends Plugin {
    * Publish all notes with status: published
    */
   private async publishAllNotes() {
-    // Validate settings
     const validationError = this._publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
       return;
     }
 
+    new Notice("Scanning vault for publishable notes...");
+
     try {
-      let result: BatchPublishResult;
+      const result: BatchPublishResult = this.settings.usePullRequests
+        ? await this._publisher.publishAllWithPR()
+        : await this._publisher.publishAll();
 
-      if (this.settings.usePullRequests) {
-        // Use PR workflow
-        result = await this._publisher.publishAllWithPR();
+      if (result.total === 0) {
+        new Notice("No publishable notes found");
+        return;
+      }
 
-        if (result.total === 0) {
-          new Notice("No publishable notes found");
-          return;
-        }
-
-        const summary = `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`;
+      if (result.error) {
+        new Notice(`✗ Failed to publish: ${result.error}`);
+      } else if (result.successful === 0) {
+        new Notice("All files failed to process. No PR created.");
+      } else {
+        const summary = this.settings.usePullRequests
+          ? `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`
+          : `Publishing complete: ${result.successful} succeeded, ${result.failed} failed out of ${result.total} total`;
         new Notice(summary);
 
         if (result.prUrl) {
           new Notice(`✓ Pull request created: ${result.prUrl}`);
           console.log(`Pull Request: ${result.prUrl}`);
         }
-      } else {
-        // Fallback to direct commit workflow
-        result = await this._publisher.publishAll();
-
-        if (result.total === 0) {
-          new Notice("No publishable notes found");
-          return;
-        }
-
-        const summary = `Publishing complete: ${result.successful} succeeded, ${result.failed} failed out of ${result.total} total`;
-        new Notice(summary);
       }
 
-      // Log failures
+      notifyWarnings(result.results.flatMap((r) => r.warnings));
+
       if (result.failed > 0) {
         console.log("Failed publishes:");
         for (const r of result.results) {
@@ -161,12 +167,11 @@ export default class ObsidianPublisher extends Plugin {
         }
       }
 
-      // Log successes
       if (result.successful > 0) {
         console.log("Successful publishes:");
         for (const r of result.results) {
           if (r.success) {
-            console.log(`  ${r.filePath}: ${r.url || "no url"}`);
+            console.log(`  ${r.filePath}`);
           }
         }
       }

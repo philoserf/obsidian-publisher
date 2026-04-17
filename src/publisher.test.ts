@@ -210,6 +210,29 @@ describe("Publisher.publishNote", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("API error");
   });
+
+  test("returns empty warnings on clean publish", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("test.md") as never);
+
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("reports image-failed warning when image missing from vault", async () => {
+    const vault = makeVault([{ name: "post.md", content: noteWithImage }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toEqual([
+      { kind: "image-failed", name: "photo.png" },
+    ]);
+  });
 });
 
 describe("Publisher.publishAll", () => {
@@ -254,6 +277,24 @@ describe("Publisher.publishAll", () => {
     expect(result.successful).toBe(0);
     expect(result.failed).toBe(1);
     expect(result.results[0].error).toContain("rate limit");
+  });
+
+  test("invokes onProgress for each prepared file", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+      { name: "c.md", content: publishedNote },
+    ]);
+    const gh = makeGitHubService();
+    const progress = mock((_done: number, _total: number) => {});
+    const publisher = new Publisher(vault as never, makeSettings(), progress);
+    (publisher as unknown as Record<string, unknown>).githubService = gh;
+
+    await publisher.publishAll();
+
+    expect(progress).toHaveBeenCalledTimes(3);
+    expect(progress.mock.calls[0]).toEqual([1, 3]);
+    expect(progress.mock.calls[2]).toEqual([3, 3]);
   });
 });
 
@@ -347,5 +388,33 @@ describe("Publisher.publishAllWithPR", () => {
 
     expect(result.total).toBe(0);
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+  });
+
+  test("sets batch error when branch creation throws", async () => {
+    const vault = makeVault([{ name: "a.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.createBranchWithRetry.mockImplementation(async () => {
+      throw new Error("branch exists");
+    });
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.error).toContain("branch exists");
+    expect(result.successful).toBe(0);
+  });
+
+  test("sets batch error when PR creation throws", async () => {
+    const vault = makeVault([{ name: "a.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.createPullRequest.mockImplementation(async () => {
+      throw new Error("PR creation failed");
+    });
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.error).toContain("PR creation failed");
+    expect(gh.deleteBranch).toHaveBeenCalled();
   });
 });
