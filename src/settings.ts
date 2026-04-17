@@ -91,144 +91,114 @@ export class PublisherSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    const settings = this.plugin.settings;
+    const save = () => this.plugin.saveSettings();
 
     containerEl.createEl("h2", { text: "Obsidian Publisher Settings" });
 
-    // GitHub Token
-    new Setting(containerEl)
-      .setName("GitHub Personal Access Token")
-      .setDesc(
-        "Create a fine-grained token at github.com/settings/tokens with contents:write permission scoped to your target repo. Token is stored in plugin data (unencrypted).",
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("ghp_xxxxxxxxxxxx")
-          .setValue(this.plugin.settings.githubToken)
-          .onChange(async (value) => {
-            this.plugin.settings.githubToken = value;
-            await this.plugin.saveSettings();
-          })
-          .inputEl.setAttribute("type", "password"),
-      );
+    this.addTextSetting(containerEl, {
+      name: "GitHub Personal Access Token",
+      desc: "Create a fine-grained token at github.com/settings/tokens with contents:write permission scoped to your target repo. Token is stored in plugin data (unencrypted).",
+      placeholder: "ghp_xxxxxxxxxxxx",
+      getValue: () => settings.githubToken,
+      onInput: (value) => {
+        settings.githubToken = value;
+      },
+      onCommit: save,
+      inputType: "password",
+    });
 
-    // Repository Owner
-    new Setting(containerEl)
-      .setName("Repository Owner")
-      .setDesc("GitHub username or organization name")
-      .addText((text) =>
-        text
-          .setPlaceholder("username")
-          .setValue(this.plugin.settings.repoOwner)
-          .onChange(async (value) => {
-            this.plugin.settings.repoOwner = sanitizeGitHubOwner(value);
-            await this.plugin.saveSettings();
-          }),
-      );
+    this.addTextSetting(containerEl, {
+      name: "Repository Owner",
+      desc: "GitHub username or organization name",
+      placeholder: "username",
+      getValue: () => settings.repoOwner,
+      onInput: (value) => {
+        settings.repoOwner = sanitizeGitHubOwner(value);
+      },
+      onCommit: save,
+    });
 
-    // Repository Name
-    new Setting(containerEl)
-      .setName("Repository Name")
-      .setDesc("Name of the Hugo repository")
-      .addText((text) =>
-        text
-          .setPlaceholder("my-blog")
-          .setValue(this.plugin.settings.repoName)
-          .onChange(async (value) => {
-            this.plugin.settings.repoName = sanitizeRepoName(value);
-            await this.plugin.saveSettings();
-          }),
-      );
+    this.addTextSetting(containerEl, {
+      name: "Repository Name",
+      desc: "Name of the Hugo repository",
+      placeholder: "my-blog",
+      getValue: () => settings.repoName,
+      onInput: (value) => {
+        settings.repoName = sanitizeRepoName(value);
+      },
+      onCommit: save,
+    });
 
-    // Content Directory
-    new Setting(containerEl)
-      .setName("Content Directory")
-      .setDesc("Path to Hugo content directory (e.g., 'content/posts')")
-      .addText((text) =>
-        text
-          .setPlaceholder("content/posts")
-          .setValue(this.plugin.settings.contentDir)
-          .onChange(async (value) => {
-            this.plugin.settings.contentDir = sanitizePath(value);
-            await this.plugin.saveSettings();
-          }),
-      );
+    this.addTextSetting(containerEl, {
+      name: "Content Directory",
+      desc: "Path to Hugo content directory (e.g., 'content/posts')",
+      placeholder: "content/posts",
+      getValue: () => settings.contentDir,
+      onInput: (value) => {
+        settings.contentDir = sanitizePath(value);
+      },
+      onCommit: save,
+    });
 
-    // Image Directory
-    new Setting(containerEl)
-      .setName("Image Directory")
-      .setDesc("Path to Hugo static images directory (e.g., 'static/images')")
-      .addText((text) =>
-        text
-          .setPlaceholder("static/images")
-          .setValue(this.plugin.settings.imageDir)
-          .onChange(async (value) => {
-            this.plugin.settings.imageDir = sanitizePath(value);
-            await this.plugin.saveSettings();
-          }),
-      );
+    this.addTextSetting(containerEl, {
+      name: "Image Directory",
+      desc: "Path to Hugo static images directory (e.g., 'static/images')",
+      placeholder: "static/images",
+      getValue: () => settings.imageDir,
+      onInput: (value) => {
+        settings.imageDir = sanitizePath(value);
+      },
+      onCommit: save,
+    });
 
-    // Use Pull Requests
     new Setting(containerEl)
       .setName("Use Pull Requests")
       .setDesc(
         "Create pull requests instead of committing directly to the base branch",
       )
       .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.usePullRequests)
-          .onChange(async (value) => {
-            this.plugin.settings.usePullRequests = value;
-            await this.plugin.saveSettings();
-          }),
+        toggle.setValue(settings.usePullRequests).onChange(async (value) => {
+          settings.usePullRequests = value;
+          await save();
+        }),
       );
 
-    // Base Branch
-    new Setting(containerEl)
-      .setName("Base Branch")
-      .setDesc(
-        "Branch to create pull requests against (e.g., 'main', 'master')",
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("main")
-          .setValue(this.plugin.settings.baseBranch)
-          .onChange(async (value) => {
-            this.plugin.settings.baseBranch = value.trim() || "main";
-            await this.plugin.saveSettings();
-          }),
-      );
+    this.addTextSetting(containerEl, {
+      name: "Base Branch",
+      desc: "Branch to create pull requests against (e.g., 'main', 'master')",
+      placeholder: "main",
+      getValue: () => settings.baseBranch,
+      onInput: (value) => {
+        settings.baseBranch = value.trim() || "main";
+      },
+      onCommit: save,
+    });
 
-    // Pull Request Labels
-    new Setting(containerEl)
-      .setName("Pull Request Labels")
-      .setDesc("Comma-separated labels to add to pull requests")
-      .addText((text) =>
-        text
-          .setPlaceholder("chore")
-          .setValue(this.plugin.settings.prLabels.join(", "))
-          .onChange(async (value) => {
-            this.plugin.settings.prLabels = value
-              .split(",")
-              .map((l) => l.trim())
-              .filter((l) => l.length > 0);
-            await this.plugin.saveSettings();
-          }),
-      );
+    this.addTextSetting(containerEl, {
+      name: "Pull Request Labels",
+      desc: "Comma-separated labels to add to pull requests",
+      placeholder: "chore",
+      getValue: () => settings.prLabels.join(", "),
+      onInput: (value) => {
+        settings.prLabels = value
+          .split(",")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
+      },
+      onCommit: save,
+    });
 
-    // Remove Publish Flag
     new Setting(containerEl)
       .setName("Remove 'status' field")
       .setDesc("Remove 'status: publish' from frontmatter when publishing")
       .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.removePublishFlag)
-          .onChange(async (value) => {
-            this.plugin.settings.removePublishFlag = value;
-            await this.plugin.saveSettings();
-          }),
+        toggle.setValue(settings.removePublishFlag).onChange(async (value) => {
+          settings.removePublishFlag = value;
+          await save();
+        }),
       );
 
-    // Frontmatter Template
     containerEl.createEl("h3", { text: "Additional Frontmatter" });
     containerEl.createEl("p", {
       text: "Add custom frontmatter fields (one per line, format: key: value)",
@@ -238,18 +208,15 @@ export class PublisherSettingTab extends PluginSettingTab {
     new Setting(containerEl).addTextArea((text) => {
       text
         .setPlaceholder("author: Your Name\ntags: [obsidian]")
-        .setValue(
-          serializeFrontmatter(this.plugin.settings.frontmatterTemplate),
-        )
+        .setValue(serializeFrontmatter(settings.frontmatterTemplate))
         .onChange(async (value) => {
-          this.plugin.settings.frontmatterTemplate = parseFrontmatter(value);
-          await this.plugin.saveSettings();
+          settings.frontmatterTemplate = parseFrontmatter(value);
+          await save();
         });
       text.inputEl.rows = 6;
       text.inputEl.cols = 50;
     });
 
-    // Test Connection Button
     new Setting(containerEl)
       .setName("Test GitHub Connection")
       .setDesc("Verify that your GitHub credentials and repository are valid")
@@ -258,6 +225,35 @@ export class PublisherSettingTab extends PluginSettingTab {
           await this.testConnection();
         }),
       );
+  }
+
+  private addTextSetting(
+    containerEl: HTMLElement,
+    config: {
+      name: string;
+      desc: string;
+      placeholder: string;
+      getValue: () => string;
+      onInput: (value: string) => void;
+      onCommit: () => Promise<void>;
+      inputType?: "text" | "password";
+    },
+  ): void {
+    new Setting(containerEl)
+      .setName(config.name)
+      .setDesc(config.desc)
+      .addText((text) => {
+        text
+          .setPlaceholder(config.placeholder)
+          .setValue(config.getValue())
+          .onChange(async (value) => {
+            config.onInput(value);
+            await config.onCommit();
+          });
+        if (config.inputType === "password") {
+          text.inputEl.setAttribute("type", "password");
+        }
+      });
   }
 
   private async testConnection(): Promise<void> {
