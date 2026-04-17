@@ -247,22 +247,12 @@ export class Publisher {
 
       const prepared = await this.prepareBatch(publishableFiles);
       results = prepared.results;
-      const { fileEntries } = prepared;
-      let commitError: string | undefined;
 
-      if (fileEntries.length > 0) {
-        try {
-          const successCount = results.filter((r) => r.success).length;
-          await this.githubService.commitFiles(
-            fileEntries,
-            `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
-            branchName,
-          );
-        } catch (error) {
-          this.markResultsFailed(results, error);
-          commitError = errorMessage(error);
-        }
-      }
+      const commitError = await this.commitPreparedBatch(
+        branchName,
+        results,
+        prepared.fileEntries,
+      );
 
       const succeeded = results.filter((r) => r.success);
       const successful = succeeded.length;
@@ -279,17 +269,7 @@ export class Publisher {
         };
       }
 
-      const prTitle = `Batch Publish: ${successful} notes`;
-      const fileList = succeeded.map((r) => `- ${r.filePath}`).join("\n");
-      const prBody = `Published ${successful} notes from Obsidian\n\n${fileList}`;
-
-      const pr = await this.githubService.createPullRequest(
-        branchName,
-        this.baseBranch,
-        prTitle,
-        prBody,
-        this.prLabels,
-      );
+      const pr = await this.createBatchPR(branchName, succeeded);
 
       return {
         total: results.length,
@@ -299,25 +279,93 @@ export class Publisher {
         prUrl: pr.url,
       };
     } catch (error) {
-      if (branchName) {
-        await this.cleanupBranch(branchName);
-      }
-      const message = errorMessage(error);
-      if (results.length === 0) {
-        for (const { file } of publishableFiles) {
-          results.push(failedResult(file.path, message));
-        }
-      } else {
-        this.markResultsFailed(results, error);
-      }
-      return {
-        total: results.length,
-        successful: 0,
-        failed: results.length,
+      return this.recoverFailedBatch(
+        publishableFiles,
         results,
-        error: message,
-      };
+        branchName,
+        error,
+      );
     }
+  }
+
+  /**
+   * Commit prepared files to the target branch. On failure, marks any
+   * successful per-file results as failed and returns the error message;
+   * returns undefined on success or when there is nothing to commit.
+   */
+  private async commitPreparedBatch(
+    branchName: string,
+    results: PublishResult[],
+    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>,
+  ): Promise<string | undefined> {
+    if (fileEntries.length === 0) return undefined;
+    try {
+      const successCount = results.filter((r) => r.success).length;
+      await this.githubService.commitFiles(
+        fileEntries,
+        `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
+        branchName,
+      );
+      return undefined;
+    } catch (error) {
+      this.markResultsFailed(results, error);
+      return errorMessage(error);
+    }
+  }
+
+  /**
+   * Build and create the batch PR listing the succeeded file paths.
+   */
+  private async createBatchPR(
+    branchName: string,
+    succeeded: PublishResult[],
+  ): Promise<{ url: string; number: number }> {
+    const successful = succeeded.length;
+    const prTitle = `Batch Publish: ${successful} notes`;
+    const fileList = succeeded.map((r) => `- ${r.filePath}`).join("\n");
+    const prBody = `Published ${successful} notes from Obsidian\n\n${fileList}`;
+    return this.githubService.createPullRequest(
+      branchName,
+      this.baseBranch,
+      prTitle,
+      prBody,
+      this.prLabels,
+    );
+  }
+
+  /**
+   * Recover from the outer catch: clean up the branch, then either
+   * synthesize failed results (when none were produced yet) or mark
+   * existing results failed. Returns a fully-populated batch result.
+   */
+  private async recoverFailedBatch(
+    publishableFiles: Array<{
+      file: TFile;
+      frontmatter: Frontmatter;
+      body: string;
+    }>,
+    results: PublishResult[],
+    branchName: string | null,
+    error: unknown,
+  ): Promise<BatchPublishResult> {
+    if (branchName) {
+      await this.cleanupBranch(branchName);
+    }
+    const message = errorMessage(error);
+    if (results.length === 0) {
+      for (const { file } of publishableFiles) {
+        results.push(failedResult(file.path, message));
+      }
+    } else {
+      this.markResultsFailed(results, error);
+    }
+    return {
+      total: results.length,
+      successful: 0,
+      failed: results.length,
+      results,
+      error: message,
+    };
   }
 
   /**
