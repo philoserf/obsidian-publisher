@@ -17,7 +17,7 @@ export function splitFrontmatter(content: string): {
   try {
     const parsed = parseYaml(match[1]);
     const frontmatter =
-      typeof parsed === "object" && parsed !== null
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
         ? (parsed as Frontmatter)
         : {};
     return { frontmatter, body: match[2] };
@@ -34,7 +34,8 @@ export function hasPublishFlag(frontmatter: Frontmatter): boolean {
 export function validateFrontmatter(frontmatter: Frontmatter): string | null {
   for (const field of REQUIRED_FRONTMATTER_FIELDS) {
     const value = frontmatter[field];
-    if (value === undefined || value === null || value === "") {
+    const normalized = typeof value === "string" ? value.trim() : value;
+    if (normalized === undefined || normalized === null || normalized === "") {
       return `Missing required frontmatter field: ${field}`;
     }
   }

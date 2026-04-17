@@ -443,6 +443,29 @@ describe("Publisher.publishAll", () => {
     expect(result.error).toContain("rate limit");
   });
 
+  test("batch publish fails per-file on missing required field", async () => {
+    const missingDate = `---
+title: No Date
+status: publish
+---
+body`;
+    const vault = makeVault([
+      { name: "good.md", content: publishedNote },
+      { name: "bad.md", content: missingDate },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(1);
+    expect(result.failed).toBe(1);
+    const badResult = result.results.find((r) => r.filePath === "bad.md");
+    expect(badResult?.success).toBe(false);
+    expect(badResult?.error).toContain("date");
+  });
+
   test("invokes onProgress for each prepared file", async () => {
     const vault = makeVault([
       { name: "a.md", content: publishedNote },

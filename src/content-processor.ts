@@ -1,5 +1,5 @@
 import { stringifyYaml } from "obsidian";
-import { splitFrontmatter } from "./schema";
+import { type Frontmatter, splitFrontmatter } from "./schema";
 import type { ProcessedContent, PublisherSettings } from "./types";
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
@@ -16,14 +16,21 @@ export class ContentProcessor {
    */
   process(content: string, originalFilename: string): ProcessedContent {
     const { frontmatter, body } = splitFrontmatter(content);
+    return this.processFromSplit(frontmatter, body, originalFilename);
+  }
 
-    // Process frontmatter
+  /**
+   * Process pre-split frontmatter and body. Callers that have already
+   * parsed the content should use this to avoid a redundant parse.
+   */
+  processFromSplit(
+    frontmatter: Frontmatter,
+    body: string,
+    originalFilename: string,
+  ): ProcessedContent {
     const processedFrontmatter = this.processFrontmatter(frontmatter);
-
-    // Find all images in the content
     const images = this.extractImages(body);
 
-    // Convert content
     let processedBody = body;
     processedBody = this.stripComments(processedBody);
     processedBody = this.convertHighlights(processedBody);
@@ -33,13 +40,10 @@ export class ContentProcessor {
     processedBody = this.convertNoteEmbeds(processedBody);
     processedBody = this.convertWikilinks(processedBody);
 
-    // Reassemble content with frontmatter
     const processedContent = this.assembleFrontmatter(
       processedFrontmatter,
       processedBody,
     );
-
-    // Sanitize filename
     const sanitizedFilename = this.sanitizeFilename(originalFilename);
 
     return {

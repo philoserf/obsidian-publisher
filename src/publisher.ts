@@ -2,6 +2,7 @@ import type { TFile, Vault } from "obsidian";
 import { ContentProcessor } from "./content-processor";
 import { GitHubService } from "./github-service";
 import {
+  type Frontmatter,
   hasPublishFlag,
   splitFrontmatter,
   validateFrontmatter,
@@ -177,7 +178,7 @@ export class Publisher {
       return failedResult(file.path, "Failed to read file");
     }
 
-    const { frontmatter } = splitFrontmatter(content);
+    const { frontmatter, body } = splitFrontmatter(content);
     if (!hasPublishFlag(frontmatter)) {
       return failedResult(
         file.path,
@@ -197,7 +198,10 @@ export class Publisher {
         this.baseBranch,
       );
 
-      const result = await this.publishFileToTarget(file, branchName, content);
+      const result = await this.publishFileToTarget(file, branchName, {
+        frontmatter,
+        body,
+      });
 
       if (!result.success) {
         await this.cleanupBranch(branchName);
@@ -338,29 +342,44 @@ export class Publisher {
   // === Private helpers ===
 
   /**
-   * Publish a single file to a target branch (or default branch)
+   * Publish a single file to a target branch (or default branch).
+   * If `preparsed` is supplied, the caller has already parsed and
+   * validated the frontmatter — we skip the re-parse and gate/validate.
    */
   private async publishFileToTarget(
     file: TFile,
     branch?: string,
-    prereadContent?: string,
+    preparsed?: { frontmatter: Frontmatter; body: string },
   ): Promise<PublishResult> {
     try {
-      const content = prereadContent ?? (await this.vault.read(file));
+      let frontmatter: Frontmatter;
+      let body: string;
 
-      const { frontmatter } = splitFrontmatter(content);
-      if (!hasPublishFlag(frontmatter)) {
-        return failedResult(
-          file.path,
-          "File does not have 'status: publish' in frontmatter",
-        );
-      }
-      const validationError = validateFrontmatter(frontmatter);
-      if (validationError) {
-        return failedResult(file.path, validationError);
+      if (preparsed) {
+        ({ frontmatter, body } = preparsed);
+      } else {
+        const content = await this.vault.read(file);
+        const split = splitFrontmatter(content);
+        frontmatter = split.frontmatter;
+        body = split.body;
+
+        if (!hasPublishFlag(frontmatter)) {
+          return failedResult(
+            file.path,
+            "File does not have 'status: publish' in frontmatter",
+          );
+        }
+        const validationError = validateFrontmatter(frontmatter);
+        if (validationError) {
+          return failedResult(file.path, validationError);
+        }
       }
 
-      const processed = this.contentProcessor.process(content, file.name);
+      const processed = this.contentProcessor.processFromSplit(
+        frontmatter,
+        body,
+        file.name,
+      );
       const targetBranch = branch ?? this.baseBranch;
 
       const targetPath = `${this.settings.contentDir}/${processed.filename}`;
@@ -387,19 +406,28 @@ export class Publisher {
   }
 
   /**
-   * Scan the vault for files with status: publish
+   * Scan the vault for files with status: publish, returning each with
+   * its already-parsed frontmatter and body so callers don't re-parse.
+   * Gate failures (status != publish) are silently skipped; validation
+   * happens per-file in prepareBatch so invalid-but-intended publishes
+   * surface as failed results.
    */
   private async getPublishableFiles(): Promise<
-    Array<{ file: TFile; content: string }>
+    Array<{ file: TFile; frontmatter: Frontmatter; body: string }>
   > {
     const markdownFiles = this.vault.getMarkdownFiles();
-    const publishableFiles: Array<{ file: TFile; content: string }> = [];
+    const publishableFiles: Array<{
+      file: TFile;
+      frontmatter: Frontmatter;
+      body: string;
+    }> = [];
 
     for (const file of markdownFiles) {
       try {
         const content = await this.vault.read(file);
-        if (hasPublishFlag(splitFrontmatter(content).frontmatter)) {
-          publishableFiles.push({ file, content });
+        const { frontmatter, body } = splitFrontmatter(content);
+        if (hasPublishFlag(frontmatter)) {
+          publishableFiles.push({ file, frontmatter, body });
         }
       } catch (error) {
         console.error(`Failed to read file ${file.path}:`, error);
@@ -411,10 +439,12 @@ export class Publisher {
 
   /**
    * Prepare all files for a batch commit.
-   * Returns per-file results and collected file entries for commitFiles().
+   * Validates each file's frontmatter; invalid files become failed
+   * results. Returns per-file results and collected file entries for
+   * commitFiles().
    */
   private async prepareBatch(
-    files: Array<{ file: TFile; content: string }>,
+    files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>,
   ): Promise<{
     results: PublishResult[];
     fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
@@ -423,22 +453,31 @@ export class Publisher {
     const entryMap = new Map<string, string | ArrayBuffer>();
     const filesByBasename = this.buildFilesByBasename();
 
-    for (const { file, content } of files) {
+    for (const { file, frontmatter, body } of files) {
       try {
-        const processed = this.contentProcessor.process(content, file.name);
+        const validationError = validateFrontmatter(frontmatter);
+        if (validationError) {
+          results.push(failedResult(file.path, validationError));
+        } else {
+          const processed = this.contentProcessor.processFromSplit(
+            frontmatter,
+            body,
+            file.name,
+          );
 
-        const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-        entryMap.set(targetPath, processed.content);
+          const targetPath = `${this.settings.contentDir}/${processed.filename}`;
+          entryMap.set(targetPath, processed.content);
 
-        const { entries: imageEntries, warnings } = await this.resolveImages(
-          processed.images,
-          filesByBasename,
-        );
-        for (const entry of imageEntries) {
-          entryMap.set(entry.path, entry.content);
+          const { entries: imageEntries, warnings } = await this.resolveImages(
+            processed.images,
+            filesByBasename,
+          );
+          for (const entry of imageEntries) {
+            entryMap.set(entry.path, entry.content);
+          }
+
+          results.push({ filePath: file.path, success: true, warnings });
         }
-
-        results.push({ filePath: file.path, success: true, warnings });
       } catch (error) {
         results.push(failedResult(file.path, errorMessage(error)));
       }

@@ -84,4 +84,10 @@ describe("validateFrontmatter", () => {
       "title",
     );
   });
+
+  test("treats whitespace-only string as missing", () => {
+    expect(validateFrontmatter({ title: "   ", date: "2026-01-01" })).toContain(
+      "title",
+    );
+  });
 });
