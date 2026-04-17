@@ -25,6 +25,13 @@ mock.module("obsidian", () => ({
       else if (value === "false") value = false;
       else if (typeof value === "string" && /^\d+$/.test(value))
         value = Number(value);
+      else if (
+        typeof value === "string" &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'")))
+      ) {
+        value = value.slice(1, -1);
+      }
 
       if (key) result[key] = value;
     }

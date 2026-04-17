@@ -4,19 +4,22 @@ import { DEFAULT_SETTINGS, type PublisherSettings } from "./types";
 
 const publishedNote = `---
 title: Test Post
-status: published
+status: publish
+date: 2026-01-01
 ---
 Hello world`;
 
 const unpublishedNote = `---
 title: Draft
 status: draft
+date: 2026-01-01
 ---
 Not ready`;
 
 const noteWithImage = `---
 title: With Image
-status: published
+status: publish
+date: 2026-01-01
 ---
 Check ![[photo.png]]`;
 
@@ -152,7 +155,7 @@ describe("Publisher.validateSettings", () => {
 });
 
 describe("Publisher.publishNote", () => {
-  test("publishes a note with status: published", async () => {
+  test("publishes a note with status: publish", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
     const gh = makeGitHubService();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
@@ -175,7 +178,78 @@ describe("Publisher.publishNote", () => {
     const result = await publisher.publishNote(makeTFile("draft.md") as never);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("status: published");
+    expect(result.error).toContain("status: publish");
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("accepts quoted status value", async () => {
+    const quotedStatus = `---
+title: Test Post
+status: "publish"
+date: 2026-01-01
+---
+Hello`;
+    const vault = makeVault([{ name: "quoted.md", content: quotedStatus }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("quoted.md") as never);
+
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects note missing required title", async () => {
+    const noTitle = `---
+status: publish
+date: 2026-01-01
+---
+body`;
+    const vault = makeVault([{ name: "no-title.md", content: noTitle }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(
+      makeTFile("no-title.md") as never,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("title");
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("rejects note missing required date", async () => {
+    const noDate = `---
+title: No Date
+status: publish
+---
+body`;
+    const vault = makeVault([{ name: "no-date.md", content: noDate }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(
+      makeTFile("no-date.md") as never,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("date");
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("rejects legacy status: published as unpublishable", async () => {
+    const legacy = `---
+title: Legacy
+status: published
+date: 2026-01-01
+---
+body`;
+    const vault = makeVault([{ name: "legacy.md", content: legacy }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("legacy.md") as never);
+
+    expect(result.success).toBe(false);
     expect(gh.commitFiles).not.toHaveBeenCalled();
   });
 
@@ -297,7 +371,8 @@ describe("Publisher.publishNote", () => {
   test("emits one warning when same image referenced twice in a note", async () => {
     const noteWithDupeRefs = `---
 title: Dupe
-status: published
+status: publish
+date: 2026-01-01
 ---
 First ![[photo.png]] and again ![[photo.png]]`;
     const vault = makeVault([
