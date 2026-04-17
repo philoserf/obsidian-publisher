@@ -234,6 +234,30 @@ describe("Publisher.publishNote", () => {
     ]);
   });
 
+  test("reports image-failed warning when readBinary throws", async () => {
+    const imageData = new Uint8Array([1, 2, 3]).buffer;
+    const vault = makeVault([
+      { name: "post.md", content: noteWithImage },
+      { name: "photo.png", content: imageData as unknown as string },
+    ]);
+    vault.readBinary.mockImplementation(async () => {
+      throw new Error("disk read error");
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toEqual([
+      { kind: "image-failed", name: "photo.png" },
+    ]);
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string }>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].path).toBe("content/posts/post.md");
+  });
+
   test("reports image-collision warning with paths sorted", async () => {
     const imageData = new Uint8Array([1, 2, 3]).buffer;
     // Intentionally reverse-alphabetical to prove paths are sorted on output.
