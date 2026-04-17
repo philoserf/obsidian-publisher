@@ -53,6 +53,14 @@ mock.module("obsidian", () => ({
 
   Notice: class Notice {},
 
+  debounce<T extends unknown[]>(cb: (...args: T) => unknown) {
+    // Tests don't exercise timing — invoke immediately.
+    const fn = (...args: T): unknown => cb(...args);
+    (fn as unknown as { cancel: () => unknown }).cancel = () => fn;
+    (fn as unknown as { run: () => unknown }).run = () => fn;
+    return fn;
+  },
+
   Plugin: class Plugin {},
 
   PluginSettingTab: class PluginSettingTab {},
