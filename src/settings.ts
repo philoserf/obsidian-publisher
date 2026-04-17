@@ -98,6 +98,7 @@ export class PublisherSettingTab extends PluginSettingTab {
 
   hide(): void {
     this.save.cancel();
+    void this.plugin.saveSettings();
   }
 
   display(): void {

@@ -80,6 +80,7 @@ export default class ObsidianPublisher extends Plugin {
 
   onunload() {
     this.settingTab?.save.cancel();
+    void this.saveSettings();
   }
 
   async loadSettings() {

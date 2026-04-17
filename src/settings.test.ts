@@ -125,14 +125,14 @@ describe("parseFrontmatter", () => {
 });
 
 describe("PublisherSettingTab.hide", () => {
-  test("cancels pending debounced save", () => {
-    const plugin = {
-      saveSettings: mock(() => Promise.resolve()),
-    } as unknown as ObsidianPublisher;
+  test("cancels pending debounced save and flushes immediately", () => {
+    const saveSettings = mock(() => Promise.resolve());
+    const plugin = { saveSettings } as unknown as ObsidianPublisher;
     const tab = new PublisherSettingTab({} as App, plugin);
     const cancelSpy = spyOn(tab.save, "cancel");
     tab.hide();
     expect(cancelSpy).toHaveBeenCalled();
+    expect(saveSettings).toHaveBeenCalled();
   });
 });
 
