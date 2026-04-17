@@ -2,6 +2,11 @@ import type { TFile, Vault } from "obsidian";
 import { ContentProcessor } from "./content-processor";
 import { GitHubService } from "./github-service";
 import {
+  hasPublishFlag,
+  splitFrontmatter,
+  validateFrontmatter,
+} from "./schema";
+import {
   type BatchPublishResult,
   errorMessage,
   type PublisherSettings,
@@ -172,11 +177,16 @@ export class Publisher {
       return failedResult(file.path, "Failed to read file");
     }
 
-    if (!this.hasPublishFlag(content)) {
+    const { frontmatter } = splitFrontmatter(content);
+    if (!hasPublishFlag(frontmatter)) {
       return failedResult(
         file.path,
-        "File does not have 'status: published' in frontmatter",
+        "File does not have 'status: publish' in frontmatter",
       );
+    }
+    const validationError = validateFrontmatter(frontmatter);
+    if (validationError) {
+      return failedResult(file.path, validationError);
     }
 
     let branchName: string | null = null;
@@ -338,11 +348,16 @@ export class Publisher {
     try {
       const content = prereadContent ?? (await this.vault.read(file));
 
-      if (!this.hasPublishFlag(content)) {
+      const { frontmatter } = splitFrontmatter(content);
+      if (!hasPublishFlag(frontmatter)) {
         return failedResult(
           file.path,
-          "File does not have 'status: published' in frontmatter",
+          "File does not have 'status: publish' in frontmatter",
         );
+      }
+      const validationError = validateFrontmatter(frontmatter);
+      if (validationError) {
+        return failedResult(file.path, validationError);
       }
 
       const processed = this.contentProcessor.process(content, file.name);
@@ -383,7 +398,7 @@ export class Publisher {
     for (const file of markdownFiles) {
       try {
         const content = await this.vault.read(file);
-        if (this.hasPublishFlag(content)) {
+        if (hasPublishFlag(splitFrontmatter(content).frontmatter)) {
           publishableFiles.push({ file, content });
         }
       } catch (error) {
@@ -435,20 +450,5 @@ export class Publisher {
       ([path, content]) => ({ path, content }),
     );
     return { results, fileEntries };
-  }
-
-  /**
-   * Check if content has status: published in frontmatter
-   */
-  private hasPublishFlag(content: string): boolean {
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---\n/;
-    const match = content.match(frontmatterRegex);
-
-    if (!match) {
-      return false;
-    }
-
-    const frontmatter = match[1];
-    return /^status:\s*published\s*$/m.test(frontmatter);
   }
 }
