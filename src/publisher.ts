@@ -1,4 +1,4 @@
-import { Notice, type TFile, type Vault } from "obsidian";
+import type { TFile, Vault } from "obsidian";
 import { ContentProcessor } from "./content-processor";
 import { GitHubService } from "./github-service";
 import {
@@ -6,19 +6,32 @@ import {
   errorMessage,
   type PublisherSettings,
   type PublishResult,
+  type PublishWarning,
 } from "./types";
+
+export type ProgressCallback = (done: number, total: number) => void;
+
+function failedResult(filePath: string, error: string): PublishResult {
+  return { filePath, success: false, error, warnings: [] };
+}
 
 export class Publisher {
   private vault: Vault;
   private settings: PublisherSettings;
   private contentProcessor: ContentProcessor;
   private githubService: GitHubService;
+  private onProgress?: ProgressCallback;
 
-  constructor(vault: Vault, settings: PublisherSettings) {
+  constructor(
+    vault: Vault,
+    settings: PublisherSettings,
+    onProgress?: ProgressCallback,
+  ) {
     this.vault = vault;
     this.settings = settings;
     this.contentProcessor = new ContentProcessor(settings);
     this.githubService = new GitHubService(settings);
+    this.onProgress = onProgress;
   }
 
   private get baseBranch(): string {
@@ -52,16 +65,16 @@ export class Publisher {
     filesByName: Map<string, TFile>,
   ): Promise<{
     entries: Array<{ path: string; content: ArrayBuffer }>;
-    failedImages: string[];
+    warnings: PublishWarning[];
   }> {
     const entries: Array<{ path: string; content: ArrayBuffer }> = [];
-    const failedImages: string[] = [];
+    const warnings: PublishWarning[] = [];
 
     for (const imageName of imageNames) {
       const imageFile = filesByName.get(imageName);
       if (!imageFile) {
         console.warn(`Image not found in vault: ${imageName}`);
-        failedImages.push(imageName);
+        warnings.push({ kind: "image-failed", name: imageName });
         continue;
       }
       try {
@@ -72,11 +85,11 @@ export class Publisher {
         entries.push({ path: imgPath, content: imageContent });
       } catch (error) {
         console.error(`Failed to read image ${imageName}:`, error);
-        failedImages.push(imageName);
+        warnings.push({ kind: "image-failed", name: imageName });
       }
     }
 
-    return { entries, failedImages };
+    return { entries, warnings };
   }
 
   /**
@@ -92,11 +105,9 @@ export class Publisher {
   async publishAll(): Promise<BatchPublishResult> {
     const publishableFiles = await this.getPublishableFiles();
     if (publishableFiles.length === 0) {
-      new Notice("No files with 'status: published' found");
       return { total: 0, successful: 0, failed: 0, results: [] };
     }
 
-    new Notice(`Publishing ${publishableFiles.length} notes...`);
     const { results, fileEntries } = await this.prepareBatch(publishableFiles);
 
     if (fileEntries.length > 0) {
@@ -125,19 +136,14 @@ export class Publisher {
     try {
       content = await this.vault.read(file);
     } catch {
-      return {
-        filePath: file.path,
-        success: false,
-        error: "Failed to read file",
-      };
+      return failedResult(file.path, "Failed to read file");
     }
 
     if (!this.hasPublishFlag(content)) {
-      return {
-        filePath: file.path,
-        success: false,
-        error: "File does not have 'status: published' in frontmatter",
-      };
+      return failedResult(
+        file.path,
+        "File does not have 'status: published' in frontmatter",
+      );
     }
 
     let branchName: string | null = null;
@@ -170,8 +176,7 @@ export class Publisher {
       if (branchName) {
         await this.cleanupBranch(branchName);
       }
-      const message = errorMessage(error);
-      return { filePath: file.path, success: false, error: message };
+      return failedResult(file.path, errorMessage(error));
     }
   }
 
@@ -181,12 +186,11 @@ export class Publisher {
   async publishAllWithPR(): Promise<BatchPublishResult> {
     const publishableFiles = await this.getPublishableFiles();
     if (publishableFiles.length === 0) {
-      new Notice("No files with 'status: published' found");
       return { total: 0, successful: 0, failed: 0, results: [] };
     }
 
-    new Notice(`Publishing ${publishableFiles.length} notes to branch...`);
     let branchName: string | null = null;
+    let results: PublishResult[] = [];
 
     try {
       branchName = await this.githubService.createBranchWithRetry(
@@ -194,8 +198,9 @@ export class Publisher {
         this.baseBranch,
       );
 
-      const { results, fileEntries } =
-        await this.prepareBatch(publishableFiles);
+      const prepared = await this.prepareBatch(publishableFiles);
+      results = prepared.results;
+      const { fileEntries } = prepared;
 
       if (fileEntries.length > 0) {
         try {
@@ -210,20 +215,17 @@ export class Publisher {
         }
       }
 
-      const successful = results.filter((r) => r.success).length;
-      const failed = results.filter((r) => !r.success).length;
+      const succeeded = results.filter((r) => r.success);
+      const successful = succeeded.length;
+      const failed = results.length - successful;
 
       if (successful === 0) {
         await this.cleanupBranch(branchName);
-        new Notice("All files failed to process. No PR created.");
         return { total: results.length, successful: 0, failed, results };
       }
 
       const prTitle = `Batch Publish: ${successful} notes`;
-      const fileList = results
-        .filter((r) => r.success)
-        .map((r) => `- ${r.filePath}`)
-        .join("\n");
+      const fileList = succeeded.map((r) => `- ${r.filePath}`).join("\n");
       const prBody = `Published ${successful} notes from Obsidian\n\n${fileList}`;
 
       const pr = await this.githubService.createPullRequest(
@@ -246,8 +248,15 @@ export class Publisher {
         await this.cleanupBranch(branchName);
       }
       const message = errorMessage(error);
-      new Notice(`Failed to publish: ${message}`);
-      return { total: 0, successful: 0, failed: 0, results: [] };
+      const failed =
+        results.length > 0 ? results.length : publishableFiles.length;
+      return {
+        total: failed,
+        successful: 0,
+        failed,
+        results,
+        error: message,
+      };
     }
   }
 
@@ -284,11 +293,10 @@ export class Publisher {
       const content = prereadContent ?? (await this.vault.read(file));
 
       if (!this.hasPublishFlag(content)) {
-        return {
-          filePath: file.path,
-          success: false,
-          error: "File does not have 'status: published' in frontmatter",
-        };
+        return failedResult(
+          file.path,
+          "File does not have 'status: published' in frontmatter",
+        );
       }
 
       const processed = this.contentProcessor.process(content, file.name);
@@ -298,16 +306,10 @@ export class Publisher {
       const filesByName = new Map(
         this.vault.getFiles().map((f) => [f.name, f]),
       );
-      const { entries: imageEntries, failedImages } = await this.resolveImages(
+      const { entries: imageEntries, warnings } = await this.resolveImages(
         processed.images,
         filesByName,
       );
-
-      if (failedImages.length > 0) {
-        new Notice(
-          `Warning: ${failedImages.length} image(s) failed: ${failedImages.join(", ")}`,
-        );
-      }
 
       const fileEntries: Array<{
         path: string;
@@ -320,10 +322,9 @@ export class Publisher {
         targetBranch,
       );
 
-      return { filePath: file.path, success: true };
+      return { filePath: file.path, success: true, warnings };
     } catch (error) {
-      const message = errorMessage(error);
-      return { filePath: file.path, success: false, error: message };
+      return failedResult(file.path, errorMessage(error));
     }
   }
 
@@ -335,8 +336,6 @@ export class Publisher {
   > {
     const markdownFiles = this.vault.getMarkdownFiles();
     const publishableFiles: Array<{ file: TFile; content: string }> = [];
-
-    new Notice("Scanning vault for publishable notes...");
 
     for (const file of markdownFiles) {
       try {
@@ -364,7 +363,6 @@ export class Publisher {
   }> {
     const results: PublishResult[] = [];
     const entryMap = new Map<string, string | ArrayBuffer>();
-    const allFailedImages: string[] = [];
     const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
 
     for (const { file, content } of files) {
@@ -374,31 +372,20 @@ export class Publisher {
         const targetPath = `${this.settings.contentDir}/${processed.filename}`;
         entryMap.set(targetPath, processed.content);
 
-        const { entries: imageEntries, failedImages } =
-          await this.resolveImages(processed.images, filesByName);
+        const { entries: imageEntries, warnings } = await this.resolveImages(
+          processed.images,
+          filesByName,
+        );
         for (const entry of imageEntries) {
           entryMap.set(entry.path, entry.content);
         }
-        allFailedImages.push(...failedImages);
 
-        results.push({ filePath: file.path, success: true });
-        new Notice(`Prepared: ${results.length}/${files.length}`);
+        results.push({ filePath: file.path, success: true, warnings });
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
-        results.push({
-          filePath: file.path,
-          success: false,
-          error: message,
-        });
+        results.push(failedResult(file.path, errorMessage(error)));
       }
-    }
 
-    if (allFailedImages.length > 0) {
-      const unique = [...new Set(allFailedImages)];
-      new Notice(
-        `Warning: ${unique.length} image(s) failed: ${unique.join(", ")}`,
-      );
+      this.onProgress?.(results.length, files.length);
     }
 
     const fileEntries = Array.from(entryMap.entries()).map(
