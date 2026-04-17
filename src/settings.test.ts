@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import type { App } from "obsidian";
+import type ObsidianPublisher from "./main";
 import {
+  PublisherSettingTab,
   parseFrontmatter,
   sanitizeGitHubOwner,
   sanitizePath,
@@ -118,6 +121,18 @@ describe("parseFrontmatter", () => {
     const parsed = parseFrontmatter(serializeFrontmatter(input));
     expect(parsed.author).toBe("Mark");
     expect(parsed.tag).toBe("obsidian");
+  });
+});
+
+describe("PublisherSettingTab.hide", () => {
+  test("cancels pending debounced save", () => {
+    const plugin = {
+      saveSettings: mock(() => Promise.resolve()),
+    } as unknown as ObsidianPublisher;
+    const tab = new PublisherSettingTab({} as App, plugin);
+    const cancelSpy = spyOn(tab.save, "cancel");
+    tab.hide();
+    expect(cancelSpy).toHaveBeenCalled();
   });
 });
 

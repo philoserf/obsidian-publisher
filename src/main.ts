@@ -37,6 +37,7 @@ function notifyWarnings(warnings: PublishWarning[]): void {
 
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
+  private settingTab?: PublisherSettingTab;
 
   // Constructs a fresh Publisher on each access; assign to a local once per command.
   // Reading `this.publisher` twice yields two distinct instances.
@@ -50,7 +51,8 @@ export default class ObsidianPublisher extends Plugin {
     await this.loadSettings();
 
     // Register settings tab
-    this.addSettingTab(new PublisherSettingTab(this.app, this));
+    this.settingTab = new PublisherSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     // Register commands
     this.addCommand({
@@ -76,7 +78,9 @@ export default class ObsidianPublisher extends Plugin {
     });
   }
 
-  onunload() {}
+  onunload() {
+    this.settingTab?.save.cancel();
+  }
 
   async loadSettings() {
     const data = await this.loadData();

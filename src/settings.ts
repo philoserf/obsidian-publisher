@@ -1,5 +1,6 @@
 import {
   type App,
+  type Debouncer,
   debounce,
   Notice,
   PluginSettingTab,
@@ -87,12 +88,16 @@ export function validateConnectionSettings(
 
 export class PublisherSettingTab extends PluginSettingTab {
   plugin: ObsidianPublisher;
-  private save: () => unknown;
+  readonly save: Debouncer<[], Promise<void>>;
 
   constructor(app: App, plugin: ObsidianPublisher) {
     super(app, plugin);
     this.plugin = plugin;
     this.save = debounce(() => this.plugin.saveSettings(), 500, true);
+  }
+
+  hide(): void {
+    this.save.cancel();
   }
 
   display(): void {
