@@ -137,7 +137,7 @@ export default class ObsidianPublisher extends Plugin {
   }
 
   /**
-   * Publish all notes with status: published
+   * Publish all notes with status: publish
    */
   private async publishAllNotes() {
     const validationError = this._publisher.validateSettings();
