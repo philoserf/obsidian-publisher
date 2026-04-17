@@ -83,20 +83,19 @@ export function validateConnectionSettings(
 
 export class PublisherSettingTab extends PluginSettingTab {
   plugin: ObsidianPublisher;
+  private save: () => unknown;
 
   constructor(app: App, plugin: ObsidianPublisher) {
     super(app, plugin);
     this.plugin = plugin;
+    this.save = debounce(() => this.plugin.saveSettings(), 500, true);
   }
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
     const settings = this.plugin.settings;
-    const debouncedSave = debounce(() => this.plugin.saveSettings(), 500, true);
-    const save = (): void => {
-      debouncedSave();
-    };
+    const save = this.save;
 
     containerEl.createEl("h2", { text: "Obsidian Publisher Settings" });
 
@@ -105,10 +104,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "Create a fine-grained token at github.com/settings/tokens with contents:write permission scoped to your target repo. Token is stored in plugin data (unencrypted).",
       placeholder: "ghp_xxxxxxxxxxxx",
       getValue: () => settings.githubToken,
-      onInput: (value) => {
+      onChange: (value) => {
         settings.githubToken = value;
+        save();
       },
-      onCommit: save,
       inputType: "password",
     });
 
@@ -117,10 +116,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "GitHub username or organization name",
       placeholder: "username",
       getValue: () => settings.repoOwner,
-      onInput: (value) => {
+      onChange: (value) => {
         settings.repoOwner = sanitizeGitHubOwner(value);
+        save();
       },
-      onCommit: save,
     });
 
     this.addTextSetting(containerEl, {
@@ -128,10 +127,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "Name of the Hugo repository",
       placeholder: "my-blog",
       getValue: () => settings.repoName,
-      onInput: (value) => {
+      onChange: (value) => {
         settings.repoName = sanitizeRepoName(value);
+        save();
       },
-      onCommit: save,
     });
 
     this.addTextSetting(containerEl, {
@@ -139,10 +138,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "Path to Hugo content directory (e.g., 'content/posts')",
       placeholder: "content/posts",
       getValue: () => settings.contentDir,
-      onInput: (value) => {
+      onChange: (value) => {
         settings.contentDir = sanitizePath(value);
+        save();
       },
-      onCommit: save,
     });
 
     this.addTextSetting(containerEl, {
@@ -150,10 +149,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "Path to Hugo static images directory (e.g., 'static/images')",
       placeholder: "static/images",
       getValue: () => settings.imageDir,
-      onInput: (value) => {
+      onChange: (value) => {
         settings.imageDir = sanitizePath(value);
+        save();
       },
-      onCommit: save,
     });
 
     new Setting(containerEl)
@@ -162,7 +161,7 @@ export class PublisherSettingTab extends PluginSettingTab {
         "Create pull requests instead of committing directly to the base branch",
       )
       .addToggle((toggle) =>
-        toggle.setValue(settings.usePullRequests).onChange(async (value) => {
+        toggle.setValue(settings.usePullRequests).onChange((value) => {
           settings.usePullRequests = value;
           save();
         }),
@@ -173,10 +172,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "Branch to create pull requests against (e.g., 'main', 'master')",
       placeholder: "main",
       getValue: () => settings.baseBranch,
-      onInput: (value) => {
+      onChange: (value) => {
         settings.baseBranch = value.trim() || "main";
+        save();
       },
-      onCommit: save,
     });
 
     this.addTextSetting(containerEl, {
@@ -184,20 +183,20 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: "Comma-separated labels to add to pull requests",
       placeholder: "chore",
       getValue: () => settings.prLabels.join(", "),
-      onInput: (value) => {
+      onChange: (value) => {
         settings.prLabels = value
           .split(",")
           .map((l) => l.trim())
           .filter((l) => l.length > 0);
+        save();
       },
-      onCommit: save,
     });
 
     new Setting(containerEl)
       .setName("Remove 'status' field")
       .setDesc("Remove 'status: publish' from frontmatter when publishing")
       .addToggle((toggle) =>
-        toggle.setValue(settings.removePublishFlag).onChange(async (value) => {
+        toggle.setValue(settings.removePublishFlag).onChange((value) => {
           settings.removePublishFlag = value;
           save();
         }),
@@ -213,7 +212,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       text
         .setPlaceholder("author: Your Name\ntags: [obsidian]")
         .setValue(serializeFrontmatter(settings.frontmatterTemplate))
-        .onChange(async (value) => {
+        .onChange((value) => {
           settings.frontmatterTemplate = parseFrontmatter(value);
           save();
         });
@@ -238,8 +237,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       desc: string;
       placeholder: string;
       getValue: () => string;
-      onInput: (value: string) => void;
-      onCommit: () => void | Promise<void>;
+      onChange: (value: string) => void;
       inputType?: "text" | "password";
     },
   ): void {
@@ -250,10 +248,7 @@ export class PublisherSettingTab extends PluginSettingTab {
         text
           .setPlaceholder(config.placeholder)
           .setValue(config.getValue())
-          .onChange(async (value) => {
-            config.onInput(value);
-            await config.onCommit();
-          });
+          .onChange(config.onChange);
         if (config.inputType === "password") {
           text.inputEl.setAttribute("type", "password");
         }
