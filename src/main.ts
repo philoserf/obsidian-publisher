@@ -10,11 +10,29 @@ import {
   type PublishWarning,
 } from "./types";
 
+function notifyWarningKind(
+  warnings: PublishWarning[],
+  kind: PublishWarning["kind"],
+  format: (names: string[]) => string,
+): void {
+  const filtered = warnings.filter((w) => w.kind === kind);
+  if (filtered.length === 0) return;
+  const names = [...new Set(filtered.map((w) => w.name))];
+  new Notice(format(names));
+}
+
 function notifyWarnings(warnings: PublishWarning[]): void {
-  const imageFails = warnings.filter((w) => w.kind === "image-failed");
-  if (imageFails.length === 0) return;
-  const names = [...new Set(imageFails.map((w) => w.name))];
-  new Notice(`Warning: ${names.length} image(s) failed: ${names.join(", ")}`);
+  notifyWarningKind(
+    warnings,
+    "image-failed",
+    (names) => `Warning: ${names.length} image(s) failed: ${names.join(", ")}`,
+  );
+  notifyWarningKind(
+    warnings,
+    "image-collision",
+    (names) =>
+      `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
+  );
 }
 
 export default class ObsidianPublisher extends Plugin {
