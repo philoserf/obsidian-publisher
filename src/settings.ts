@@ -1,5 +1,6 @@
 import {
   type App,
+  debounce,
   Notice,
   PluginSettingTab,
   parseYaml,
@@ -92,7 +93,10 @@ export class PublisherSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const settings = this.plugin.settings;
-    const save = () => this.plugin.saveSettings();
+    const debouncedSave = debounce(() => this.plugin.saveSettings(), 500, true);
+    const save = (): void => {
+      debouncedSave();
+    };
 
     containerEl.createEl("h2", { text: "Obsidian Publisher Settings" });
 
@@ -160,7 +164,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(settings.usePullRequests).onChange(async (value) => {
           settings.usePullRequests = value;
-          await save();
+          save();
         }),
       );
 
@@ -195,7 +199,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(settings.removePublishFlag).onChange(async (value) => {
           settings.removePublishFlag = value;
-          await save();
+          save();
         }),
       );
 
@@ -211,7 +215,7 @@ export class PublisherSettingTab extends PluginSettingTab {
         .setValue(serializeFrontmatter(settings.frontmatterTemplate))
         .onChange(async (value) => {
           settings.frontmatterTemplate = parseFrontmatter(value);
-          await save();
+          save();
         });
       text.inputEl.rows = 6;
       text.inputEl.cols = 50;
@@ -235,7 +239,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: string;
       getValue: () => string;
       onInput: (value: string) => void;
-      onCommit: () => Promise<void>;
+      onCommit: () => void | Promise<void>;
       inputType?: "text" | "password";
     },
   ): void {
