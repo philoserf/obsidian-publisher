@@ -234,19 +234,20 @@ describe("Publisher.publishNote", () => {
     ]);
   });
 
-  test("reports image-collision warning when two vault files share basename", async () => {
+  test("reports image-collision warning with paths sorted", async () => {
     const imageData = new Uint8Array([1, 2, 3]).buffer;
+    // Intentionally reverse-alphabetical to prove paths are sorted on output.
     const vault = makeVault([
       { name: "post.md", content: noteWithImage },
       {
         name: "photo.png",
         content: imageData as unknown as string,
-        path: "folder-a/photo.png",
+        path: "folder-b/photo.png",
       },
       {
         name: "photo.png",
         content: imageData as unknown as string,
-        path: "folder-b/photo.png",
+        path: "folder-a/photo.png",
       },
     ]);
     const gh = makeGitHubService();
