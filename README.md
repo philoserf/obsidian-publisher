@@ -14,10 +14,10 @@ The plugin converts Obsidian-specific syntax to Hugo-compatible markdown during 
 | `![[Note Name]]` (embed) | `[Note Name]({{< ref "note-name" >}})`              |
 | `%%comment%%`            | Removed                                             |
 | `==highlight==`          | `<mark>highlight</mark>`                            |
-| `> [!note] Title`        | `{{< notice note "Title" >}}` (hugo-coder)          |
-| ` ```mermaid `           | `{{< mermaid >}}` (hugo-coder)                      |
+| `> [!note] Title`        | `{{< notice note "Title" >}}` shortcode             |
+| ` ```mermaid `           | `{{< mermaid >}}` shortcode                         |
 
-Callout types are mapped from Obsidian's ~20 types to hugo-coder's 7 notice types (`note`, `tip`, `info`, `question`, `warning`, `error`, `example`).
+Callout types are mapped from Obsidian's ~20 types to seven notice types (`note`, `tip`, `info`, `question`, `warning`, `error`, `example`). The destination Hugo site must define `notice` and `mermaid` shortcodes in `layouts/shortcodes/` for these outputs to render.
 
 ## Security
 
