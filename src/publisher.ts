@@ -130,7 +130,7 @@ export class Publisher {
   }
 
   /**
-   * Publish all notes with status: published (direct commit)
+   * Publish all notes with status: publish (direct commit)
    */
   async publishAll(): Promise<BatchPublishResult> {
     const publishableFiles = await this.getPublishableFiles();
@@ -224,7 +224,7 @@ export class Publisher {
   }
 
   /**
-   * Publish all notes with status: published to a single branch and PR
+   * Publish all notes with status: publish to a single branch and PR
    */
   async publishAllWithPR(): Promise<BatchPublishResult> {
     const publishableFiles = await this.getPublishableFiles();
@@ -387,7 +387,7 @@ export class Publisher {
   }
 
   /**
-   * Scan the vault for files with status: published
+   * Scan the vault for files with status: publish
    */
   private async getPublishableFiles(): Promise<
     Array<{ file: TFile; content: string }>

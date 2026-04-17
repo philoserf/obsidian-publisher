@@ -14,7 +14,7 @@ export interface PublisherSettings {
   imageDir: string;
   /** Additional frontmatter fields to inject during publishing */
   frontmatterTemplate: Record<string, unknown>;
-  /** Whether to remove the status: published field from frontmatter */
+  /** Whether to remove the status: publish field from frontmatter */
   removePublishFlag: boolean;
   /** Base branch to create PRs against (default: "main") */
   baseBranch: string;
