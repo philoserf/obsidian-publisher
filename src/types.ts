@@ -58,7 +58,9 @@ export interface ProcessedContent {
  * Non-fatal condition noticed during publish. Tagged for test stability
  * and per-kind display in main.ts.
  */
-export type PublishWarning = { kind: "image-failed"; name: string };
+export type PublishWarning =
+  | { kind: "image-failed"; name: string }
+  | { kind: "image-collision"; name: string; paths: string[] };
 
 /**
  * Publishing result for a single note

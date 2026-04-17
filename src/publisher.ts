@@ -60,25 +60,50 @@ export class Publisher {
     }
   }
 
+  private buildFilesByBasename(): Map<string, TFile[]> {
+    const map = new Map<string, TFile[]>();
+    for (const f of this.vault.getFiles()) {
+      const existing = map.get(f.name);
+      if (existing) existing.push(f);
+      else map.set(f.name, [f]);
+    }
+    return map;
+  }
+
   private async resolveImages(
     imageNames: string[],
-    filesByName: Map<string, TFile>,
+    filesByBasename: Map<string, TFile[]>,
   ): Promise<{
     entries: Array<{ path: string; content: ArrayBuffer }>;
     warnings: PublishWarning[];
   }> {
     const entries: Array<{ path: string; content: ArrayBuffer }> = [];
     const warnings: PublishWarning[] = [];
+    const seen = new Set<string>();
 
     for (const imageName of imageNames) {
-      const imageFile = filesByName.get(imageName);
-      if (!imageFile) {
+      if (seen.has(imageName)) continue;
+      seen.add(imageName);
+
+      const matches = filesByBasename.get(imageName) ?? [];
+
+      if (matches.length === 0) {
         console.warn(`Image not found in vault: ${imageName}`);
         warnings.push({ kind: "image-failed", name: imageName });
         continue;
       }
+
+      if (matches.length > 1) {
+        const paths = matches.map((f) => f.path);
+        console.warn(
+          `Image basename collision for ${imageName}: ${paths.join(", ")}`,
+        );
+        warnings.push({ kind: "image-collision", name: imageName, paths });
+        continue;
+      }
+
       try {
-        const imageContent = await this.vault.readBinary(imageFile);
+        const imageContent = await this.vault.readBinary(matches[0]);
         const sanitizedName =
           this.contentProcessor.sanitizeImageName(imageName);
         const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
@@ -324,12 +349,9 @@ export class Publisher {
       const targetBranch = branch ?? this.baseBranch;
 
       const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      const filesByName = new Map(
-        this.vault.getFiles().map((f) => [f.name, f]),
-      );
       const { entries: imageEntries, warnings } = await this.resolveImages(
         processed.images,
-        filesByName,
+        this.buildFilesByBasename(),
       );
 
       const fileEntries: Array<{
@@ -384,7 +406,7 @@ export class Publisher {
   }> {
     const results: PublishResult[] = [];
     const entryMap = new Map<string, string | ArrayBuffer>();
-    const filesByName = new Map(this.vault.getFiles().map((f) => [f.name, f]));
+    const filesByBasename = this.buildFilesByBasename();
 
     for (const { file, content } of files) {
       try {
@@ -395,7 +417,7 @@ export class Publisher {
 
         const { entries: imageEntries, warnings } = await this.resolveImages(
           processed.images,
-          filesByName,
+          filesByBasename,
         );
         for (const entry of imageEntries) {
           entryMap.set(entry.path, entry.content);

@@ -45,13 +45,13 @@ function makeTFile(name: string, path?: string) {
 }
 
 function makeVault(
-  files: Array<{ name: string; content: string | ArrayBuffer }>,
+  files: Array<{ name: string; content: string | ArrayBuffer; path?: string }>,
 ) {
   const mdFiles = files
     .filter((f) => f.name.endsWith(".md"))
-    .map((f) => makeTFile(f.name));
+    .map((f) => makeTFile(f.name, f.path));
   const allFiles = files.map((f) => ({
-    ...makeTFile(f.name),
+    ...makeTFile(f.name, f.path),
     _content: f.content,
   }));
   const contentMap = new Map(files.map((f) => [f.name, f.content]));
@@ -232,6 +232,69 @@ describe("Publisher.publishNote", () => {
     expect(result.warnings).toEqual([
       { kind: "image-failed", name: "photo.png" },
     ]);
+  });
+
+  test("reports image-collision warning when two vault files share basename", async () => {
+    const imageData = new Uint8Array([1, 2, 3]).buffer;
+    const vault = makeVault([
+      { name: "post.md", content: noteWithImage },
+      {
+        name: "photo.png",
+        content: imageData as unknown as string,
+        path: "folder-a/photo.png",
+      },
+      {
+        name: "photo.png",
+        content: imageData as unknown as string,
+        path: "folder-b/photo.png",
+      },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toEqual([
+      {
+        kind: "image-collision",
+        name: "photo.png",
+        paths: ["folder-a/photo.png", "folder-b/photo.png"],
+      },
+    ]);
+    // Image should NOT be in the commit — only the markdown file
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string }>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].path).toBe("content/posts/post.md");
+  });
+
+  test("emits one warning when same image referenced twice in a note", async () => {
+    const noteWithDupeRefs = `---
+title: Dupe
+status: published
+---
+First ![[photo.png]] and again ![[photo.png]]`;
+    const vault = makeVault([
+      { name: "post.md", content: noteWithDupeRefs },
+      {
+        name: "photo.png",
+        content: new Uint8Array([1]).buffer as unknown as string,
+        path: "a/photo.png",
+      },
+      {
+        name: "photo.png",
+        content: new Uint8Array([2]).buffer as unknown as string,
+        path: "b/photo.png",
+      },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].kind).toBe("image-collision");
   });
 });
 
