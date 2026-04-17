@@ -277,6 +277,7 @@ describe("Publisher.publishAll", () => {
     expect(result.successful).toBe(0);
     expect(result.failed).toBe(1);
     expect(result.results[0].error).toContain("rate limit");
+    expect(result.error).toContain("rate limit");
   });
 
   test("invokes onProgress for each prepared file", async () => {
@@ -376,6 +377,7 @@ describe("Publisher.publishAllWithPR", () => {
 
     expect(result.successful).toBe(0);
     expect(result.prUrl).toBeUndefined();
+    expect(result.error).toContain("commit failed");
     expect(gh.deleteBranch).toHaveBeenCalled();
   });
 
@@ -391,7 +393,10 @@ describe("Publisher.publishAllWithPR", () => {
   });
 
   test("sets batch error when branch creation throws", async () => {
-    const vault = makeVault([{ name: "a.md", content: publishedNote }]);
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
     const gh = makeGitHubService();
     gh.createBranchWithRetry.mockImplementation(async () => {
       throw new Error("branch exists");
@@ -402,9 +407,13 @@ describe("Publisher.publishAllWithPR", () => {
 
     expect(result.error).toContain("branch exists");
     expect(result.successful).toBe(0);
+    expect(result.total).toBe(2);
+    expect(result.failed).toBe(2);
+    expect(result.results).toHaveLength(2);
+    expect(result.results.every((r) => !r.success)).toBe(true);
   });
 
-  test("sets batch error when PR creation throws", async () => {
+  test("sets batch error and marks results failed when PR creation throws", async () => {
     const vault = makeVault([{ name: "a.md", content: publishedNote }]);
     const gh = makeGitHubService();
     gh.createPullRequest.mockImplementation(async () => {
@@ -415,6 +424,9 @@ describe("Publisher.publishAllWithPR", () => {
     const result = await publisher.publishAllWithPR();
 
     expect(result.error).toContain("PR creation failed");
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.results[0].success).toBe(false);
     expect(gh.deleteBranch).toHaveBeenCalled();
   });
 });
