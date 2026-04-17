@@ -37,11 +37,15 @@ function notifyWarnings(warnings: PublishWarning[]): void {
 
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
-  private _publisher!: Publisher;
+
+  private get publisher(): Publisher {
+    return new Publisher(this.app.vault, this.settings, (done, total) => {
+      new Notice(`Prepared: ${done}/${total}`);
+    });
+  }
 
   async onload() {
     await this.loadSettings();
-    this._publisher = this.makePublisher();
 
     // Register settings tab
     this.addSettingTab(new PublisherSettingTab(this.app, this));
@@ -85,20 +89,14 @@ export default class ObsidianPublisher extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
-    this._publisher = this.makePublisher();
-  }
-
-  private makePublisher(): Publisher {
-    return new Publisher(this.app.vault, this.settings, (done, total) => {
-      new Notice(`Prepared: ${done}/${total}`);
-    });
   }
 
   /**
    * Publish the current note
    */
   private async publishCurrentNote(file: TFile) {
-    const validationError = this._publisher.validateSettings();
+    const publisher = this.publisher;
+    const validationError = publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
       return;
@@ -110,7 +108,7 @@ export default class ObsidianPublisher extends Plugin {
       let result: PublishResult;
 
       if (this.settings.usePullRequests) {
-        result = await this._publisher.publishNoteWithPR(file);
+        result = await publisher.publishNoteWithPR(file);
 
         if (result.success && result.prUrl) {
           new Notice(`✓ Pull request created for ${file.basename}`);
@@ -119,7 +117,7 @@ export default class ObsidianPublisher extends Plugin {
           new Notice(`✗ Failed to publish: ${result.error}`);
         }
       } else {
-        result = await this._publisher.publishNote(file);
+        result = await publisher.publishNote(file);
 
         if (result.success) {
           new Notice(`✓ Successfully published ${file.basename}`);
@@ -140,7 +138,8 @@ export default class ObsidianPublisher extends Plugin {
    * Publish all notes with status: publish
    */
   private async publishAllNotes() {
-    const validationError = this._publisher.validateSettings();
+    const publisher = this.publisher;
+    const validationError = publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
       return;
@@ -150,8 +149,8 @@ export default class ObsidianPublisher extends Plugin {
 
     try {
       const result: BatchPublishResult = this.settings.usePullRequests
-        ? await this._publisher.publishAllWithPR()
-        : await this._publisher.publishAll();
+        ? await publisher.publishAllWithPR()
+        : await publisher.publishAll();
 
       if (result.total === 0) {
         new Notice("No publishable notes found");

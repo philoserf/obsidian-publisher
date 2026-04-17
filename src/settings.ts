@@ -51,7 +51,11 @@ export function parseFrontmatter(text: string): Record<string, unknown> {
   if (!trimmed) return {};
   try {
     const parsed = parseYaml(trimmed);
-    return typeof parsed === "object" && parsed !== null ? parsed : {};
+    return typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+      ? parsed
+      : {};
   } catch {
     return parseSimpleFrontmatter(trimmed);
   }
@@ -163,7 +167,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(settings.usePullRequests).onChange((value) => {
           settings.usePullRequests = value;
-          save();
+          this.plugin.saveSettings();
         }),
       );
 
@@ -198,7 +202,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(settings.removePublishFlag).onChange((value) => {
           settings.removePublishFlag = value;
-          save();
+          this.plugin.saveSettings();
         }),
       );
 

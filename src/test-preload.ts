@@ -55,9 +55,12 @@ mock.module("obsidian", () => ({
 
   debounce<T extends unknown[]>(cb: (...args: T) => unknown) {
     // Tests don't exercise timing — invoke immediately.
+    // cancel is a no-op; run invokes the callback.
     const fn = (...args: T): unknown => cb(...args);
-    (fn as unknown as { cancel: () => unknown }).cancel = () => fn;
-    (fn as unknown as { run: () => unknown }).run = () => fn;
+    (fn as unknown as { cancel: () => void }).cancel = () => {};
+    (fn as unknown as { run: (...args: T) => unknown }).run = (
+      ...args: T
+    ): unknown => cb(...args);
     return fn;
   },
 
