@@ -18,7 +18,7 @@ describe("Wikilink conversion", () => {
 
   test("converts simple wikilink to Hugo ref shortcode", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "See [[Page Name]] here"),
+      wrap("title: Test\nstatus: publish", "See [[Page Name]] here"),
       "test.md",
     );
     expect(result.content).toContain('[Page Name]({{< ref "page-name" >}})');
@@ -26,7 +26,7 @@ describe("Wikilink conversion", () => {
 
   test("converts wikilink with display text", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "See [[Page|Custom Text]] here"),
+      wrap("title: Test\nstatus: publish", "See [[Page|Custom Text]] here"),
       "test.md",
     );
     expect(result.content).toContain('[Custom Text]({{< ref "page" >}})');
@@ -34,7 +34,7 @@ describe("Wikilink conversion", () => {
 
   test("sanitizes wikilink target", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "[[My Cool Page]]"),
+      wrap("title: Test\nstatus: publish", "[[My Cool Page]]"),
       "test.md",
     );
     expect(result.content).toContain(
@@ -44,7 +44,7 @@ describe("Wikilink conversion", () => {
 
   test("handles multiple wikilinks", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "[[One]] and [[Two]]"),
+      wrap("title: Test\nstatus: publish", "[[One]] and [[Two]]"),
       "test.md",
     );
     expect(result.content).toContain('[One]({{< ref "one" >}})');
@@ -53,7 +53,7 @@ describe("Wikilink conversion", () => {
 
   test("handles heading anchors", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "[[Page#My Heading]]"),
+      wrap("title: Test\nstatus: publish", "[[Page#My Heading]]"),
       "test.md",
     );
     expect(result.content).toContain(
@@ -63,7 +63,7 @@ describe("Wikilink conversion", () => {
 
   test("handles heading anchors with display text", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "[[Page#Section|see this]]"),
+      wrap("title: Test\nstatus: publish", "[[Page#Section|see this]]"),
       "test.md",
     );
     expect(result.content).toContain('[see this]({{< ref "page#section" >}})');
@@ -75,7 +75,7 @@ describe("Image reference conversion", () => {
 
   test("converts image reference", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[photo.png]]"),
+      wrap("title: Test\nstatus: publish", "![[photo.png]]"),
       "test.md",
     );
     expect(result.content).toContain("![photo.png](/images/photo.png)");
@@ -83,7 +83,7 @@ describe("Image reference conversion", () => {
 
   test("sanitizes image filename", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[My Photo.jpg]]"),
+      wrap("title: Test\nstatus: publish", "![[My Photo.jpg]]"),
       "test.md",
     );
     expect(result.content).toContain("![My Photo.jpg](/images/my-photo.jpg)");
@@ -92,7 +92,7 @@ describe("Image reference conversion", () => {
   test("extracts only image names, not note embeds", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "![[a.png]] text ![[b.jpg]] and ![[My Note]]",
       ),
       "test.md",
@@ -102,7 +102,7 @@ describe("Image reference conversion", () => {
 
   test("no images returns empty array", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "no images here"),
+      wrap("title: Test\nstatus: publish", "no images here"),
       "test.md",
     );
     expect(result.images).toEqual([]);
@@ -111,7 +111,7 @@ describe("Image reference conversion", () => {
   test("derives image URL path from imageDir setting", () => {
     const cp2 = makeProcessor({ imageDir: "static/media/photos" });
     const result = cp2.process(
-      wrap("title: Test\nstatus: published", "![[hero.png]]"),
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
     expect(result.content).toContain("![hero.png](/media/photos/hero.png)");
@@ -120,7 +120,7 @@ describe("Image reference conversion", () => {
   test("handles imageDir without static prefix", () => {
     const cp2 = makeProcessor({ imageDir: "assets/img" });
     const result = cp2.process(
-      wrap("title: Test\nstatus: published", "![[hero.png]]"),
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
     expect(result.content).toContain("![hero.png](/assets/img/hero.png)");
@@ -128,7 +128,7 @@ describe("Image reference conversion", () => {
 
   test("strips width sizing from image reference", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[photo.png|300]]"),
+      wrap("title: Test\nstatus: publish", "![[photo.png|300]]"),
       "test.md",
     );
     expect(result.content).toContain("![photo.png](/images/photo.png)");
@@ -137,7 +137,7 @@ describe("Image reference conversion", () => {
 
   test("strips dimension sizing from image reference", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[photo.png|300x200]]"),
+      wrap("title: Test\nstatus: publish", "![[photo.png|300x200]]"),
       "test.md",
     );
     expect(result.content).toContain("![photo.png](/images/photo.png)");
@@ -147,7 +147,7 @@ describe("Image reference conversion", () => {
   test("strips pipe suffix from image in mixed content", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "![[a.png|100]] and ![[b.jpg]] and ![[My Note]]",
       ),
       "test.md",
@@ -163,7 +163,7 @@ describe("Note embed conversion", () => {
 
   test("converts note embed to ref link", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[My Other Post]]"),
+      wrap("title: Test\nstatus: publish", "![[My Other Post]]"),
       "test.md",
     );
     expect(result.content).toContain(
@@ -173,7 +173,7 @@ describe("Note embed conversion", () => {
 
   test("does not treat image embeds as note embeds", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "![[photo.png]]"),
+      wrap("title: Test\nstatus: publish", "![[photo.png]]"),
       "test.md",
     );
     expect(result.content).toContain("![photo.png]");
@@ -185,7 +185,7 @@ describe("Frontmatter processing", () => {
   test("adds date when missing", () => {
     const cp = makeProcessor();
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "body"),
+      wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
     expect(result.frontmatter.date).toBeDefined();
@@ -194,7 +194,7 @@ describe("Frontmatter processing", () => {
   test("preserves existing date", () => {
     const cp = makeProcessor();
     const result = cp.process(
-      wrap("title: Test\ndate: 2026-01-01\nstatus: published", "body"),
+      wrap("title: Test\ndate: 2026-01-01\nstatus: publish", "body"),
       "test.md",
     );
     expect(result.frontmatter.date).toBe("2026-01-01");
@@ -203,7 +203,7 @@ describe("Frontmatter processing", () => {
   test("removes status field when removePublishFlag is true", () => {
     const cp = makeProcessor({ removePublishFlag: true });
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "body"),
+      wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
     expect(result.frontmatter.status).toBeUndefined();
@@ -213,10 +213,10 @@ describe("Frontmatter processing", () => {
   test("keeps status field when removePublishFlag is false", () => {
     const cp = makeProcessor({ removePublishFlag: false });
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "body"),
+      wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
-    expect(result.frontmatter.status).toBe("published");
+    expect(result.frontmatter.status).toBe("publish");
   });
 
   test("merges template fields without overriding existing", () => {
@@ -224,7 +224,7 @@ describe("Frontmatter processing", () => {
       frontmatterTemplate: { author: "Mark", tags: ["obsidian"] },
     });
     const result = cp.process(
-      wrap("title: Existing\nauthor: Someone Else\nstatus: published", "body"),
+      wrap("title: Existing\nauthor: Someone Else\nstatus: publish", "body"),
       "test.md",
     );
     expect(result.frontmatter.author).toBe("Someone Else");
@@ -236,7 +236,7 @@ describe("Frontmatter processing", () => {
       frontmatterTemplate: { author: "Mark" },
     });
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "body"),
+      wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
     expect(result.frontmatter.author).toBe("Mark");
@@ -264,7 +264,7 @@ describe("Comment stripping", () => {
 
   test("strips inline comment", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "before %%secret%% after"),
+      wrap("title: Test\nstatus: publish", "before %%secret%% after"),
       "test.md",
     );
     expect(result.content).toContain("before  after");
@@ -274,7 +274,7 @@ describe("Comment stripping", () => {
   test("strips multiline comment", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "before\n%%\nthis is\na secret\n%%\nafter",
       ),
       "test.md",
@@ -286,7 +286,7 @@ describe("Comment stripping", () => {
 
   test("strips multiple comments", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "%%one%% middle %%two%%"),
+      wrap("title: Test\nstatus: publish", "%%one%% middle %%two%%"),
       "test.md",
     );
     expect(result.content).toContain(" middle ");
@@ -296,7 +296,7 @@ describe("Comment stripping", () => {
 
   test("leaves single percent signs alone", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "100% complete"),
+      wrap("title: Test\nstatus: publish", "100% complete"),
       "test.md",
     );
     expect(result.content).toContain("100% complete");
@@ -308,7 +308,7 @@ describe("Highlight conversion", () => {
 
   test("converts highlight to mark tag", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "this is ==important== text"),
+      wrap("title: Test\nstatus: publish", "this is ==important== text"),
       "test.md",
     );
     expect(result.content).toContain("this is <mark>important</mark> text");
@@ -316,7 +316,7 @@ describe("Highlight conversion", () => {
 
   test("converts multiple highlights on one line", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "==one== and ==two=="),
+      wrap("title: Test\nstatus: publish", "==one== and ==two=="),
       "test.md",
     );
     expect(result.content).toContain("<mark>one</mark> and <mark>two</mark>");
@@ -324,7 +324,7 @@ describe("Highlight conversion", () => {
 
   test("leaves single equals signs alone", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "a = b"),
+      wrap("title: Test\nstatus: publish", "a = b"),
       "test.md",
     );
     expect(result.content).toContain("a = b");
@@ -332,7 +332,7 @@ describe("Highlight conversion", () => {
 
   test("leaves triple equals alone", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "a === b"),
+      wrap("title: Test\nstatus: publish", "a === b"),
       "test.md",
     );
     expect(result.content).toContain("a === b");
@@ -345,7 +345,7 @@ describe("Callout conversion", () => {
   test("converts basic callout with title", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "> [!note] Important\n> This is a note",
       ),
       "test.md",
@@ -357,7 +357,7 @@ describe("Callout conversion", () => {
 
   test("converts callout without title", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "> [!warning]\n> Be careful"),
+      wrap("title: Test\nstatus: publish", "> [!warning]\n> Be careful"),
       "test.md",
     );
     expect(result.content).toContain(
@@ -368,7 +368,7 @@ describe("Callout conversion", () => {
   test("converts multiline callout body", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "> [!tip] Hint\n> Line one\n> Line two\n> Line three",
       ),
       "test.md",
@@ -409,7 +409,7 @@ describe("Callout conversion", () => {
     ];
     for (const [obsidian, hugo] of cases) {
       const result = cp.process(
-        wrap("title: Test\nstatus: published", `> [!${obsidian}]\n> content`),
+        wrap("title: Test\nstatus: publish", `> [!${obsidian}]\n> content`),
         "test.md",
       );
       expect(result.content).toContain(`{{< notice ${hugo} >}}`);
@@ -418,13 +418,13 @@ describe("Callout conversion", () => {
 
   test("strips foldable markers (+ and -)", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "> [!note]+ Title\n> Content"),
+      wrap("title: Test\nstatus: publish", "> [!note]+ Title\n> Content"),
       "test.md",
     );
     expect(result.content).toContain('{{< notice note "Title" >}}');
 
     const result2 = cp.process(
-      wrap("title: Test\nstatus: published", "> [!note]- Title\n> Content"),
+      wrap("title: Test\nstatus: publish", "> [!note]- Title\n> Content"),
       "test.md",
     );
     expect(result2.content).toContain('{{< notice note "Title" >}}');
@@ -432,7 +432,7 @@ describe("Callout conversion", () => {
 
   test("defaults unknown callout type to note", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "> [!custom]\n> Content"),
+      wrap("title: Test\nstatus: publish", "> [!custom]\n> Content"),
       "test.md",
     );
     expect(result.content).toContain("{{< notice note >}}");
@@ -440,7 +440,7 @@ describe("Callout conversion", () => {
 
   test("handles callout type case-insensitively", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "> [!WARNING]\n> Content"),
+      wrap("title: Test\nstatus: publish", "> [!WARNING]\n> Content"),
       "test.md",
     );
     expect(result.content).toContain("{{< notice warning >}}");
@@ -448,7 +448,7 @@ describe("Callout conversion", () => {
 
   test("leaves regular blockquotes untouched", () => {
     const result = cp.process(
-      wrap("title: Test\nstatus: published", "> Just a regular quote"),
+      wrap("title: Test\nstatus: publish", "> Just a regular quote"),
       "test.md",
     );
     expect(result.content).toContain("> Just a regular quote");
@@ -461,10 +461,7 @@ describe("Mermaid conversion", () => {
 
   test("converts mermaid code block to shortcode", () => {
     const result = cp.process(
-      wrap(
-        "title: Test\nstatus: published",
-        "```mermaid\ngraph TD; A-->B\n```",
-      ),
+      wrap("title: Test\nstatus: publish", "```mermaid\ngraph TD; A-->B\n```"),
       "test.md",
     );
     expect(result.content).toContain(
@@ -475,7 +472,7 @@ describe("Mermaid conversion", () => {
   test("converts multiline mermaid diagram", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "```mermaid\ngraph TD\n  A-->B\n  B-->C\n```",
       ),
       "test.md",
@@ -487,10 +484,7 @@ describe("Mermaid conversion", () => {
 
   test("leaves non-mermaid code blocks untouched", () => {
     const result = cp.process(
-      wrap(
-        "title: Test\nstatus: published",
-        "```javascript\nconst x = 1;\n```",
-      ),
+      wrap("title: Test\nstatus: publish", "```javascript\nconst x = 1;\n```"),
       "test.md",
     );
     expect(result.content).toContain("```javascript\nconst x = 1;\n```");
@@ -500,7 +494,7 @@ describe("Mermaid conversion", () => {
   test("handles multiple mermaid blocks", () => {
     const result = cp.process(
       wrap(
-        "title: Test\nstatus: published",
+        "title: Test\nstatus: publish",
         "```mermaid\ngraph TD; A-->B\n```\n\ntext\n\n```mermaid\ngraph LR; X-->Y\n```",
       ),
       "test.md",
@@ -518,7 +512,7 @@ describe("Full process pipeline", () => {
   test("transforms complete note", () => {
     const cp = makeProcessor({ removePublishFlag: true });
     const input = wrap(
-      "title: My Post\nstatus: published",
+      "title: My Post\nstatus: publish",
       "Hello [[World]]!\n\n![[screenshot.png]]\n",
     );
     const result = cp.process(input, "My Post.md");

@@ -1,4 +1,5 @@
-import { parseYaml, stringifyYaml } from "obsidian";
+import { stringifyYaml } from "obsidian";
+import { splitFrontmatter } from "./schema";
 import type { ProcessedContent, PublisherSettings } from "./types";
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
@@ -14,7 +15,7 @@ export class ContentProcessor {
    * Process a markdown file for Hugo publishing
    */
   process(content: string, originalFilename: string): ProcessedContent {
-    const { frontmatter, body } = this.extractFrontmatter(content);
+    const { frontmatter, body } = splitFrontmatter(content);
 
     // Process frontmatter
     const processedFrontmatter = this.processFrontmatter(frontmatter);
@@ -47,33 +48,6 @@ export class ContentProcessor {
       images,
       frontmatter: processedFrontmatter,
     };
-  }
-
-  /**
-   * Extract frontmatter and body from markdown content
-   */
-  private extractFrontmatter(content: string): {
-    frontmatter: Record<string, unknown>;
-    body: string;
-  } {
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-    const match = content.match(frontmatterRegex);
-
-    if (!match) {
-      return { frontmatter: {}, body: content };
-    }
-
-    try {
-      const frontmatter = parseYaml(match[1]) || {};
-      const body = match[2];
-      return {
-        frontmatter: typeof frontmatter === "object" ? frontmatter : {},
-        body,
-      };
-    } catch (error) {
-      console.error("Failed to parse frontmatter:", error);
-      return { frontmatter: {}, body: content };
-    }
   }
 
   /**
