@@ -38,6 +38,8 @@ function notifyWarnings(warnings: PublishWarning[]): void {
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
 
+  // Constructs a fresh Publisher on each access; assign to a local once per command.
+  // Reading `this.publisher` twice yields two distinct instances.
   private get publisher(): Publisher {
     return new Publisher(this.app.vault, this.settings, (done, total) => {
       new Notice(`Prepared: ${done}/${total}`);
