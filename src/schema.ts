@@ -31,13 +31,25 @@ export function hasPublishFlag(frontmatter: Frontmatter): boolean {
   return frontmatter[PUBLISH_STATUS_FIELD] === PUBLISH_STATUS_VALUE;
 }
 
-export function validateFrontmatter(frontmatter: Frontmatter): string | null {
-  for (const field of REQUIRED_FRONTMATTER_FIELDS) {
-    const value = frontmatter[field];
-    const normalized = typeof value === "string" ? value.trim() : value;
-    if (normalized === undefined || normalized === null || normalized === "") {
-      return `Missing required frontmatter field: ${field}`;
-    }
+type RequiredField = (typeof REQUIRED_FRONTMATTER_FIELDS)[number];
+
+function validateField(value: unknown, field: RequiredField): string | null {
+  if (value === undefined || value === null) return `${field} is missing`;
+  if (typeof value === "string") {
+    return value.trim() === "" ? `${field} is missing` : null;
   }
-  return null;
+  if (field === "date" && value instanceof Date) return null;
+  const expected = field === "date" ? "string or date" : "string";
+  return `${field} must be a ${expected}`;
+}
+
+export function validateFrontmatter(frontmatter: Frontmatter): string | null {
+  const issues: string[] = [];
+  for (const field of REQUIRED_FRONTMATTER_FIELDS) {
+    const issue = validateField(frontmatter[field], field);
+    if (issue) issues.push(issue);
+  }
+  return issues.length === 0
+    ? null
+    : `Invalid frontmatter: ${issues.join("; ")}`;
 }

@@ -90,4 +90,38 @@ describe("validateFrontmatter", () => {
       "title",
     );
   });
+
+  test("reports all missing fields in one pass", () => {
+    const result = validateFrontmatter({});
+    expect(result).toContain("title");
+    expect(result).toContain("date");
+  });
+
+  test("rejects non-string title (e.g., array)", () => {
+    expect(validateFrontmatter({ title: [], date: "2026-01-01" })).toContain(
+      "title",
+    );
+  });
+
+  test("rejects non-string title (e.g., object)", () => {
+    expect(validateFrontmatter({ title: {}, date: "2026-01-01" })).toContain(
+      "title",
+    );
+  });
+
+  test("rejects non-string, non-Date date (e.g., boolean)", () => {
+    expect(validateFrontmatter({ title: "T", date: true })).toContain("date");
+  });
+
+  test("accepts Date instance for date", () => {
+    expect(
+      validateFrontmatter({ title: "T", date: new Date("2026-01-01") }),
+    ).toBeNull();
+  });
+
+  test("reports both type errors together", () => {
+    const result = validateFrontmatter({ title: [], date: true });
+    expect(result).toContain("title");
+    expect(result).toContain("date");
+  });
 });
