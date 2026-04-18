@@ -115,7 +115,9 @@ export class Publisher {
         const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
         entries.push({ path: imgPath, content: imageContent });
       } catch (error) {
-        console.error(`Failed to read image ${imageName}:`, error);
+        console.error(
+          `Failed to read image ${imageName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
         warnings.push({ kind: "image-failed", name: imageName });
       }
     }
