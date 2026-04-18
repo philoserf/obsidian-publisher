@@ -35,6 +35,17 @@ function buildBatchResult(
   };
 }
 
+// Summary surfaces in the user-facing Notice when no commit was attempted
+// and read failures are the only cause; per-file errors otherwise live in
+// console.log, which mobile users can't see.
+function summarizeReadFailures(
+  readFailures: PublishResult[],
+): string | undefined {
+  if (readFailures.length === 0) return undefined;
+  if (readFailures.length === 1) return readFailures[0].error;
+  return `Failed to read ${readFailures.length} files`;
+}
+
 export class Publisher {
   private vault: Vault;
   private settings: PublisherSettings;
@@ -168,9 +179,10 @@ export class Publisher {
       }
     }
 
-    return buildBatchResult([...readFailures, ...prepared], {
-      error: commitError,
-    });
+    const error =
+      commitError ??
+      (prepared.length === 0 ? summarizeReadFailures(readFailures) : undefined);
+    return buildBatchResult([...readFailures, ...prepared], { error });
   }
 
   /**
@@ -239,7 +251,9 @@ export class Publisher {
   async publishAllWithPR(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
     if (files.length === 0) {
-      return buildBatchResult(readFailures);
+      return buildBatchResult(readFailures, {
+        error: summarizeReadFailures(readFailures),
+      });
     }
 
     let branchName: string | null = null;
