@@ -102,3 +102,56 @@ export interface BatchPublishResult {
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+/**
+ * Validate persisted plugin data against the PublisherSettings shape.
+ * Per-field fallback to DEFAULT_SETTINGS on type mismatch — a single
+ * corrupted field shouldn't wipe the user's configuration.
+ */
+export function parseSettings(data: unknown): PublisherSettings {
+  const d = isPlainObject(data) ? data : {};
+  return {
+    githubToken:
+      typeof d.githubToken === "string"
+        ? d.githubToken
+        : DEFAULT_SETTINGS.githubToken,
+    repoOwner:
+      typeof d.repoOwner === "string"
+        ? d.repoOwner
+        : DEFAULT_SETTINGS.repoOwner,
+    repoName:
+      typeof d.repoName === "string" ? d.repoName : DEFAULT_SETTINGS.repoName,
+    contentDir:
+      typeof d.contentDir === "string"
+        ? d.contentDir
+        : DEFAULT_SETTINGS.contentDir,
+    imageDir:
+      typeof d.imageDir === "string" ? d.imageDir : DEFAULT_SETTINGS.imageDir,
+    frontmatterTemplate: isPlainObject(d.frontmatterTemplate)
+      ? d.frontmatterTemplate
+      : DEFAULT_SETTINGS.frontmatterTemplate,
+    removePublishFlag:
+      typeof d.removePublishFlag === "boolean"
+        ? d.removePublishFlag
+        : DEFAULT_SETTINGS.removePublishFlag,
+    baseBranch:
+      typeof d.baseBranch === "string"
+        ? d.baseBranch
+        : DEFAULT_SETTINGS.baseBranch,
+    prLabels: isStringArray(d.prLabels)
+      ? d.prLabels
+      : DEFAULT_SETTINGS.prLabels,
+    usePullRequests:
+      typeof d.usePullRequests === "boolean"
+        ? d.usePullRequests
+        : DEFAULT_SETTINGS.usePullRequests,
+  };
+}

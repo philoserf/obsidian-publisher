@@ -3,11 +3,11 @@ import { Publisher } from "./publisher";
 import { PublisherSettingTab } from "./settings";
 import {
   type BatchPublishResult,
-  DEFAULT_SETTINGS,
   errorMessage,
   type PublisherSettings,
   type PublishResult,
   type PublishWarning,
+  parseSettings,
 } from "./types";
 
 function notifyWarningKind(
@@ -85,10 +85,14 @@ export default class ObsidianPublisher extends Plugin {
 
   async loadSettings() {
     const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings = parseSettings(data);
 
-    // Migration: for existing users, default to false to preserve current behavior
-    if (data && data.usePullRequests === undefined) {
+    // Migration: existing users (data exists, no usePullRequests field) default
+    // to false to preserve pre-PR-workflow behavior. Check raw data so the
+    // signal isn't erased by parseSettings's default fill-in.
+    const isExistingUserPreMigration =
+      typeof data === "object" && data !== null && !("usePullRequests" in data);
+    if (isExistingUserPreMigration) {
       this.settings.usePullRequests = false;
       await this.saveSettings();
     }
