@@ -6,7 +6,7 @@ export const REQUIRED_FRONTMATTER_FIELDS = ["title", "date"] as const;
 
 export type Frontmatter = Record<string, unknown>;
 
-const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
 export function splitFrontmatter(content: string): {
   frontmatter: Frontmatter;
