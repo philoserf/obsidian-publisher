@@ -34,6 +34,14 @@ describe("splitFrontmatter", () => {
     expect(body).toBe("Just plain content");
   });
 
+  test("handles CRLF line endings", () => {
+    const input =
+      "---\r\ntitle: Test\r\ndate: 2026-01-01\r\n---\r\nHello world";
+    const { frontmatter, body } = splitFrontmatter(input);
+    expect(frontmatter).toEqual({ title: "Test", date: "2026-01-01" });
+    expect(body).toBe("Hello world");
+  });
+
   test("returns empty frontmatter when YAML parse fails", () => {
     const input = "---\n: bad yaml :\n---\nbody";
     const { frontmatter, body } = splitFrontmatter(input);
