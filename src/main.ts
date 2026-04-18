@@ -4,6 +4,7 @@ import { PublisherSettingTab } from "./settings";
 import {
   type BatchPublishResult,
   errorMessage,
+  isPlainObject,
   type PublisherSettings,
   type PublishResult,
   type PublishWarning,
@@ -90,9 +91,7 @@ export default class ObsidianPublisher extends Plugin {
     // Migration: existing users (data exists, no usePullRequests field) default
     // to false to preserve pre-PR-workflow behavior. Check raw data so the
     // signal isn't erased by parseSettings's default fill-in.
-    const isExistingUserPreMigration =
-      typeof data === "object" && data !== null && !("usePullRequests" in data);
-    if (isExistingUserPreMigration) {
+    if (isPlainObject(data) && !("usePullRequests" in data)) {
       this.settings.usePullRequests = false;
       await this.saveSettings();
     }
