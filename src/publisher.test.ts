@@ -466,6 +466,53 @@ body`;
     expect(badResult?.error).toContain("date");
   });
 
+  test("surfaces read failures as per-file failed results", async () => {
+    const vault = makeVault([
+      { name: "ok.md", content: publishedNote },
+      { name: "broken.md", content: publishedNote },
+    ]);
+    vault.read.mockImplementation(async (file: { name: string }) => {
+      if (file.name === "broken.md") throw new Error("EACCES");
+      return publishedNote;
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(1);
+    expect(result.failed).toBe(1);
+    const broken = result.results.find((r) => r.filePath === "broken.md");
+    expect(broken?.success).toBe(false);
+    expect(broken?.error).toContain("Failed to read");
+    expect(broken?.error).toContain("EACCES");
+    expect(gh.commitFiles).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns failures-only result when every file fails to read", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
+    vault.read.mockImplementation(async () => {
+      throw new Error("disk error");
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.results.every((r) => !r.success)).toBe(true);
+    expect(result.results.every((r) => r.error?.includes("disk error"))).toBe(
+      true,
+    );
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
   test("invokes onProgress for each prepared file", async () => {
     const vault = makeVault([
       { name: "a.md", content: publishedNote },
@@ -597,6 +644,52 @@ describe("Publisher.publishAllWithPR", () => {
     expect(result.failed).toBe(2);
     expect(result.results).toHaveLength(2);
     expect(result.results.every((r) => !r.success)).toBe(true);
+  });
+
+  test("includes read failures in PR result alongside successful files", async () => {
+    const vault = makeVault([
+      { name: "ok.md", content: publishedNote },
+      { name: "broken.md", content: publishedNote },
+    ]);
+    vault.read.mockImplementation(async (file: { name: string }) => {
+      if (file.name === "broken.md") throw new Error("EACCES");
+      return publishedNote;
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.prUrl).toBe("https://github.com/test/pr/1");
+    const broken = result.results.find((r) => r.filePath === "broken.md");
+    expect(broken?.success).toBe(false);
+    expect(broken?.error).toContain("Failed to read");
+    expect(gh.createBranchWithRetry).toHaveBeenCalledTimes(1);
+    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test("skips branch and PR creation when only read failures exist", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
+    vault.read.mockImplementation(async () => {
+      throw new Error("disk error");
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.prUrl).toBeUndefined();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+    expect(gh.createPullRequest).not.toHaveBeenCalled();
   });
 
   test("sets batch error and marks results failed when PR creation throws", async () => {
