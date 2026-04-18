@@ -21,6 +21,20 @@ function failedResult(filePath: string, error: string): PublishResult {
   return { filePath, success: false, error, warnings: [] };
 }
 
+function buildBatchResult(
+  results: PublishResult[],
+  extras: { error?: string; prUrl?: string } = {},
+): BatchPublishResult {
+  const successful = results.filter((r) => r.success).length;
+  return {
+    total: results.length,
+    successful,
+    failed: results.length - successful,
+    results,
+    ...extras,
+  };
+}
+
 export class Publisher {
   private vault: Vault;
   private settings: PublisherSettings;
@@ -137,10 +151,6 @@ export class Publisher {
    */
   async publishAll(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
-    if (files.length === 0 && readFailures.length === 0) {
-      return { total: 0, successful: 0, failed: 0, results: [] };
-    }
-
     const { results: prepared, fileEntries } = await this.prepareBatch(files);
     let commitError: string | undefined;
 
@@ -158,16 +168,9 @@ export class Publisher {
       }
     }
 
-    const results = [...readFailures, ...prepared];
-    const successful = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
-    return {
-      total: results.length,
-      successful,
-      failed,
-      results,
+    return buildBatchResult([...readFailures, ...prepared], {
       error: commitError,
-    };
+    });
   }
 
   /**
@@ -235,16 +238,8 @@ export class Publisher {
    */
   async publishAllWithPR(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
-    if (files.length === 0 && readFailures.length === 0) {
-      return { total: 0, successful: 0, failed: 0, results: [] };
-    }
     if (files.length === 0) {
-      return {
-        total: readFailures.length,
-        successful: 0,
-        failed: readFailures.length,
-        results: readFailures,
-      };
+      return buildBatchResult(readFailures);
     }
 
     let branchName: string | null = null;
@@ -266,30 +261,15 @@ export class Publisher {
       );
 
       const succeeded = prepared.filter((r) => r.success);
-      const successful = succeeded.length;
       const results = [...readFailures, ...prepared];
-      const failed = results.length - successful;
 
-      if (successful === 0) {
+      if (succeeded.length === 0) {
         await this.cleanupBranch(branchName);
-        return {
-          total: results.length,
-          successful: 0,
-          failed,
-          results,
-          error: commitError,
-        };
+        return buildBatchResult(results, { error: commitError });
       }
 
       const pr = await this.createBatchPR(branchName, succeeded);
-
-      return {
-        total: results.length,
-        successful,
-        failed,
-        results,
-        prUrl: pr.url,
-      };
+      return buildBatchResult(results, { prUrl: pr.url });
     } catch (error) {
       return this.recoverFailedBatch(
         files,
@@ -373,14 +353,7 @@ export class Publisher {
     } else {
       this.markResultsFailed(prepared, error);
     }
-    const results = [...readFailures, ...prepared];
-    return {
-      total: results.length,
-      successful: 0,
-      failed: results.length,
-      results,
-      error: message,
-    };
+    return buildBatchResult([...readFailures, ...prepared], { error: message });
   }
 
   /**
