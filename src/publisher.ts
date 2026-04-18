@@ -136,28 +136,29 @@ export class Publisher {
    * Publish all notes with status: publish (direct commit)
    */
   async publishAll(): Promise<BatchPublishResult> {
-    const publishableFiles = await this.getPublishableFiles();
-    if (publishableFiles.length === 0) {
+    const { files, readFailures } = await this.getPublishableFiles();
+    if (files.length === 0 && readFailures.length === 0) {
       return { total: 0, successful: 0, failed: 0, results: [] };
     }
 
-    const { results, fileEntries } = await this.prepareBatch(publishableFiles);
+    const { results: prepared, fileEntries } = await this.prepareBatch(files);
     let commitError: string | undefined;
 
     if (fileEntries.length > 0) {
       try {
-        const successCount = results.filter((r) => r.success).length;
+        const successCount = prepared.filter((r) => r.success).length;
         await this.githubService.commitFiles(
           fileEntries,
           `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
           this.baseBranch,
         );
       } catch (error) {
-        this.markResultsFailed(results, error);
+        this.markResultsFailed(prepared, error);
         commitError = errorMessage(error);
       }
     }
 
+    const results = [...readFailures, ...prepared];
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     return {
@@ -233,13 +234,21 @@ export class Publisher {
    * Publish all notes with status: publish to a single branch and PR
    */
   async publishAllWithPR(): Promise<BatchPublishResult> {
-    const publishableFiles = await this.getPublishableFiles();
-    if (publishableFiles.length === 0) {
+    const { files, readFailures } = await this.getPublishableFiles();
+    if (files.length === 0 && readFailures.length === 0) {
       return { total: 0, successful: 0, failed: 0, results: [] };
+    }
+    if (files.length === 0) {
+      return {
+        total: readFailures.length,
+        successful: 0,
+        failed: readFailures.length,
+        results: readFailures,
+      };
     }
 
     let branchName: string | null = null;
-    let results: PublishResult[] = [];
+    let prepared: PublishResult[] = [];
 
     try {
       branchName = await this.githubService.createBranchWithRetry(
@@ -247,17 +256,18 @@ export class Publisher {
         this.baseBranch,
       );
 
-      const prepared = await this.prepareBatch(publishableFiles);
-      results = prepared.results;
+      const batch = await this.prepareBatch(files);
+      prepared = batch.results;
 
       const commitError = await this.commitPreparedBatch(
         branchName,
-        results,
-        prepared.fileEntries,
+        prepared,
+        batch.fileEntries,
       );
 
-      const succeeded = results.filter((r) => r.success);
+      const succeeded = prepared.filter((r) => r.success);
       const successful = succeeded.length;
+      const results = [...readFailures, ...prepared];
       const failed = results.length - successful;
 
       if (successful === 0) {
@@ -282,8 +292,9 @@ export class Publisher {
       };
     } catch (error) {
       return this.recoverFailedBatch(
-        publishableFiles,
-        results,
+        files,
+        prepared,
+        readFailures,
         branchName,
         error,
       );
@@ -341,12 +352,13 @@ export class Publisher {
    * existing results failed. Returns a fully-populated batch result.
    */
   private async recoverFailedBatch(
-    publishableFiles: Array<{
+    files: Array<{
       file: TFile;
       frontmatter: Frontmatter;
       body: string;
     }>,
-    results: PublishResult[],
+    prepared: PublishResult[],
+    readFailures: PublishResult[],
     branchName: string | null,
     error: unknown,
   ): Promise<BatchPublishResult> {
@@ -354,13 +366,14 @@ export class Publisher {
       await this.cleanupBranch(branchName);
     }
     const message = errorMessage(error);
-    if (results.length === 0) {
-      for (const { file } of publishableFiles) {
-        results.push(failedResult(file.path, message));
+    if (prepared.length === 0) {
+      for (const { file } of files) {
+        prepared.push(failedResult(file.path, message));
       }
     } else {
-      this.markResultsFailed(results, error);
+      this.markResultsFailed(prepared, error);
     }
+    const results = [...readFailures, ...prepared];
     return {
       total: results.length,
       successful: 0,
@@ -460,31 +473,37 @@ export class Publisher {
    * its already-parsed frontmatter and body so callers don't re-parse.
    * Gate failures (status != publish) are silently skipped; validation
    * happens per-file in prepareBatch so invalid-but-intended publishes
-   * surface as failed results.
+   * surface as failed results. Read failures cannot be filtered by
+   * publish intent (we never read the file), so they surface as failed
+   * results — silent loss is the worse trade-off.
    */
-  private async getPublishableFiles(): Promise<
-    Array<{ file: TFile; frontmatter: Frontmatter; body: string }>
-  > {
+  private async getPublishableFiles(): Promise<{
+    files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>;
+    readFailures: PublishResult[];
+  }> {
     const markdownFiles = this.vault.getMarkdownFiles();
-    const publishableFiles: Array<{
+    const files: Array<{
       file: TFile;
       frontmatter: Frontmatter;
       body: string;
     }> = [];
+    const readFailures: PublishResult[] = [];
 
     for (const file of markdownFiles) {
       try {
         const content = await this.vault.read(file);
         const { frontmatter, body } = splitFrontmatter(content);
         if (hasPublishFlag(frontmatter)) {
-          publishableFiles.push({ file, frontmatter, body });
+          files.push({ file, frontmatter, body });
         }
       } catch (error) {
-        console.error(`Failed to read file ${file.path}:`, error);
+        readFailures.push(
+          failedResult(file.path, `Failed to read: ${errorMessage(error)}`),
+        );
       }
     }
 
-    return publishableFiles;
+    return { files, readFailures };
   }
 
   /**
