@@ -2,25 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_SETTINGS, parseSettings } from "./types";
 
 describe("parseSettings", () => {
-  test("returns defaults for null", () => {
+  test("returns defaults when input is not a populated plain object", () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
-  });
-
-  test("returns defaults for undefined", () => {
     expect(parseSettings(undefined)).toEqual(DEFAULT_SETTINGS);
-  });
-
-  test("returns defaults for non-object input", () => {
     expect(parseSettings("string")).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings(42)).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings(true)).toEqual(DEFAULT_SETTINGS);
-  });
-
-  test("returns defaults for array input", () => {
     expect(parseSettings([])).toEqual(DEFAULT_SETTINGS);
-  });
-
-  test("returns defaults for empty object", () => {
     expect(parseSettings({})).toEqual(DEFAULT_SETTINGS);
   });
 
