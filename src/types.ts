@@ -60,7 +60,8 @@ export interface ProcessedContent {
  */
 export type PublishWarning =
   | { kind: "image-failed"; name: string }
-  | { kind: "image-collision"; name: string; paths: string[] };
+  | { kind: "image-collision"; name: string; paths: string[] }
+  | { kind: "pr-label-failed"; labels: string[]; error: string };
 
 /**
  * Publishing result for a single note
@@ -94,6 +95,8 @@ export interface BatchPublishResult {
   prUrl?: string;
   /** Batch-level failure (e.g. commitFiles or PR creation threw) */
   error?: string;
+  /** Batch-level non-fatal conditions (e.g. PR label apply failed) */
+  warnings?: PublishWarning[];
 }
 
 /**

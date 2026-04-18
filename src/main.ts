@@ -11,29 +11,41 @@ import {
   parseSettings,
 } from "./types";
 
-function notifyWarningKind(
+function notifyImageWarnings(
   warnings: PublishWarning[],
-  kind: PublishWarning["kind"],
+  kind: "image-failed" | "image-collision",
   format: (names: string[]) => string,
 ): void {
-  const filtered = warnings.filter((w) => w.kind === kind);
+  const filtered = warnings.filter(
+    (
+      w,
+    ): w is Extract<
+      PublishWarning,
+      { kind: "image-failed" | "image-collision" }
+    > => w.kind === kind,
+  );
   if (filtered.length === 0) return;
   const names = [...new Set(filtered.map((w) => w.name))];
   new Notice(format(names));
 }
 
 function notifyWarnings(warnings: PublishWarning[]): void {
-  notifyWarningKind(
+  notifyImageWarnings(
     warnings,
     "image-failed",
     (names) => `Warning: ${names.length} image(s) failed: ${names.join(", ")}`,
   );
-  notifyWarningKind(
+  notifyImageWarnings(
     warnings,
     "image-collision",
     (names) =>
       `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
   );
+  const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
+  if (labelFailures.length > 0) {
+    const all = [...new Set(labelFailures.flatMap((w) => w.labels))];
+    new Notice(`Warning: failed to apply PR labels: ${all.join(", ")}`);
+  }
 }
 
 export default class ObsidianPublisher extends Plugin {
@@ -187,7 +199,10 @@ export default class ObsidianPublisher extends Plugin {
         }
       }
 
-      notifyWarnings(result.results.flatMap((r) => r.warnings));
+      notifyWarnings([
+        ...result.results.flatMap((r) => r.warnings),
+        ...(result.warnings ?? []),
+      ]);
 
       if (result.failed > 0) {
         console.log("Failed publishes:");

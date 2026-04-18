@@ -23,7 +23,11 @@ function failedResult(filePath: string, error: string): PublishResult {
 
 function buildBatchResult(
   results: PublishResult[],
-  extras: { error?: string; prUrl?: string } = {},
+  extras: {
+    error?: string;
+    prUrl?: string;
+    warnings?: PublishWarning[];
+  } = {},
 ): BatchPublishResult {
   const successful = results.filter((r) => r.success).length;
   return {
@@ -73,12 +77,17 @@ export class Publisher {
     return this.settings.prLabels || ["chore"];
   }
 
-  private markResultsFailed(results: PublishResult[], error: unknown): void {
+  private markResultsFailed(
+    results: PublishResult[],
+    error: unknown,
+    prefix?: string,
+  ): void {
     const message = errorMessage(error);
+    const formatted = prefix ? `${prefix}: ${message}` : message;
     for (const r of results) {
       if (r.success) {
         r.success = false;
-        r.error = `Commit failed: ${message}`;
+        r.error = formatted;
       }
     }
   }
@@ -236,7 +245,11 @@ export class Publisher {
         this.prLabels,
       );
 
-      return { ...result, prUrl: pr.url };
+      return {
+        ...result,
+        prUrl: pr.url,
+        warnings: [...result.warnings, ...pr.warnings],
+      };
     } catch (error) {
       if (branchName) {
         await this.cleanupBranch(branchName);
@@ -283,7 +296,10 @@ export class Publisher {
       }
 
       const pr = await this.createBatchPR(branchName, succeeded);
-      return buildBatchResult(results, { prUrl: pr.url });
+      return buildBatchResult(results, {
+        prUrl: pr.url,
+        warnings: pr.warnings,
+      });
     } catch (error) {
       return this.recoverFailedBatch(
         files,
@@ -315,7 +331,7 @@ export class Publisher {
       );
       return undefined;
     } catch (error) {
-      this.markResultsFailed(results, error);
+      this.markResultsFailed(results, error, "Commit failed");
       return errorMessage(error);
     }
   }
@@ -326,7 +342,7 @@ export class Publisher {
   private async createBatchPR(
     branchName: string,
     succeeded: PublishResult[],
-  ): Promise<{ url: string; number: number }> {
+  ): Promise<{ url: string; number: number; warnings: PublishWarning[] }> {
     const successful = succeeded.length;
     const prTitle = `Batch Publish: ${successful} notes`;
     const fileList = succeeded.map((r) => `- ${r.filePath}`).join("\n");
