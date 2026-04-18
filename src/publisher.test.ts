@@ -510,6 +510,7 @@ body`;
     expect(result.results.every((r) => r.error?.includes("disk error"))).toBe(
       true,
     );
+    expect(result.error).toBe("Failed to read 2 files");
     expect(gh.commitFiles).not.toHaveBeenCalled();
   });
 
@@ -688,6 +689,7 @@ describe("Publisher.publishAllWithPR", () => {
     expect(result.successful).toBe(0);
     expect(result.failed).toBe(2);
     expect(result.prUrl).toBeUndefined();
+    expect(result.error).toBe("Failed to read 2 files");
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
     expect(gh.createPullRequest).not.toHaveBeenCalled();
   });
