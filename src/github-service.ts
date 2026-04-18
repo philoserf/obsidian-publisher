@@ -1,6 +1,6 @@
 import { RequestError } from "@octokit/request-error";
 import { Octokit } from "@octokit/rest";
-import type { PublisherSettings } from "./types";
+import type { PublisherSettings, PublishWarning } from "./types";
 
 export class GitHubService {
   private octokit: Octokit;
@@ -107,8 +107,10 @@ export class GitHubService {
   }
 
   /**
-   * Create a pull request
-   * Returns the PR URL and PR number
+   * Create a pull request and (optionally) apply labels.
+   * Label-apply failure is non-fatal — the PR exists and is the user's
+   * primary artifact; surfacing the failure as a warning avoids the
+   * orphaned-PR side effect of throwing here.
    */
   async createPullRequest(
     head: string,
@@ -116,9 +118,10 @@ export class GitHubService {
     title: string,
     body: string,
     labels?: string[],
-  ): Promise<{ url: string; number: number }> {
+  ): Promise<{ url: string; number: number; warnings: PublishWarning[] }> {
+    let response: Awaited<ReturnType<typeof this.octokit.rest.pulls.create>>;
     try {
-      const response = await this.octokit.rest.pulls.create({
+      response = await this.octokit.rest.pulls.create({
         owner: this.settings.repoOwner,
         repo: this.settings.repoName,
         title,
@@ -126,27 +129,37 @@ export class GitHubService {
         base,
         body,
       });
-
-      // Add labels if provided
-      if (labels && labels.length > 0) {
-        await this.octokit.rest.issues.addLabels({
-          owner: this.settings.repoOwner,
-          repo: this.settings.repoName,
-          issue_number: response.data.number,
-          labels,
-        });
-      }
-
-      return {
-        url: response.data.html_url,
-        number: response.data.number,
-      };
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`Failed to create pull request: ${error.message}`);
       }
       throw error;
     }
+
+    const warnings: PublishWarning[] = [];
+    if (labels && labels.length > 0) {
+      try {
+        await this.octokit.rest.issues.addLabels({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          issue_number: response.data.number,
+          labels,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        console.warn(
+          `PR labels not applied (${labels.join(", ")}): ${message}`,
+        );
+        warnings.push({ kind: "pr-label-failed", labels, error: message });
+      }
+    }
+
+    return {
+      url: response.data.html_url,
+      number: response.data.number,
+      warnings,
+    };
   }
 
   /**

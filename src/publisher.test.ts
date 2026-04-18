@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Publisher } from "./publisher";
-import { DEFAULT_SETTINGS, type PublisherSettings } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  type PublisherSettings,
+  type PublishWarning,
+} from "./types";
 
 const publishedNote = `---
 title: Test Post
@@ -84,10 +88,17 @@ function makeGitHubService() {
   return {
     commitFiles: mock(async () => {}),
     createBranchWithRetry: mock(async () => "publish/2026-01-01-000000"),
-    createPullRequest: mock(async () => ({
-      url: "https://github.com/test/pr/1",
-      number: 1,
-    })),
+    createPullRequest: mock(
+      async (): Promise<{
+        url: string;
+        number: number;
+        warnings: PublishWarning[];
+      }> => ({
+        url: "https://github.com/test/pr/1",
+        number: 1,
+        warnings: [],
+      }),
+    ),
     deleteBranch: mock(async () => {}),
   };
 }
@@ -563,6 +574,36 @@ describe("Publisher.publishNoteWithPR", () => {
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
   });
 
+  test("returns success with label warning when label apply fails", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.createPullRequest.mockImplementation(async () => ({
+      url: "https://github.com/test/pr/2",
+      number: 2,
+      warnings: [
+        {
+          kind: "pr-label-failed" as const,
+          labels: ["chore"],
+          error: "label not found",
+        },
+      ],
+    }));
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNoteWithPR(
+      makeTFile("test.md") as never,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.prUrl).toBe("https://github.com/test/pr/2");
+    expect(result.warnings).toContainEqual({
+      kind: "pr-label-failed",
+      labels: ["chore"],
+      error: "label not found",
+    });
+    expect(gh.deleteBranch).not.toHaveBeenCalled();
+  });
+
   test("cleans up branch on publish failure", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
     const gh = makeGitHubService();
@@ -624,6 +665,37 @@ describe("Publisher.publishAllWithPR", () => {
 
     expect(result.total).toBe(0);
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+  });
+
+  test("attaches batch warnings when PR label apply fails", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
+    const gh = makeGitHubService();
+    gh.createPullRequest.mockImplementation(async () => ({
+      url: "https://github.com/test/pr/3",
+      number: 3,
+      warnings: [
+        {
+          kind: "pr-label-failed" as const,
+          labels: ["chore"],
+          error: "forbidden",
+        },
+      ],
+    }));
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.successful).toBe(2);
+    expect(result.prUrl).toBe("https://github.com/test/pr/3");
+    expect(result.warnings).toContainEqual({
+      kind: "pr-label-failed",
+      labels: ["chore"],
+      error: "forbidden",
+    });
+    expect(gh.deleteBranch).not.toHaveBeenCalled();
   });
 
   test("sets batch error when branch creation throws", async () => {

@@ -154,6 +154,56 @@ describe("GitHubService.createPullRequest", () => {
 
     expect(octokit.rest.issues.addLabels).not.toHaveBeenCalled();
   });
+
+  test("returns empty warnings when labels apply cleanly", async () => {
+    const { service } = makeService();
+
+    const result = await service.createPullRequest(
+      "feature",
+      "main",
+      "title",
+      "body",
+      ["chore"],
+    );
+
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("surfaces label apply failure as warning, returns PR url", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.issues.addLabels.mockImplementation(async () => {
+      throw new Error("label not found");
+    });
+
+    const result = await service.createPullRequest(
+      "feature",
+      "main",
+      "title",
+      "body",
+      ["nonexistent"],
+    );
+
+    expect(result.url).toBe("https://github.com/test/pr/1");
+    expect(result.number).toBe(1);
+    expect(result.warnings).toEqual([
+      {
+        kind: "pr-label-failed",
+        labels: ["nonexistent"],
+        error: "label not found",
+      },
+    ]);
+  });
+
+  test("throws when PR creation itself fails", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.pulls.create.mockImplementation(async () => {
+      throw new Error("validation failed");
+    });
+
+    await expect(
+      service.createPullRequest("feature", "main", "title", "body"),
+    ).rejects.toThrow("Failed to create pull request");
+  });
 });
 
 describe("GitHubService.createBranchWithRetry", () => {
