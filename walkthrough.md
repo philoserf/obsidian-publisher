@@ -1,7 +1,7 @@
 # Obsidian Publisher Walkthrough
 
-*2026-04-18T03:02:22Z by Showboat 0.6.1*
-<!-- showboat-id: 2276cd1b-d667-4aaa-859c-737bc9e96f00 -->
+*2026-04-18T14:20:50Z by Showboat 0.6.1*
+<!-- showboat-id: 0831c464-e5bf-40e6-9a68-8f30a9f62256 -->
 
 ## Overview
 
@@ -45,13 +45,13 @@ src/types.ts
 
 | Module | Role |
 |---|---|
-| `main.ts` | Plugin entry point — command registration, settings load, publish dispatch, warning aggregation |
-| `publisher.ts` | Orchestration — four publish workflows (single/batch × direct/PR), image resolution, error recovery |
+| `main.ts` | Plugin entry point — command registration, settings load with shape validation, publish dispatch, warning aggregation |
+| `publisher.ts` | Orchestration — four publish workflows (single/batch × direct/PR), image resolution, read-failure surfacing, error recovery |
 | `content-processor.ts` | Transform pipeline — frontmatter, callouts, mermaid, images, wikilinks, slug sanitization |
-| `github-service.ts` | Octokit wrapper — branch/PR/blob/tree/commit via REST; iOS-safe base64 |
-| `schema.ts` | Frontmatter split + publish-flag gate + required-field validation |
+| `github-service.ts` | Octokit wrapper — branch/PR/blob/tree/commit via REST; iOS-safe base64; non-fatal label failures |
+| `schema.ts` | Frontmatter split (LF + CRLF) + publish-flag gate + required-field validation |
 | `settings.ts` | Plugin settings UI with debounced save and GitHub connection test |
-| `types.ts` | Shared types: `PublisherSettings`, `PublishResult`, `BatchPublishResult`, `PublishWarning` |
+| `types.ts` | Shared types: `PublisherSettings`, `PublishResult`, `BatchPublishResult`, `PublishWarning`, plus `parseSettings` and `isPlainObject` helpers |
 | `test-preload.ts` | Consolidated mocks for `obsidian` imports in tests |
 
 **Data flow for a single publish:** `main` → `Publisher.publishNote*` →
@@ -66,7 +66,7 @@ installs the settings tab, and registers two commands: "Publish current note"
 (editor-bound) and "Publish all notes" (vault-wide).
 
 ```bash
-sed -n '50,79p' src/main.ts
+sed -n '60,89p' src/main.ts
 ```
 
 ```output
@@ -109,7 +109,7 @@ so progress notices and the call chain share a single instance. The
 during batch preparation.
 
 ```bash
-sed -n '38,49p' src/main.ts
+sed -n '48,58p' src/main.ts
 ```
 
 ```output
@@ -124,68 +124,100 @@ export default class ObsidianPublisher extends Plugin {
       new Notice(`Prepared: ${done}/${total}`);
     });
   }
-
 ```
 
-**Settings load and migration.** `loadSettings` merges persisted data over
-`DEFAULT_SETTINGS`. Existing users (where `usePullRequests` is undefined in
-persisted data) get pinned to `false` to preserve their previous
-direct-commit behavior; brand-new installs take the default of `true`.
+**Settings load is shape-validated.** `loadSettings` runs persisted data
+through `parseSettings` (in `types.ts`), which falls back per-field to
+`DEFAULT_SETTINGS` on type mismatch. This guards against corrupted or
+hand-edited `data.json` — `prLabels` as a string, `frontmatterTemplate`
+as `null`, `usePullRequests` as a string — that previously crashed
+downstream code. The migration check (existing users → `usePullRequests:
+false`) reads raw `data` so the "no key present" signal isn't erased by
+`parseSettings`'s default fill-in.
 
 ```bash
-sed -n '86,99p' src/main.ts
+sed -n '96,109p' src/main.ts
 ```
 
 ```output
   async loadSettings() {
     const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings = parseSettings(data);
 
-    // Migration: for existing users, default to false to preserve current behavior
-    if (data && data.usePullRequests === undefined) {
+    // Migration: existing users (data exists, no usePullRequests field) default
+    // to false to preserve pre-PR-workflow behavior. Check raw data so the
+    // signal isn't erased by parseSettings's default fill-in.
+    if (isPlainObject(data) && !("usePullRequests" in data)) {
       this.settings.usePullRequests = false;
       await this.saveSettings();
     }
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
-  }
 ```
 
-**Warnings are kind-tagged.** Non-fatal conditions (missing image,
-basename collision) travel through `PublishResult.warnings` as a
-discriminated union and surface via per-kind notices.
+**Warnings are kind-tagged.** Non-fatal conditions travel through
+`PublishResult.warnings` (per file) and `BatchPublishResult.warnings`
+(batch-level, e.g. PR label apply failure) as a discriminated union.
+Image warnings share a `name` field; `pr-label-failed` carries
+`labels` and `error`. Image-kind dispatch goes through
+`notifyImageWarnings`, which uses `Extract<PublishWarning, { name:
+string }>` to narrow the shape; the `pr-label-failed` branch is
+inline because its shape diverges.
 
 ```bash
-sed -n '13,36p' src/main.ts
+sed -n '14,46p' src/main.ts
 ```
 
 ```output
-function notifyWarningKind(
+type NamedImageWarning = Extract<PublishWarning, { name: string }>;
+
+function notifyImageWarnings(
   warnings: PublishWarning[],
-  kind: PublishWarning["kind"],
+  kind: NamedImageWarning["kind"],
   format: (names: string[]) => string,
 ): void {
-  const filtered = warnings.filter((w) => w.kind === kind);
+  const filtered = warnings.filter(
+    (w): w is NamedImageWarning => w.kind === kind,
+  );
   if (filtered.length === 0) return;
   const names = [...new Set(filtered.map((w) => w.name))];
   new Notice(format(names));
 }
 
 function notifyWarnings(warnings: PublishWarning[]): void {
-  notifyWarningKind(
+  notifyImageWarnings(
     warnings,
     "image-failed",
     (names) => `Warning: ${names.length} image(s) failed: ${names.join(", ")}`,
   );
-  notifyWarningKind(
+  notifyImageWarnings(
     warnings,
     "image-collision",
     (names) =>
       `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
   );
+  const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
+  if (labelFailures.length > 0) {
+    const all = [...new Set(labelFailures.flatMap((w) => w.labels))];
+    new Notice(`Warning: failed to apply PR labels: ${all.join(", ")}`);
+  }
 }
+```
+
+**Batch warnings flow into the notifier too.** The batch publish path
+sources warnings from both per-file results and `BatchPublishResult.warnings`
+so PR-level conditions surface in the same place as image-level ones.
+
+```bash
+sed -n '199,202p' src/main.ts
+```
+
+```output
+      notifyWarnings([
+        ...result.results.flatMap((r) => r.warnings),
+        ...(result.warnings ?? []),
+      ]);
 ```
 
 ## The schema module
@@ -195,9 +227,10 @@ exports three constants (the publish field, the sentinel value, and the
 required-field list), a `splitFrontmatter` parser, a `hasPublishFlag`
 gate, and a `validateFrontmatter` check.
 
-**Sentinel: `status: publish`** — this is *intent*, not state. It was
-renamed from `status: published` in 1.4.0 (a hard cutover — legacy notes
-with the old value are no longer publishable).
+**Sentinel: `status: publish`** — this is *intent*, not state. The
+`FRONTMATTER_REGEX` accepts both LF and CRLF line endings (the optional
+`\r?` makes Windows / Windows-host iCloud / Dropbox files parse instead
+of silently failing the gate).
 
 ```bash
 sed -n '1,9p' src/schema.ts
@@ -212,7 +245,7 @@ export const REQUIRED_FRONTMATTER_FIELDS = ["title", "date"] as const;
 
 export type Frontmatter = Record<string, unknown>;
 
-const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 ```
 
 **`splitFrontmatter` is forgiving.** A missing delimiter yields `{}` +
@@ -292,7 +325,7 @@ and `prLabels` getters apply literal fallback defaults so empty-string
 or missing settings don't leak into API calls.
 
 ```bash
-sed -n '24,49p' src/publisher.ts
+sed -n '53,78p' src/publisher.ts
 ```
 
 ```output
@@ -329,18 +362,21 @@ and branch+PR flavors.
 
 - `publishNote` — thin wrapper over `publishFileToTarget` (no branch).
 - `publishNoteWithPR` — creates a timestamped branch, commits, opens a
-  PR, rolls back the branch on failure.
+  PR, rolls back the branch on commit failure (but **not** on label
+  failure — labels surface as warnings, see GitHub service section).
 - `publishAll` — scans the vault, prepares a batch, commits to
-  `baseBranch` atomically.
+  `baseBranch` atomically. Read failures from the scan thread back as
+  per-file failed results.
 - `publishAllWithPR` — scans, prepares, commits to a single batch
-  branch, opens one PR listing all succeeded files.
+  branch, opens one PR listing all succeeded files. Read failures and
+  PR-level warnings flow into the batch result.
 
 The common shape is: read → split → gate → validate → transform →
 resolve images → commit. PR variants add branch lifecycle + PR creation
 around that.
 
 ```bash
-sed -n '173,228p' src/publisher.ts
+sed -n '200,251p' src/publisher.ts
 ```
 
 ```output
@@ -392,51 +428,77 @@ sed -n '173,228p' src/publisher.ts
         this.prLabels,
       );
 
-      return { ...result, prUrl: pr.url };
-    } catch (error) {
-      if (branchName) {
-        await this.cleanupBranch(branchName);
-      }
-      return failedResult(file.path, errorMessage(error));
-    }
-  }
+      return {
+        ...result,
+        prUrl: pr.url,
+        warnings: [...result.warnings, ...pr.warnings],
 ```
 
-**Scanning the vault.** `getPublishableFiles` reads each markdown file
-once, splits the frontmatter, and keeps only notes with the publish
-flag. It returns pre-parsed `{file, frontmatter, body}` tuples so the
-prep stage doesn't re-parse. Read errors are logged but don't fail the
-batch — a currently-open issue (#157) notes this silently drops files.
+**Vault scan surfaces read failures.** `getPublishableFiles` reads each
+markdown file, splits frontmatter, and keeps notes with the publish
+flag. Files that fail to read are no longer silently dropped — they
+become per-file failed results that flow into the batch result so a
+mobile user sees them in a Notice instead of `console.error`.
 
 ```bash
-sed -n '463,486p' src/publisher.ts
+sed -n '483,510p' src/publisher.ts
 ```
 
 ```output
-  private async getPublishableFiles(): Promise<
-    Array<{ file: TFile; frontmatter: Frontmatter; body: string }>
-  > {
+  private async getPublishableFiles(): Promise<{
+    files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>;
+    readFailures: PublishResult[];
+  }> {
     const markdownFiles = this.vault.getMarkdownFiles();
-    const publishableFiles: Array<{
+    const files: Array<{
       file: TFile;
       frontmatter: Frontmatter;
       body: string;
     }> = [];
+    const readFailures: PublishResult[] = [];
 
     for (const file of markdownFiles) {
       try {
         const content = await this.vault.read(file);
         const { frontmatter, body } = splitFrontmatter(content);
         if (hasPublishFlag(frontmatter)) {
-          publishableFiles.push({ file, frontmatter, body });
+          files.push({ file, frontmatter, body });
         }
       } catch (error) {
-        console.error(`Failed to read file ${file.path}:`, error);
+        readFailures.push(
+          failedResult(file.path, `Failed to read: ${errorMessage(error)}`),
+        );
       }
     }
 
-    return publishableFiles;
+    return { files, readFailures };
   }
+```
+
+**Read-failure summarization.** When the only failures are read failures
+(no commit was attempted), the batch-level `error` is set to a summary
+so `main.ts` can surface it in a Notice rather than the generic "All
+files failed to process" message. Single read failure → its message
+verbatim; multiple → "Failed to read N files".
+
+```bash
+sed -n '40,52p' src/publisher.ts
+```
+
+```output
+}
+
+// Summary surfaces in the user-facing Notice when no commit was attempted
+// and read failures are the only cause; per-file errors otherwise live in
+// console.log, which mobile users can't see.
+function summarizeReadFailures(
+  readFailures: PublishResult[],
+): string | undefined {
+  if (readFailures.length === 0) return undefined;
+  if (readFailures.length === 1) return readFailures[0].error;
+  return `Failed to read ${readFailures.length} files`;
+}
+
 ```
 
 **Batch preparation deduplicates by target path.** An `entryMap` keyed
@@ -445,7 +507,7 @@ collapse into one entry (last-write-wins). This is a known gap — slug
 collision precheck is tracked in issue #166.
 
 ```bash
-sed -n '494,540p' src/publisher.ts
+sed -n '518,560p' src/publisher.ts
 ```
 
 ```output
@@ -492,10 +554,6 @@ sed -n '494,540p' src/publisher.ts
     }
 
     const fileEntries = Array.from(entryMap.entries()).map(
-      ([path, content]) => ({ path, content }),
-    );
-    return { results, fileEntries };
-  }
 ```
 
 **Image resolution is basename-based with collision detection.** The
@@ -505,7 +563,7 @@ many matches (collision → skip + warning with sorted paths). The
 sorted paths make collision warnings stable across runs.
 
 ```bash
-sed -n '79,124p' src/publisher.ts
+sed -n '113,160p' src/publisher.ts
 ```
 
 ```output
@@ -548,7 +606,9 @@ sed -n '79,124p' src/publisher.ts
         const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
         entries.push({ path: imgPath, content: imageContent });
       } catch (error) {
-        console.error(`Failed to read image ${imageName}:`, error);
+        console.error(
+          `Failed to read image ${imageName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
         warnings.push({ kind: "image-failed", name: imageName });
       }
     }
@@ -557,25 +617,26 @@ sed -n '79,124p' src/publisher.ts
   }
 ```
 
-**Error recovery in the batch-PR flow.** Three responsibilities were
-teased apart after review (#124): commit, PR creation, and outer
-recovery. `recoverFailedBatch` is the catch-all — it deletes the
-orphaned branch, marks any already-succeeded per-file results as failed,
-and synthesizes failure results for files that never made it through
-`prepareBatch`.
+**Error recovery in the batch-PR flow.** Three responsibilities are
+teased apart: commit (`commitPreparedBatch`), PR creation
+(`createBatchPR`), and outer recovery (`recoverFailedBatch`). The
+recovery path takes both `prepared` and `readFailures` separately so
+read failures aren't relabeled with the outer error message —
+`markResultsFailed` only touches the prepared results.
 
 ```bash
-sed -n '341,369p' src/publisher.ts
+sed -n '364,388p' src/publisher.ts
 ```
 
 ```output
   private async recoverFailedBatch(
-    publishableFiles: Array<{
+    files: Array<{
       file: TFile;
       frontmatter: Frontmatter;
       body: string;
     }>,
-    results: PublishResult[],
+    prepared: PublishResult[],
+    readFailures: PublishResult[],
     branchName: string | null,
     error: unknown,
   ): Promise<BatchPublishResult> {
@@ -583,20 +644,43 @@ sed -n '341,369p' src/publisher.ts
       await this.cleanupBranch(branchName);
     }
     const message = errorMessage(error);
-    if (results.length === 0) {
-      for (const { file } of publishableFiles) {
-        results.push(failedResult(file.path, message));
+    if (prepared.length === 0) {
+      for (const { file } of files) {
+        prepared.push(failedResult(file.path, message));
       }
     } else {
-      this.markResultsFailed(results, error);
+      this.markResultsFailed(prepared, error);
     }
-    return {
-      total: results.length,
-      successful: 0,
-      failed: results.length,
-      results,
-      error: message,
-    };
+    return buildBatchResult([...readFailures, ...prepared], { error: message });
+  }
+
+```
+
+**`markResultsFailed` is prefix-parameterized.** Commit failures get a
+`"Commit failed: ..."` prefix from `commitPreparedBatch` (the only
+place where commit was the actual cause). The recovery path calls it
+without a prefix because the underlying error message ("Failed to
+create pull request: ..." / "Failed to create branch ...") is
+self-describing.
+
+```bash
+sed -n '80,93p' src/publisher.ts
+```
+
+```output
+  private markResultsFailed(
+    results: PublishResult[],
+    error: unknown,
+    prefix?: string,
+  ): void {
+    const message = errorMessage(error);
+    const formatted = prefix ? `${prefix}: ${message}` : message;
+    for (const r of results) {
+      if (r.success) {
+        r.success = false;
+        r.error = formatted;
+      }
+    }
   }
 ```
 
@@ -647,10 +731,9 @@ sed -n '26,55p' src/content-processor.ts
 **Frontmatter processing.** The status field is optionally stripped
 (controlled by `removePublishFlag`), template fields are merged without
 overriding existing keys, and a `date` fallback is injected if the note
-lacks one. The `date` fallback is a carryover that the new schema
-validator now makes unreachable via `publishNote` paths — but the
-public `process()` entry is still reachable by callers that bypass
-validation.
+lacks one. The `date` fallback is a carryover that the schema validator
+now makes unreachable via `publishNote` paths — the public `process()`
+entry is still reachable by callers that bypass validation.
 
 ```bash
 sed -n '60,86p' src/content-processor.ts
@@ -842,7 +925,7 @@ stays cheap.
 `toBase64` helper chunks `fromCharCode` at 8192 bytes to avoid both.
 
 ```bash
-sed -n '36,48p' src/github-service.ts
+sed -n '40,52p' src/github-service.ts
 ```
 
 ```output
@@ -869,7 +952,7 @@ the branch ref. Blobs are serialized — parallelizing them provoked
 GitHub rate limits during batch publishes.
 
 ```bash
-sed -n '155,215p' src/github-service.ts
+sed -n '171,231p' src/github-service.ts
 ```
 
 ```output
@@ -943,7 +1026,7 @@ deliberately re-throws a `RequestError` without wrapping it — the
 retry logic needs the status code preserved.
 
 ```bash
-sed -n '231,266p' src/github-service.ts
+sed -n '247,282p' src/github-service.ts
 ```
 
 ```output
@@ -985,12 +1068,16 @@ sed -n '231,266p' src/github-service.ts
   }
 ```
 
-**PR creation with best-effort labels.** Label application is a
-separate API call and runs after the PR exists. If it fails, the PR is
-orphaned with no labels — a known issue tracked as #156.
+**PR creation with non-fatal label warnings.** `pulls.create` and
+`addLabels` are now in separate try blocks. Label apply failure
+(unknown label, permissions, transient network) logs `console.warn`
+and returns a `pr-label-failed` warning alongside the PR url —
+**without throwing**. This avoids the orphaned-PR side effect from
+1.4.0 where the cleanupBranch reaction to a label-failure would delete
+the just-created PR's head ref.
 
 ```bash
-sed -n '113,150p' src/github-service.ts
+sed -n '119,167p' src/github-service.ts
 ```
 
 ```output
@@ -1000,9 +1087,10 @@ sed -n '113,150p' src/github-service.ts
     title: string,
     body: string,
     labels?: string[],
-  ): Promise<{ url: string; number: number }> {
+  ): Promise<{ url: string; number: number; warnings: PublishWarning[] }> {
+    let response: Awaited<ReturnType<typeof this.octokit.rest.pulls.create>>;
     try {
-      const response = await this.octokit.rest.pulls.create({
+      response = await this.octokit.rest.pulls.create({
         owner: this.settings.repoOwner,
         repo: this.settings.repoName,
         title,
@@ -1010,28 +1098,38 @@ sed -n '113,150p' src/github-service.ts
         base,
         body,
       });
-
-      // Add labels if provided
-      if (labels && labels.length > 0) {
-        await this.octokit.rest.issues.addLabels({
-          owner: this.settings.repoOwner,
-          repo: this.settings.repoName,
-          issue_number: response.data.number,
-          labels,
-        });
-      }
-
-      return {
-        url: response.data.html_url,
-        number: response.data.number,
-      };
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`Failed to create pull request: ${error.message}`);
       }
       throw error;
     }
+
+    const warnings: PublishWarning[] = [];
+    if (labels && labels.length > 0) {
+      try {
+        await this.octokit.rest.issues.addLabels({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          issue_number: response.data.number,
+          labels,
+        });
+      } catch (error) {
+        const message = errorMessage(error);
+        console.warn(
+          `PR labels not applied (${labels.join(", ")}): ${message}`,
+        );
+        warnings.push({ kind: "pr-label-failed", labels, error: message });
+      }
+    }
+
+    return {
+      url: response.data.html_url,
+      number: response.data.number,
+      warnings,
+    };
   }
+
 ```
 
 ## Settings UI
@@ -1142,11 +1240,13 @@ function parseSimpleFrontmatter(text: string): Record<string, string> {
 
 The `PublishWarning` discriminated union is the contract between the
 publisher (which produces warnings) and `main.ts` (which renders per-kind
-notices). Adding a new warning kind is type-safe — `notifyWarningKind`
-needs a new call site or TypeScript surfaces the miss.
+notices). The 1.4.1 release added a third kind, `pr-label-failed`, with
+a different shape (`labels` + `error` rather than `name`).
+`BatchPublishResult.warnings` is optional so PR-level conditions
+(currently just label failures) can travel alongside per-file warnings.
 
 ```bash
-sed -n '57,80p' src/types.ts
+sed -n '57,100p' src/types.ts
 ```
 
 ```output
@@ -1156,7 +1256,8 @@ sed -n '57,80p' src/types.ts
  */
 export type PublishWarning =
   | { kind: "image-failed"; name: string }
-  | { kind: "image-collision"; name: string; paths: string[] };
+  | { kind: "image-collision"; name: string; paths: string[] }
+  | { kind: "pr-label-failed"; labels: string[]; error: string };
 
 /**
  * Publishing result for a single note
@@ -1172,6 +1273,48 @@ export interface PublishResult {
   warnings: PublishWarning[];
   /** URL to the pull request if created (single-file PR workflow only) */
   prUrl?: string;
+}
+
+/**
+ * Batch publishing summary
+ */
+export interface BatchPublishResult {
+  /** Total number of notes attempted */
+  total: number;
+  /** Number of successful publishes */
+  successful: number;
+  /** Number of failed publishes */
+  failed: number;
+  /** Individual results */
+  results: PublishResult[];
+  /** URL to the pull request if created */
+  prUrl?: string;
+  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
+  error?: string;
+  /** Batch-level non-fatal conditions (e.g. PR label apply failed) */
+  warnings?: PublishWarning[];
+}
+```
+
+**Settings shape validation lives in `types.ts`.** `parseSettings`
+checks each field's runtime type and falls back to `DEFAULT_SETTINGS`
+on mismatch. `isPlainObject` is exported because `main.ts` reuses it
+to detect whether persisted data was a real object (for the migration
+gate).
+
+```bash
+sed -n '109,118p' src/types.ts
+```
+
+```output
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
 }
 
 ```
@@ -1194,38 +1337,43 @@ src/github-service.test.ts
 src/publisher.test.ts
 src/schema.test.ts
 src/settings.test.ts
+src/types.test.ts
 ```
 
 ## Concerns and known gaps
 
-**Tracked in open issues.** The composite-spec alignment plan in
-`TODO.md` is an umbrella (issue #172). The most meaningful items:
+The composite-spec alignment plan in `TODO.md` is an umbrella
+(issue #172). The 1.4.x bug backlog is closed; remaining gaps are all
+forward-looking enhancements:
 
-- **#157 silently drops files** that fail to read during vault scan.
-  They should surface as per-file failures, not be dropped entirely.
-- **#156 PR label failure orphans a successfully created PR** — the
-  label step happens after PR creation and there's no rollback path.
-- **#160 `loadSettings` does not validate the shape of persisted
-  data.** A corrupt `data.json` can assign non-matching types into
-  `settings` and propagate through the system.
-- **#159 `FRONTMATTER_REGEX` does not handle CRLF line endings.**
-  A Windows-written note with `\r\n` delimiters won't match the
-  frontmatter split regex.
 - **#166 slug collision precheck** — two notes that sanitize to the
-  same slug silently collapse in `prepareBatch`'s `entryMap`.
+  same slug silently collapse in `prepareBatch`'s `entryMap`. Composite
+  plan calls for blocking publish with a named-conflict error.
 - **#168 callout types pass-through** — the 20→7 collapse in
   `CALLOUT_TYPE_MAP` loses information; the composite plan calls for
   letting theme CSS render the original type.
 - **#170 image `|alt` syntax** — `![[img.png|alt]]` alt text is
   currently discarded; only `|300` sizing is cleanly stripped.
+- **#169 wikilinks emit `/posts/slug/`** — the current `{{< ref >}}`
+  output couples to Hugo's build-time ref resolver. Composite plan
+  proposes plain markdown links with publish-set gating.
+- **#164 configurable shortcode names** — `notice` and `mermaid`
+  shortcode names are hardcoded; composite plan adds settings.
+- **#165 `strippedFrontmatterFields` setting** — replaces
+  `removePublishFlag` with a configurable list (default-strips `status`
+  and `lastmod`).
+- **#167 strict `date` requirement** — drop the `new Date()` fallback
+  in `processFrontmatter` since the schema validator already requires it.
+- **#171 ship `hugo-shortcodes/` reference templates** — the publisher
+  emits shortcode syntax with no way to verify the destination site
+  defines the templates.
 
 **Code smell: `process()` bypasses the schema gate.** The public
 `ContentProcessor.process(content, filename)` path splits frontmatter
 and runs the pipeline *without* calling `hasPublishFlag` or
 `validateFrontmatter`. Only `processFromSplit` is used by the
 publisher; `process` is reachable from tests and would process an
-unvalidated file if any future caller used it. Consider removing it or
-adding an explicit "this is test-only" marker.
+unvalidated file if any future caller used it.
 
 **Cross-platform hygiene.** No top-to-bottom guard prevents a future
 change from importing `node:fs`, `node:path`, or `child_process` into
@@ -1236,6 +1384,6 @@ bundle-size check would enforce the iOS constraint mechanically.
 primary path.** Since 1.4.0, `publishFileToTarget` and `prepareBatch`
 reject any note missing `date` before the content processor runs; the
 `processed.date = new Date().toISOString()` branch survives only for
-the public `process()` entry point. It's either a vestige to remove or
-a behavior to keep intentional — worth a decision.
+the public `process()` entry point. Issue #167 tracks removal as part
+of the composite spec work.
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.1
+
+### Fixed
+
+- Batch publish no longer silently drops files that fail to read. Read failures surface as per-file failed `PublishResult` entries with `Failed to read: …` messages, and counted in the failed totals. When all files are unreadable, the batch-level error summarizes the read failures so mobile users see the cause in a Notice (#157).
+- Persisted settings are validated on load. A corrupted or hand-edited `data.json` (e.g. `prLabels` as a string, `frontmatterTemplate` as `null`, `usePullRequests` as a string) now falls back per-field to defaults instead of crashing downstream code (#160).
+- Frontmatter regex accepts CRLF line endings. Files saved with `\r\n` (Windows, Windows-host iCloud/Dropbox sync) now parse instead of silently failing the publish gate (#159).
+- PR label apply failure no longer orphans the just-created PR. Label apply now surfaces as a non-fatal warning and the PR is preserved, instead of triggering branch cleanup that auto-closed the PR. The batch path no longer mislabels successful per-file commits as "Commit failed" when PR creation fails (#156).
+
 ## 1.4.0
 
 ### Breaking Changes
