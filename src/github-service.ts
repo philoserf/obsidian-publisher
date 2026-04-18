@@ -1,6 +1,10 @@
 import { RequestError } from "@octokit/request-error";
 import { Octokit } from "@octokit/rest";
-import type { PublisherSettings, PublishWarning } from "./types";
+import {
+  errorMessage,
+  type PublisherSettings,
+  type PublishWarning,
+} from "./types";
 
 export class GitHubService {
   private octokit: Octokit;
@@ -146,8 +150,7 @@ export class GitHubService {
           labels,
         });
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
+        const message = errorMessage(error);
         console.warn(
           `PR labels not applied (${labels.join(", ")}): ${message}`,
         );

@@ -11,18 +11,15 @@ import {
   parseSettings,
 } from "./types";
 
+type NamedImageWarning = Extract<PublishWarning, { name: string }>;
+
 function notifyImageWarnings(
   warnings: PublishWarning[],
-  kind: "image-failed" | "image-collision",
+  kind: NamedImageWarning["kind"],
   format: (names: string[]) => string,
 ): void {
   const filtered = warnings.filter(
-    (
-      w,
-    ): w is Extract<
-      PublishWarning,
-      { kind: "image-failed" | "image-collision" }
-    > => w.kind === kind,
+    (w): w is NamedImageWarning => w.kind === kind,
   );
   if (filtered.length === 0) return;
   const names = [...new Set(filtered.map((w) => w.name))];
