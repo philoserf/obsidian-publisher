@@ -1,0 +1,14 @@
+{{/*
+  Callout shortcode. Receives the Obsidian callout type verbatim as the
+  first positional arg, and an optional title as the second. Usage:
+    {{< callout note "Heads up" >}} body {{< /callout >}}
+    {{< callout tldr >}} body {{< /callout >}}
+*/}}
+{{- $type := lower (.Get 0) -}}
+{{- $title := .Get 1 -}}
+<div class="callout callout-{{ $type }}">
+  {{- with $title }}<div class="callout-title">{{ . }}</div>{{ end -}}
+  <div class="callout-body">
+    {{ .Inner | markdownify }}
+  </div>
+</div>
