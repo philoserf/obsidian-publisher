@@ -47,6 +47,13 @@ export function serializeFrontmatter(
   }
 }
 
+export function parseStrippedFieldsInput(value: string): string[] {
+  return value
+    .split(",")
+    .map((f) => f.trim())
+    .filter((f) => f.length > 0);
+}
+
 export function parseFrontmatter(text: string): Record<string, unknown> {
   const trimmed = text.trim();
   if (!trimmed) return {};
@@ -213,10 +220,7 @@ export class PublisherSettingTab extends PluginSettingTab {
         .setPlaceholder("status, lastmod, cssclasses")
         .setValue(settings.strippedFrontmatterFields.join(", "))
         .onChange((value) => {
-          settings.strippedFrontmatterFields = value
-            .split(",")
-            .map((f) => f.trim())
-            .filter((f) => f.length > 0);
+          settings.strippedFrontmatterFields = parseStrippedFieldsInput(value);
           save();
         });
       text.inputEl.rows = 3;
