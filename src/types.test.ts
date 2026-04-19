@@ -20,7 +20,7 @@ describe("parseSettings", () => {
       contentDir: "content/blog",
       imageDir: "static/img",
       frontmatterTemplate: { author: "Mark" },
-      removePublishFlag: true,
+      strippedFrontmatterFields: ["status", "lastmod"],
       baseBranch: "trunk",
       prLabels: ["chore", "publish"],
       usePullRequests: false,
@@ -31,7 +31,7 @@ describe("parseSettings", () => {
     expect(result.contentDir).toBe("content/blog");
     expect(result.imageDir).toBe("static/img");
     expect(result.frontmatterTemplate).toEqual({ author: "Mark" });
-    expect(result.removePublishFlag).toBe(true);
+    expect(result.strippedFrontmatterFields).toEqual(["status", "lastmod"]);
     expect(result.baseBranch).toBe("trunk");
     expect(result.prLabels).toEqual(["chore", "publish"]);
     expect(result.usePullRequests).toBe(false);
@@ -50,10 +50,8 @@ describe("parseSettings", () => {
 
   test("falls back when boolean field has wrong type", () => {
     const result = parseSettings({
-      removePublishFlag: "true",
       usePullRequests: 1,
     });
-    expect(result.removePublishFlag).toBe(DEFAULT_SETTINGS.removePublishFlag);
     expect(result.usePullRequests).toBe(DEFAULT_SETTINGS.usePullRequests);
   });
 
@@ -103,5 +101,54 @@ describe("parseSettings", () => {
     expect(result).not.toHaveProperty("legacyField");
     expect(result).not.toHaveProperty("anotherUnknown");
     expect(result.githubToken).toBe("ghp_x");
+  });
+
+  test("parseSettings accepts strippedFrontmatterFields as string array", () => {
+    const result = parseSettings({
+      strippedFrontmatterFields: ["status", "lastmod"],
+    });
+    expect(result.strippedFrontmatterFields).toEqual(["status", "lastmod"]);
+  });
+
+  test("parseSettings defaults strippedFrontmatterFields to full list", () => {
+    const result = parseSettings({});
+    expect(result.strippedFrontmatterFields).toEqual([
+      "status",
+      "lastmod",
+      "cssclass",
+      "cssclasses",
+      "aliases",
+      "position",
+      "created",
+      "modified",
+    ]);
+  });
+
+  test("parseSettings rejects non-string-array strippedFrontmatterFields", () => {
+    const result = parseSettings({ strippedFrontmatterFields: "not-an-array" });
+    expect(result.strippedFrontmatterFields).toEqual([
+      "status",
+      "lastmod",
+      "cssclass",
+      "cssclasses",
+      "aliases",
+      "position",
+      "created",
+      "modified",
+    ]);
+  });
+});
+
+describe("strippedFrontmatterFields migration", () => {
+  test("migrates removePublishFlag=true to default list", () => {
+    const result = parseSettings({ removePublishFlag: true });
+    expect(result.strippedFrontmatterFields).toContain("status");
+    expect(result.strippedFrontmatterFields).toContain("lastmod");
+  });
+
+  test("migrates removePublishFlag=false to default list minus status", () => {
+    const result = parseSettings({ removePublishFlag: false });
+    expect(result.strippedFrontmatterFields).not.toContain("status");
+    expect(result.strippedFrontmatterFields).toContain("lastmod");
   });
 });

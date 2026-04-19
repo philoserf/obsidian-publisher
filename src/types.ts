@@ -14,8 +14,8 @@ export interface PublisherSettings {
   imageDir: string;
   /** Additional frontmatter fields to inject during publishing */
   frontmatterTemplate: Record<string, unknown>;
-  /** Whether to remove the status: publish field from frontmatter */
-  removePublishFlag: boolean;
+  /** Frontmatter field names to strip when publishing */
+  strippedFrontmatterFields: string[];
   /** Base branch to create PRs against (default: "main") */
   baseBranch: string;
   /** Labels to apply to pull requests */
@@ -34,7 +34,16 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   contentDir: "content/posts",
   imageDir: "static/images",
   frontmatterTemplate: {},
-  removePublishFlag: false,
+  strippedFrontmatterFields: [
+    "status",
+    "lastmod",
+    "cssclass",
+    "cssclasses",
+    "aliases",
+    "position",
+    "created",
+    "modified",
+  ],
   baseBranch: "main",
   prLabels: ["chore"],
   usePullRequests: true,
@@ -117,6 +126,25 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
+ * Resolve strippedFrontmatterFields from persisted data. Accepts the
+ * current field; falls back to the legacy removePublishFlag boolean for
+ * migration; otherwise returns the default list.
+ */
+function resolveStrippedFields(d: Record<string, unknown>): string[] {
+  if (isStringArray(d.strippedFrontmatterFields)) {
+    return d.strippedFrontmatterFields;
+  }
+  if (typeof d.removePublishFlag === "boolean") {
+    return d.removePublishFlag
+      ? [...DEFAULT_SETTINGS.strippedFrontmatterFields]
+      : DEFAULT_SETTINGS.strippedFrontmatterFields.filter(
+          (f) => f !== "status",
+        );
+  }
+  return [...DEFAULT_SETTINGS.strippedFrontmatterFields];
+}
+
+/**
  * Validate persisted plugin data against the PublisherSettings shape.
  * Per-field fallback to DEFAULT_SETTINGS on type mismatch — a single
  * corrupted field shouldn't wipe the user's configuration.
@@ -143,10 +171,7 @@ export function parseSettings(data: unknown): PublisherSettings {
     frontmatterTemplate: isPlainObject(d.frontmatterTemplate)
       ? d.frontmatterTemplate
       : DEFAULT_SETTINGS.frontmatterTemplate,
-    removePublishFlag:
-      typeof d.removePublishFlag === "boolean"
-        ? d.removePublishFlag
-        : DEFAULT_SETTINGS.removePublishFlag,
+    strippedFrontmatterFields: resolveStrippedFields(d),
     baseBranch:
       typeof d.baseBranch === "string"
         ? d.baseBranch
