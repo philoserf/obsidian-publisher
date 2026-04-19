@@ -161,6 +161,7 @@ export class ContentProcessor {
    * Convert Obsidian callouts to notice shortcodes
    */
   private convertCallouts(content: string): string {
+    const name = this.settings.calloutShortcodeName;
     return content.replace(
       /^> \[!([\w-]+)\][-+]?(?: (.+))?\n((?:^> .*(?:\n|$))*)/gm,
       (_match, type: string, title: string | undefined, body: string) => {
@@ -168,7 +169,7 @@ export class ContentProcessor {
           ContentProcessor.CALLOUT_TYPE_MAP[type.toLowerCase()] ?? "note";
         const cleanBody = body.replace(/^> ?/gm, "").trim();
         const titleAttr = title ? ` "${title}"` : "";
-        return `{{< notice ${noticeType}${titleAttr} >}}\n${cleanBody}\n{{< /notice >}}`;
+        return `{{< ${name} ${noticeType}${titleAttr} >}}\n${cleanBody}\n{{< /${name} >}}`;
       },
     );
   }
@@ -177,10 +178,11 @@ export class ContentProcessor {
    * Convert mermaid fenced code blocks to mermaid shortcodes
    */
   private convertMermaid(content: string): string {
+    const name = this.settings.mermaidShortcodeName;
     return content.replace(
       /```mermaid\n([\s\S]*?)```/g,
       (_match, body: string) =>
-        `{{< mermaid >}}\n${body.trimEnd()}\n{{< /mermaid >}}`,
+        `{{< ${name} >}}\n${body.trimEnd()}\n{{< /${name} >}}`,
     );
   }
 

@@ -137,6 +137,21 @@ describe("parseSettings", () => {
       "modified",
     ]);
   });
+
+  test("parseSettings accepts calloutShortcodeName and mermaidShortcodeName", () => {
+    const result = parseSettings({
+      calloutShortcodeName: "notice",
+      mermaidShortcodeName: "diagram",
+    });
+    expect(result.calloutShortcodeName).toBe("notice");
+    expect(result.mermaidShortcodeName).toBe("diagram");
+  });
+
+  test("parseSettings defaults shortcode names", () => {
+    const result = parseSettings({});
+    expect(result.calloutShortcodeName).toBe("callout");
+    expect(result.mermaidShortcodeName).toBe("mermaid");
+  });
 });
 
 describe("strippedFrontmatterFields migration", () => {

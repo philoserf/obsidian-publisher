@@ -22,6 +22,10 @@ export interface PublisherSettings {
   prLabels: string[];
   /** Whether to use branch/PR workflow (vs direct commit) */
   usePullRequests: boolean;
+  /** Hugo shortcode name for Obsidian callouts (default: "callout") */
+  calloutShortcodeName: string;
+  /** Hugo shortcode name for mermaid diagrams (default: "mermaid") */
+  mermaidShortcodeName: string;
 }
 
 /**
@@ -47,6 +51,8 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   baseBranch: "main",
   prLabels: ["chore"],
   usePullRequests: true,
+  calloutShortcodeName: "callout",
+  mermaidShortcodeName: "mermaid",
 };
 
 /**
@@ -180,5 +186,13 @@ export function parseSettings(data: unknown): PublisherSettings {
       typeof d.usePullRequests === "boolean"
         ? d.usePullRequests
         : DEFAULT_SETTINGS.usePullRequests,
+    calloutShortcodeName:
+      typeof d.calloutShortcodeName === "string"
+        ? d.calloutShortcodeName
+        : DEFAULT_SETTINGS.calloutShortcodeName,
+    mermaidShortcodeName:
+      typeof d.mermaidShortcodeName === "string"
+        ? d.mermaidShortcodeName
+        : DEFAULT_SETTINGS.mermaidShortcodeName,
   };
 }

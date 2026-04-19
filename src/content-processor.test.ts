@@ -380,7 +380,7 @@ describe("Callout conversion", () => {
       "test.md",
     );
     expect(result.content).toContain(
-      '{{< notice note "Important" >}}\nThis is a note\n{{< /notice >}}',
+      '{{< callout note "Important" >}}\nThis is a note\n{{< /callout >}}',
     );
   });
 
@@ -390,7 +390,7 @@ describe("Callout conversion", () => {
       "test.md",
     );
     expect(result.content).toContain(
-      "{{< notice warning >}}\nBe careful\n{{< /notice >}}",
+      "{{< callout warning >}}\nBe careful\n{{< /callout >}}",
     );
   });
 
@@ -403,7 +403,7 @@ describe("Callout conversion", () => {
       "test.md",
     );
     expect(result.content).toContain(
-      '{{< notice tip "Hint" >}}\nLine one\nLine two\nLine three\n{{< /notice >}}',
+      '{{< callout tip "Hint" >}}\nLine one\nLine two\nLine three\n{{< /callout >}}',
     );
   });
 
@@ -441,7 +441,7 @@ describe("Callout conversion", () => {
         wrap("title: Test\nstatus: publish", `> [!${obsidian}]\n> content`),
         "test.md",
       );
-      expect(result.content).toContain(`{{< notice ${hugo} >}}`);
+      expect(result.content).toContain(`{{< callout ${hugo} >}}`);
     }
   });
 
@@ -450,13 +450,13 @@ describe("Callout conversion", () => {
       wrap("title: Test\nstatus: publish", "> [!note]+ Title\n> Content"),
       "test.md",
     );
-    expect(result.content).toContain('{{< notice note "Title" >}}');
+    expect(result.content).toContain('{{< callout note "Title" >}}');
 
     const result2 = cp.process(
       wrap("title: Test\nstatus: publish", "> [!note]- Title\n> Content"),
       "test.md",
     );
-    expect(result2.content).toContain('{{< notice note "Title" >}}');
+    expect(result2.content).toContain('{{< callout note "Title" >}}');
   });
 
   test("defaults unknown callout type to note", () => {
@@ -464,7 +464,7 @@ describe("Callout conversion", () => {
       wrap("title: Test\nstatus: publish", "> [!custom]\n> Content"),
       "test.md",
     );
-    expect(result.content).toContain("{{< notice note >}}");
+    expect(result.content).toContain("{{< callout note >}}");
   });
 
   test("handles callout type case-insensitively", () => {
@@ -472,7 +472,7 @@ describe("Callout conversion", () => {
       wrap("title: Test\nstatus: publish", "> [!WARNING]\n> Content"),
       "test.md",
     );
-    expect(result.content).toContain("{{< notice warning >}}");
+    expect(result.content).toContain("{{< callout warning >}}");
   });
 
   test("leaves regular blockquotes untouched", () => {
@@ -481,7 +481,7 @@ describe("Callout conversion", () => {
       "test.md",
     );
     expect(result.content).toContain("> Just a regular quote");
-    expect(result.content).not.toContain("notice");
+    expect(result.content).not.toContain("callout");
   });
 });
 
@@ -534,6 +534,37 @@ describe("Mermaid conversion", () => {
     expect(result.content).toContain(
       "{{< mermaid >}}\ngraph LR; X-->Y\n{{< /mermaid >}}",
     );
+  });
+
+  test("emits configured callout shortcode name", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      calloutShortcodeName: "notice",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+> [!note] Heads up
+> body`,
+      "x.md",
+    );
+    expect(result.content).toContain("{{< notice note");
+    expect(result.content).toContain("{{< /notice >}}");
+  });
+
+  test("emits configured mermaid shortcode name", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      mermaidShortcodeName: "diagram",
+    });
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n```mermaid\nflowchart TD\nA --> B\n```",
+      "x.md",
+    );
+    expect(result.content).toContain("{{< diagram >}}");
+    expect(result.content).toContain("{{< /diagram >}}");
   });
 });
 
