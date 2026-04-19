@@ -10,6 +10,7 @@ import {
 } from "obsidian";
 import { GitHubService } from "./github-service";
 import type ObsidianPublisher from "./main";
+import { REQUIRED_FRONTMATTER_FIELDS } from "./schema";
 import { errorMessage, type PublisherSettings } from "./types";
 
 export function sanitizeGitHubOwner(value: string): string {
@@ -52,10 +53,16 @@ export function serializeFrontmatter(
 }
 
 export function parseStrippedFieldsInput(value: string): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
   return value
     .split(",")
     .map((f) => f.trim())
-    .filter((f) => f.length > 0);
+    .filter((f) => f.length > 0 && !required.has(f));
+}
+
+export function requiredFieldsIn(fields: string[]): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+  return [...new Set(fields.filter((f) => required.has(f)))];
 }
 
 export function parseFrontmatter(text: string): Record<string, unknown> {
@@ -248,7 +255,17 @@ export class PublisherSettingTab extends PluginSettingTab {
         .setPlaceholder("status, lastmod, cssclasses")
         .setValue(settings.strippedFrontmatterFields.join(", "))
         .onChange((value) => {
+          const raw = value
+            .split(",")
+            .map((f) => f.trim())
+            .filter((f) => f.length > 0);
+          const blocked = requiredFieldsIn(raw);
           settings.strippedFrontmatterFields = parseStrippedFieldsInput(value);
+          if (blocked.length > 0) {
+            new Notice(
+              `Cannot strip required frontmatter field${blocked.length > 1 ? "s" : ""}: ${blocked.join(", ")}. Required for publishing; ignored.`,
+            );
+          }
           save();
         });
       text.inputEl.rows = 3;

@@ -5,6 +5,7 @@ import {
   PublisherSettingTab,
   parseFrontmatter,
   parseStrippedFieldsInput,
+  requiredFieldsIn,
   sanitizeGitHubOwner,
   sanitizePath,
   sanitizeRepoName,
@@ -172,6 +173,40 @@ describe("parseStrippedFieldsInput", () => {
 
   test("returns empty array for whitespace-only input", () => {
     expect(parseStrippedFieldsInput("   ,  ,   ")).toEqual([]);
+  });
+
+  test("filters out required frontmatter fields (title, date)", () => {
+    expect(
+      parseStrippedFieldsInput("status, date, lastmod, title, cssclass"),
+    ).toEqual(["status", "lastmod", "cssclass"]);
+  });
+
+  test("returns empty array when only required fields are given", () => {
+    expect(parseStrippedFieldsInput("title, date")).toEqual([]);
+  });
+});
+
+describe("requiredFieldsIn", () => {
+  test("returns required fields present in input", () => {
+    expect(requiredFieldsIn(["status", "date", "lastmod"])).toEqual(["date"]);
+  });
+
+  test("returns both title and date when present", () => {
+    expect(requiredFieldsIn(["title", "status", "date"])).toEqual([
+      "title",
+      "date",
+    ]);
+  });
+
+  test("returns empty array when no required fields present", () => {
+    expect(requiredFieldsIn(["status", "lastmod"])).toEqual([]);
+  });
+
+  test("dedupes repeated required fields", () => {
+    expect(requiredFieldsIn(["date", "date", "title"])).toEqual([
+      "date",
+      "title",
+    ]);
   });
 });
 

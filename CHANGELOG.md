@@ -5,6 +5,7 @@
 ### Fixed
 
 - Dead-code cleanup: removed an unreachable `new Date()` fallback in `ContentProcessor.processFrontmatter`. No user-visible behavior change — `validateFrontmatter` has been rejecting notes with missing `date` upstream in every publish path since 1.4.0. The 1.4.0 entry below announced this removal; the actual deletion was missed at the time. This reconciles the CHANGELOG with the code (#167).
+- `strippedFrontmatterFields` can no longer include required frontmatter fields (`title`, `date`). Required fields are filtered at both persistence boundaries (`parseSettings` on load, `parseStrippedFieldsInput` on UI save), and the settings UI surfaces a Notice when a required field is typed into the list. This prevents a misconfiguration where stripping `date` or `title` would produce invalid Hugo frontmatter — previously masked by the `new Date()` fallback, and now surfaced since that fallback is gone (#190).
 
 ## 1.5.0
 

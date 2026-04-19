@@ -186,3 +186,28 @@ describe("strippedFrontmatterFields migration", () => {
     expect(result.strippedFrontmatterFields).toContain("lastmod");
   });
 });
+
+describe("strippedFrontmatterFields guards required fields", () => {
+  test("filters title and date from persisted list", () => {
+    const result = parseSettings({
+      strippedFrontmatterFields: ["status", "date", "title", "lastmod"],
+    });
+    expect(result.strippedFrontmatterFields).toEqual(["status", "lastmod"]);
+  });
+
+  test("keeps non-required entries intact", () => {
+    const result = parseSettings({
+      strippedFrontmatterFields: ["status", "cssclasses"],
+    });
+    expect(result.strippedFrontmatterFields).toEqual(["status", "cssclasses"]);
+  });
+
+  test("filters required fields from legacy removePublishFlag migration", () => {
+    // Hypothetical: if a future default-list change included a required
+    // field, the migration path must still filter it. Regression guard for
+    // the branch that builds from defaults rather than the persisted array.
+    const result = parseSettings({ removePublishFlag: false });
+    expect(result.strippedFrontmatterFields).not.toContain("date");
+    expect(result.strippedFrontmatterFields).not.toContain("title");
+  });
+});
