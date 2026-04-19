@@ -200,18 +200,47 @@ describe("Frontmatter processing", () => {
     expect(result.frontmatter.date).toBe("2026-01-01");
   });
 
-  test("removes status field when removePublishFlag is true", () => {
-    const cp = makeProcessor({ removePublishFlag: true });
-    const result = cp.process(
-      wrap("title: Test\nstatus: publish", "body"),
-      "test.md",
+  test("strips every field in strippedFrontmatterFields", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      strippedFrontmatterFields: ["status", "lastmod", "cssclasses"],
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+status: publish
+lastmod: 2026-01-02
+cssclasses: [foo, bar]
+---
+body`,
+      "x.md",
     );
-    expect(result.frontmatter.status).toBeUndefined();
-    expect("status" in result.frontmatter).toBe(false);
+    expect(result.frontmatter).not.toHaveProperty("status");
+    expect(result.frontmatter).not.toHaveProperty("lastmod");
+    expect(result.frontmatter).not.toHaveProperty("cssclasses");
+    expect(result.frontmatter.title).toBe("X");
   });
 
-  test("keeps status field when removePublishFlag is false", () => {
-    const cp = makeProcessor({ removePublishFlag: false });
+  test("does not strip fields absent from strippedFrontmatterFields", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      strippedFrontmatterFields: ["status"],
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+lastmod: 2026-01-02
+---
+body`,
+      "x.md",
+    );
+    expect(result.frontmatter.lastmod).toBe("2026-01-02");
+  });
+
+  test("keeps status field when not in strippedFrontmatterFields", () => {
+    const cp = makeProcessor({ strippedFrontmatterFields: [] });
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "body"),
       "test.md",
@@ -510,7 +539,7 @@ describe("Mermaid conversion", () => {
 
 describe("Full process pipeline", () => {
   test("transforms complete note", () => {
-    const cp = makeProcessor({ removePublishFlag: true });
+    const cp = makeProcessor({ strippedFrontmatterFields: ["status"] });
     const input = wrap(
       "title: My Post\nstatus: publish",
       "Hello [[World]]!\n\n![[screenshot.png]]\n",

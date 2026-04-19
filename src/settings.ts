@@ -202,15 +202,26 @@ export class PublisherSettingTab extends PluginSettingTab {
       },
     });
 
-    new Setting(containerEl)
-      .setName("Remove 'status' field")
-      .setDesc("Remove 'status: publish' from frontmatter when publishing")
-      .addToggle((toggle) =>
-        toggle.setValue(settings.removePublishFlag).onChange((value) => {
-          settings.removePublishFlag = value;
-          this.plugin.saveSettings();
-        }),
-      );
+    containerEl.createEl("h3", { text: "Frontmatter Field Stripping" });
+    containerEl.createEl("p", {
+      text: "Comma-separated list of frontmatter fields to remove when publishing. Default: status, lastmod, cssclass, cssclasses, aliases, position, created, modified.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl).addTextArea((text) => {
+      text
+        .setPlaceholder("status, lastmod, cssclasses")
+        .setValue(settings.strippedFrontmatterFields.join(", "))
+        .onChange((value) => {
+          settings.strippedFrontmatterFields = value
+            .split(",")
+            .map((f) => f.trim())
+            .filter((f) => f.length > 0);
+          save();
+        });
+      text.inputEl.rows = 3;
+      text.inputEl.cols = 50;
+    });
 
     containerEl.createEl("h3", { text: "Additional Frontmatter" });
     containerEl.createEl("p", {
