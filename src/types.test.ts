@@ -152,6 +152,25 @@ describe("parseSettings", () => {
     expect(result.calloutShortcodeName).toBe("callout");
     expect(result.mermaidShortcodeName).toBe("mermaid");
   });
+
+  test("parseSettings rejects shortcode name with invalid characters", () => {
+    const result = parseSettings({ calloutShortcodeName: "my bad name" });
+    expect(result.calloutShortcodeName).toBe("callout");
+  });
+
+  test("parseSettings rejects shortcode name with template delimiters", () => {
+    const result = parseSettings({ mermaidShortcodeName: "foo{{<bar" });
+    expect(result.mermaidShortcodeName).toBe("mermaid");
+  });
+
+  test("parseSettings accepts valid shortcode name with hyphens and underscores", () => {
+    const result = parseSettings({
+      calloutShortcodeName: "my_custom-callout",
+      mermaidShortcodeName: "some-diagram_v2",
+    });
+    expect(result.calloutShortcodeName).toBe("my_custom-callout");
+    expect(result.mermaidShortcodeName).toBe("some-diagram_v2");
+  });
 });
 
 describe("strippedFrontmatterFields migration", () => {

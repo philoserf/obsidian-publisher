@@ -8,6 +8,7 @@ import {
   sanitizeGitHubOwner,
   sanitizePath,
   sanitizeRepoName,
+  sanitizeShortcodeName,
   serializeFrontmatter,
   validateConnectionSettings,
 } from "./settings";
@@ -88,6 +89,24 @@ describe("sanitizePath", () => {
 
   test("trims whitespace", () => {
     expect(sanitizePath("  content/posts  ")).toBe("content/posts");
+  });
+});
+
+describe("sanitizeShortcodeName", () => {
+  test("strips spaces", () => {
+    expect(sanitizeShortcodeName("my bad name")).toBe("mybadname");
+  });
+
+  test("strips template delimiters and special chars", () => {
+    expect(sanitizeShortcodeName("foo{{<bar>}}")).toBe("foobar");
+  });
+
+  test("preserves hyphens and underscores", () => {
+    expect(sanitizeShortcodeName("my_custom-name")).toBe("my_custom-name");
+  });
+
+  test("returns empty string when input is all invalid chars", () => {
+    expect(sanitizeShortcodeName(" !@#$ ")).toBe("");
   });
 });
 
