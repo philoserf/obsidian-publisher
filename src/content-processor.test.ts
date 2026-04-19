@@ -227,6 +227,105 @@ See [[Other]].`,
     );
     expect(result.content).toContain("[Other](/other/)");
   });
+
+  test("normalizes trailing slash in contentDir", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "content/posts/",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+[[Other]]`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/posts/other/)");
+    expect(result.content).not.toContain("//");
+  });
+
+  test("normalizes leading slash in contentDir", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "/content/posts",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+[[Other]]`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/posts/other/)");
+    expect(result.content).not.toContain("//");
+  });
+
+  test("accepts bare directory without content/ prefix", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "posts",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+[[Other]]`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/posts/other/)");
+  });
+
+  test("strips apostrophes from heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other#What's next?]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain(
+      "[Other#What's next?](/posts/other/#whats-next)",
+    );
+  });
+
+  test("strips parentheses and commas from heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other#Setup (advanced, v2)]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain(
+      "[Other#Setup (advanced, v2)](/posts/other/#setup-advanced-v2)",
+    );
+  });
+
+  test("collapses consecutive hyphens and trims edge hyphens in heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other#  Multi   Word!  ]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("](/posts/other/#multi-word)");
+  });
 });
 
 describe("Image reference conversion", () => {
