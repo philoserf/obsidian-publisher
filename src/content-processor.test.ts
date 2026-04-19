@@ -407,41 +407,42 @@ describe("Callout conversion", () => {
     );
   });
 
-  test("maps Obsidian callout aliases to the seven notice types", () => {
-    const cases: [string, string][] = [
-      ["abstract", "note"],
-      ["summary", "note"],
-      ["tldr", "note"],
-      ["info", "info"],
-      ["todo", "info"],
-      ["tip", "tip"],
-      ["hint", "tip"],
-      ["important", "tip"],
-      ["success", "tip"],
-      ["check", "tip"],
-      ["done", "tip"],
-      ["question", "question"],
-      ["help", "question"],
-      ["faq", "question"],
-      ["warning", "warning"],
-      ["caution", "warning"],
-      ["attention", "warning"],
-      ["failure", "error"],
-      ["fail", "error"],
-      ["missing", "error"],
-      ["danger", "error"],
-      ["error", "error"],
-      ["bug", "error"],
-      ["example", "example"],
-      ["quote", "note"],
-      ["cite", "note"],
+  test("passes every known Obsidian callout type through verbatim", () => {
+    const types = [
+      "note",
+      "abstract",
+      "summary",
+      "tldr",
+      "info",
+      "todo",
+      "tip",
+      "hint",
+      "important",
+      "success",
+      "check",
+      "done",
+      "question",
+      "help",
+      "faq",
+      "warning",
+      "caution",
+      "attention",
+      "failure",
+      "fail",
+      "missing",
+      "danger",
+      "error",
+      "bug",
+      "example",
+      "quote",
+      "cite",
     ];
-    for (const [obsidian, hugo] of cases) {
+    for (const type of types) {
       const result = cp.process(
-        wrap("title: Test\nstatus: publish", `> [!${obsidian}]\n> content`),
+        wrap("title: Test\nstatus: publish", `> [!${type}]\n> content`),
         "test.md",
       );
-      expect(result.content).toContain(`{{< callout ${hugo} >}}`);
+      expect(result.content).toContain(`{{< callout ${type} >}}`);
     }
   });
 
@@ -459,12 +460,12 @@ describe("Callout conversion", () => {
     expect(result2.content).toContain('{{< callout note "Title" >}}');
   });
 
-  test("defaults unknown callout type to note", () => {
+  test("passes custom callout type through verbatim", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "> [!custom]\n> Content"),
       "test.md",
     );
-    expect(result.content).toContain("{{< callout note >}}");
+    expect(result.content).toContain("{{< callout custom >}}");
   });
 
   test("handles callout type case-insensitively", () => {
@@ -500,6 +501,42 @@ date: 2026-01-01
     );
     expect(result.content).toContain("{{< notice note");
     expect(result.content).toContain("{{< /notice >}}");
+  });
+
+  test("passes unknown callout types through verbatim", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+> [!tldr] Quick
+> summary
+
+> [!danger]
+> watch out
+
+> [!bug]
+> it broke`,
+      "x.md",
+    );
+    expect(result.content).toContain("{{< callout tldr");
+    expect(result.content).toContain("{{< callout danger >}}");
+    expect(result.content).toContain("{{< callout bug >}}");
+  });
+
+  test("lowercases the type but preserves it", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+> [!WARNING]
+> x`,
+      "x.md",
+    );
+    expect(result.content).toContain("{{< callout warning >}}");
   });
 });
 

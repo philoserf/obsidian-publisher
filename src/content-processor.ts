@@ -127,49 +127,20 @@ export class ContentProcessor {
     return content.replace(/==((?!=).+?)==/g, "<mark>$1</mark>");
   }
 
-  private static readonly CALLOUT_TYPE_MAP: Record<string, string> = {
-    note: "note",
-    abstract: "note",
-    summary: "note",
-    tldr: "note",
-    info: "info",
-    todo: "info",
-    tip: "tip",
-    hint: "tip",
-    important: "tip",
-    success: "tip",
-    check: "tip",
-    done: "tip",
-    question: "question",
-    help: "question",
-    faq: "question",
-    warning: "warning",
-    caution: "warning",
-    attention: "warning",
-    failure: "error",
-    fail: "error",
-    missing: "error",
-    danger: "error",
-    error: "error",
-    bug: "error",
-    example: "example",
-    quote: "note",
-    cite: "note",
-  };
-
   /**
-   * Convert Obsidian callouts to notice shortcodes
+   * Convert Obsidian callouts to configured shortcode tags, passing the
+   * Obsidian type through verbatim (lowercased). The site-side shortcode
+   * template handles per-type styling (shipped in hugo-shortcodes/).
    */
   private convertCallouts(content: string): string {
     const name = this.settings.calloutShortcodeName;
     return content.replace(
       /^> \[!([\w-]+)\][-+]?(?: (.+))?\n((?:^> .*(?:\n|$))*)/gm,
       (_match, type: string, title: string | undefined, body: string) => {
-        const noticeType =
-          ContentProcessor.CALLOUT_TYPE_MAP[type.toLowerCase()] ?? "note";
+        const calloutType = type.toLowerCase();
         const cleanBody = body.replace(/^> ?/gm, "").trim();
         const titleAttr = title ? ` "${title}"` : "";
-        return `{{< ${name} ${noticeType}${titleAttr} >}}\n${cleanBody}\n{{< /${name} >}}`;
+        return `{{< ${name} ${calloutType}${titleAttr} >}}\n${cleanBody}\n{{< /${name} >}}`;
       },
     );
   }
