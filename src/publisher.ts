@@ -110,6 +110,18 @@ export class Publisher {
     return map;
   }
 
+  /**
+   * Build the set of slugs being published in this run. Links to notes
+   * outside this set degrade to plain text during content processing.
+   */
+  private buildPublishSet(files: Array<{ file: TFile }>): Set<string> {
+    const set = new Set<string>();
+    for (const { file } of files) {
+      set.add(this.contentProcessor.sanitizeSlug(file.basename));
+    }
+    return set;
+  }
+
   private async resolveImages(
     imageNames: string[],
     filesByBasename: Map<string, TFile[]>,
@@ -441,10 +453,14 @@ export class Publisher {
         }
       }
 
+      const publishSet = new Set([
+        this.contentProcessor.sanitizeSlug(file.basename),
+      ]);
       const processed = this.contentProcessor.processFromSplit(
         frontmatter,
         body,
         file.name,
+        publishSet,
       );
       const targetBranch = branch ?? this.baseBranch;
 
@@ -524,6 +540,7 @@ export class Publisher {
     const results: PublishResult[] = [];
     const entryMap = new Map<string, string | ArrayBuffer>();
     const filesByBasename = this.buildFilesByBasename();
+    const publishSet = this.buildPublishSet(files);
 
     for (const { file, frontmatter, body } of files) {
       try {
@@ -535,6 +552,7 @@ export class Publisher {
             frontmatter,
             body,
             file.name,
+            publishSet,
           );
 
           const targetPath = `${this.settings.contentDir}/${processed.filename}`;

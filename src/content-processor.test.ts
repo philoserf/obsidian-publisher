@@ -16,57 +16,216 @@ function wrap(frontmatter: string, body: string): string {
 describe("Wikilink conversion", () => {
   const cp = makeProcessor();
 
-  test("converts simple wikilink to Hugo ref shortcode", () => {
+  test("converts simple wikilink to /posts/slug/ URL when in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "See [[Page Name]] here"),
       "test.md",
+      new Set(["page-name"]),
     );
-    expect(result.content).toContain('[Page Name]({{< ref "page-name" >}})');
+    expect(result.content).toContain("[Page Name](/posts/page-name/)");
   });
 
-  test("converts wikilink with display text", () => {
+  test("converts wikilink with display text when in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "See [[Page|Custom Text]] here"),
       "test.md",
+      new Set(["page"]),
     );
-    expect(result.content).toContain('[Custom Text]({{< ref "page" >}})');
+    expect(result.content).toContain("[Custom Text](/posts/page/)");
   });
 
-  test("sanitizes wikilink target", () => {
+  test("sanitizes wikilink target when in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "[[My Cool Page]]"),
       "test.md",
+      new Set(["my-cool-page"]),
     );
-    expect(result.content).toContain(
-      '[My Cool Page]({{< ref "my-cool-page" >}})',
-    );
+    expect(result.content).toContain("[My Cool Page](/posts/my-cool-page/)");
   });
 
-  test("handles multiple wikilinks", () => {
+  test("handles multiple wikilinks when all in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "[[One]] and [[Two]]"),
       "test.md",
+      new Set(["one", "two"]),
     );
-    expect(result.content).toContain('[One]({{< ref "one" >}})');
-    expect(result.content).toContain('[Two]({{< ref "two" >}})');
+    expect(result.content).toContain("[One](/posts/one/)");
+    expect(result.content).toContain("[Two](/posts/two/)");
   });
 
-  test("handles heading anchors", () => {
+  test("handles heading anchors when in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "[[Page#My Heading]]"),
       "test.md",
+      new Set(["page"]),
     );
     expect(result.content).toContain(
-      '[Page#My Heading]({{< ref "page#my-heading" >}})',
+      "[Page#My Heading](/posts/page/#my-heading)",
     );
   });
 
-  test("handles heading anchors with display text", () => {
+  test("handles heading anchors with display text when in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "[[Page#Section|see this]]"),
       "test.md",
+      new Set(["page"]),
     );
-    expect(result.content).toContain('[see this]({{< ref "page#section" >}})');
+    expect(result.content).toContain("[see this](/posts/page/#section)");
+  });
+});
+
+describe("wikilink publish-set gating", () => {
+  test("in-set link emits /posts/slug/ URL", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other Note]] for details.`,
+      "x.md",
+      new Set(["other-note"]),
+    );
+    expect(result.content).toContain("[Other Note](/posts/other-note/)");
+  });
+
+  test("in-set link with display text", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other Note|the other one]].`,
+      "x.md",
+      new Set(["other-note"]),
+    );
+    expect(result.content).toContain("[the other one](/posts/other-note/)");
+  });
+
+  test("in-set link with heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other Note#Some Heading]].`,
+      "x.md",
+      new Set(["other-note"]),
+    );
+    expect(result.content).toContain(
+      "[Other Note#Some Heading](/posts/other-note/#some-heading)",
+    );
+  });
+
+  test("out-of-set link degrades to plain text", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Unpublished Note]] sometime.`,
+      "x.md",
+      new Set([]),
+    );
+    expect(result.content).toContain("See Unpublished Note sometime.");
+    expect(result.content).not.toContain("[[");
+    expect(result.content).not.toContain("](");
+  });
+
+  test("out-of-set link with display uses display text", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Unpublished|my draft]].`,
+      "x.md",
+      new Set([]),
+    );
+    expect(result.content).toContain("See my draft");
+    expect(result.content).not.toContain("[[");
+  });
+
+  test("note embed in-set uses link", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+![[Other Note]]`,
+      "x.md",
+      new Set(["other-note"]),
+    );
+    expect(result.content).toContain("[Other Note](/posts/other-note/)");
+  });
+
+  test("note embed out-of-set degrades to plain text", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+![[Unpublished]]`,
+      "x.md",
+      new Set([]),
+    );
+    expect(result.content).toContain("Unpublished");
+    expect(result.content).not.toContain("![[");
+    expect(result.content).not.toContain("](");
+  });
+
+  test("when publishSet omitted, defaults to empty (all out-of-set)", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other]].`,
+      "x.md",
+    );
+    expect(result.content).toContain("See Other");
+    expect(result.content).not.toContain("[[");
+  });
+
+  test("URL prefix derives from contentDir (content/blog -> /blog/)", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "content/blog",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/blog/other/)");
+  });
+
+  test("URL prefix derives from contentDir (content -> /)", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "content",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/other/)");
   });
 });
 
@@ -245,14 +404,13 @@ describe("image alt text", () => {
 describe("Note embed conversion", () => {
   const cp = makeProcessor();
 
-  test("converts note embed to ref link", () => {
+  test("converts note embed to /posts/slug/ link when in publish set", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "![[My Other Post]]"),
       "test.md",
+      new Set(["my-other-post"]),
     );
-    expect(result.content).toContain(
-      '[My Other Post]({{< ref "my-other-post" >}})',
-    );
+    expect(result.content).toContain("[My Other Post](/posts/my-other-post/)");
   });
 
   test("does not treat image embeds as note embeds", () => {
@@ -726,10 +884,10 @@ describe("Full process pipeline", () => {
       "title: My Post\nstatus: publish",
       "Hello [[World]]!\n\n![[screenshot.png]]\n",
     );
-    const result = cp.process(input, "My Post.md");
+    const result = cp.process(input, "My Post.md", new Set(["world"]));
 
     expect(result.filename).toBe("my-post.md");
-    expect(result.content).toContain('[World]({{< ref "world" >}})');
+    expect(result.content).toContain("[World](/posts/world/)");
     expect(result.content).toContain(
       "![screenshot.png](/images/screenshot.png)",
     );

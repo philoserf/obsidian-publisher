@@ -12,11 +12,22 @@ export class ContentProcessor {
   }
 
   /**
-   * Process a markdown file for Hugo publishing
+   * Process a markdown file for Hugo publishing.
+   * `publishSet` contains slugs of notes being published in this run;
+   * wikilinks targeting slugs outside the set degrade to plain text.
    */
-  process(content: string, originalFilename: string): ProcessedContent {
+  process(
+    content: string,
+    originalFilename: string,
+    publishSet: Set<string> = new Set(),
+  ): ProcessedContent {
     const { frontmatter, body } = splitFrontmatter(content);
-    return this.processFromSplit(frontmatter, body, originalFilename);
+    return this.processFromSplit(
+      frontmatter,
+      body,
+      originalFilename,
+      publishSet,
+    );
   }
 
   /**
@@ -27,6 +38,7 @@ export class ContentProcessor {
     frontmatter: Frontmatter,
     body: string,
     originalFilename: string,
+    publishSet: Set<string> = new Set(),
   ): ProcessedContent {
     const processedFrontmatter = this.processFrontmatter(frontmatter);
     const images = this.extractImages(body);
@@ -37,8 +49,8 @@ export class ContentProcessor {
     processedBody = this.convertCallouts(processedBody);
     processedBody = this.convertMermaid(processedBody);
     processedBody = this.convertImageReferences(processedBody);
-    processedBody = this.convertNoteEmbeds(processedBody);
-    processedBody = this.convertWikilinks(processedBody);
+    processedBody = this.convertNoteEmbeds(processedBody, publishSet);
+    processedBody = this.convertWikilinks(processedBody, publishSet);
 
     const processedContent = this.assembleFrontmatter(
       processedFrontmatter,
@@ -111,6 +123,16 @@ export class ContentProcessor {
    */
   private imageUrlPath(): string {
     return `/${this.settings.imageDir.replace(/^static\/?/, "")}`;
+  }
+
+  /**
+   * Derive the URL prefix for wikilinks from the contentDir setting.
+   * Strips leading "content/" so "content/posts" -> "/posts/",
+   * "content" -> "/", "content/blog" -> "/blog/".
+   */
+  private postsUrlPath(): string {
+    const dir = this.settings.contentDir.replace(/^content\/?/, "");
+    return dir ? `/${dir}/` : "/";
   }
 
   /**
@@ -205,28 +227,33 @@ export class ContentProcessor {
   }
 
   /**
-   * Convert Obsidian wikilinks to Hugo ref shortcodes
+   * Convert Obsidian wikilinks to markdown links when the target slug is
+   * in the publish set; otherwise degrade to plain display text.
    * Handles: [[Page]], [[Page|Display]], [[Page#Heading]], [[Page#Heading|Display]]
    */
-  private convertWikilinks(content: string): string {
+  private convertWikilinks(content: string, publishSet: Set<string>): string {
+    const urlPath = this.postsUrlPath();
     return content.replace(
       /\[\[([^\]|#]+)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
       (_match, page, _hashGroup, heading, _pipeGroup, displayText) => {
         const display = displayText || (heading ? `${page}#${heading}` : page);
         const slug = this.sanitizeSlug(page);
+        if (!publishSet.has(slug)) return display;
         const fragment = heading
           ? `#${heading.toLowerCase().replace(/\s+/g, "-")}`
           : "";
-        return `[${display}]({{< ref "${slug}${fragment}" >}})`;
+        return `[${display}](${urlPath}${slug}/${fragment})`;
       },
     );
   }
 
   /**
-   * Convert note embeds (![[Note Name]]) to Hugo ref links.
-   * Only matches embeds that are NOT image files.
+   * Convert note embeds (![[Note Name]]) to markdown links when the
+   * target slug is in the publish set; otherwise degrade to plain
+   * display text. Image embeds are left alone for convertImageReferences.
    */
-  private convertNoteEmbeds(content: string): string {
+  private convertNoteEmbeds(content: string, publishSet: Set<string>): string {
+    const urlPath = this.postsUrlPath();
     return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
       const nameForCheck = this.stripImageSize(raw);
       if (IMAGE_EXTENSIONS.test(nameForCheck)) {
@@ -236,7 +263,8 @@ export class ContentProcessor {
       const [name, displayText] = raw.split("|");
       const display = displayText ?? name;
       const slug = this.sanitizeSlug(name);
-      return `[${display}]({{< ref "${slug}" >}})`;
+      if (!publishSet.has(slug)) return display;
+      return `[${display}](${urlPath}${slug}/)`;
     });
   }
 
@@ -275,9 +303,10 @@ export class ContentProcessor {
   }
 
   /**
-   * Sanitize a page name into a slug (no extension)
+   * Sanitize a page name into a slug (no extension).
+   * Public so the Publisher can compute slugs when building its publish set.
    */
-  private sanitizeSlug(page: string): string {
+  sanitizeSlug(page: string): string {
     return this.sanitizeName(page);
   }
 
