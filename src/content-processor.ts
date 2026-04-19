@@ -177,8 +177,10 @@ export class ContentProcessor {
 
     const SIZE = /^\d+(x\d+)?$/;
     const rest = parts.slice(1);
-    // Drop trailing bare-size segments
-    while (rest.length > 0 && SIZE.test(rest[rest.length - 1])) rest.pop();
+    // Drop trailing bare-size segments (tolerate incidental whitespace)
+    while (rest.length > 0 && SIZE.test(rest[rest.length - 1].trim())) {
+      rest.pop();
+    }
     if (rest.length === 0) return { name };
     return { name, alt: rest.join("|") };
   }
@@ -250,7 +252,8 @@ export class ContentProcessor {
         return _match; // not an image — leave for convertNoteEmbeds
       }
       const sanitizedName = this.sanitizeFilename(name);
-      const altText = alt ?? name;
+      const normalizedAlt = alt?.trim();
+      const altText = normalizedAlt ? normalizedAlt : name;
       return `![${altText}](${urlPath}/${sanitizedName})`;
     });
   }

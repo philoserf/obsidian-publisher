@@ -200,6 +200,46 @@ describe("image alt text", () => {
     );
     expect(result.content).toContain("![alt](/images/img.png)");
   });
+
+  test("trims incidental whitespace around bare size", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|300 ]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![img.png](/images/img.png)");
+  });
+
+  test("trims whitespace around WxH size", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|alt| 300x200 ]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![alt](/images/img.png)");
+  });
+
+  test("empty alt falls back to filename", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![img.png](/images/img.png)");
+  });
+
+  test("whitespace-only alt falls back to filename", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|   ]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![img.png](/images/img.png)");
+  });
+
+  test("trims leading and trailing whitespace from alt", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|  nice photo  ]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![nice photo](/images/img.png)");
+  });
 });
 
 describe("Note embed conversion", () => {
