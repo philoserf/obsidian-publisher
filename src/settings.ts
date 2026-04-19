@@ -34,6 +34,10 @@ export function sanitizePath(value: string): string {
     .replace(/^\/+|\/+$/g, "");
 }
 
+export function sanitizeShortcodeName(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
 export function serializeFrontmatter(
   template: Record<string, unknown>,
 ): string {
@@ -215,7 +219,8 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: "callout",
       getValue: () => settings.calloutShortcodeName,
       onChange: (value) => {
-        settings.calloutShortcodeName = value.trim() || "callout";
+        settings.calloutShortcodeName =
+          sanitizeShortcodeName(value) || "callout";
         save();
       },
     });
@@ -226,7 +231,8 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: "mermaid",
       getValue: () => settings.mermaidShortcodeName,
       onChange: (value) => {
-        settings.mermaidShortcodeName = value.trim() || "mermaid";
+        settings.mermaidShortcodeName =
+          sanitizeShortcodeName(value) || "mermaid";
         save();
       },
     });

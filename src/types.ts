@@ -187,11 +187,13 @@ export function parseSettings(data: unknown): PublisherSettings {
         ? d.usePullRequests
         : DEFAULT_SETTINGS.usePullRequests,
     calloutShortcodeName:
-      typeof d.calloutShortcodeName === "string"
+      typeof d.calloutShortcodeName === "string" &&
+      /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)
         ? d.calloutShortcodeName
         : DEFAULT_SETTINGS.calloutShortcodeName,
     mermaidShortcodeName:
-      typeof d.mermaidShortcodeName === "string"
+      typeof d.mermaidShortcodeName === "string" &&
+      /^[a-zA-Z0-9_-]+$/.test(d.mermaidShortcodeName)
         ? d.mermaidShortcodeName
         : DEFAULT_SETTINGS.mermaidShortcodeName,
   };

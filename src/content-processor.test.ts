@@ -483,6 +483,24 @@ describe("Callout conversion", () => {
     expect(result.content).toContain("> Just a regular quote");
     expect(result.content).not.toContain("callout");
   });
+
+  test("emits configured callout shortcode name", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      calloutShortcodeName: "notice",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+> [!note] Heads up
+> body`,
+      "x.md",
+    );
+    expect(result.content).toContain("{{< notice note");
+    expect(result.content).toContain("{{< /notice >}}");
+  });
 });
 
 describe("Mermaid conversion", () => {
@@ -534,24 +552,6 @@ describe("Mermaid conversion", () => {
     expect(result.content).toContain(
       "{{< mermaid >}}\ngraph LR; X-->Y\n{{< /mermaid >}}",
     );
-  });
-
-  test("emits configured callout shortcode name", () => {
-    const processor = new ContentProcessor({
-      ...DEFAULT_SETTINGS,
-      calloutShortcodeName: "notice",
-    });
-    const result = processor.process(
-      `---
-title: X
-date: 2026-01-01
----
-> [!note] Heads up
-> body`,
-      "x.md",
-    );
-    expect(result.content).toContain("{{< notice note");
-    expect(result.content).toContain("{{< /notice >}}");
   });
 
   test("emits configured mermaid shortcode name", () => {
