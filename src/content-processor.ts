@@ -167,6 +167,23 @@ export class ContentProcessor {
   }
 
   /**
+   * Parse Obsidian's `|alt|size` or `|alt` or `|size` embed suffix.
+   * Returns the display alt (or undefined if only a bare size was given).
+   */
+  private parseImageSuffix(raw: string): { name: string; alt?: string } {
+    const parts = raw.split("|");
+    const name = parts[0];
+    if (parts.length === 1) return { name };
+
+    const SIZE = /^\d+(x\d+)?$/;
+    const rest = parts.slice(1);
+    // Drop trailing bare-size segments
+    while (rest.length > 0 && SIZE.test(rest[rest.length - 1])) rest.pop();
+    if (rest.length === 0) return { name };
+    return { name, alt: rest.join("|") };
+  }
+
+  /**
    * Extract image references from content (only actual images, not note embeds)
    */
   private extractImages(content: string): string[] {
@@ -228,12 +245,13 @@ export class ContentProcessor {
   private convertImageReferences(content: string): string {
     const urlPath = this.imageUrlPath();
     return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const imageName = this.stripImageSize(raw);
-      if (!IMAGE_EXTENSIONS.test(imageName)) {
+      const { name, alt } = this.parseImageSuffix(raw);
+      if (!IMAGE_EXTENSIONS.test(name)) {
         return _match; // not an image — leave for convertNoteEmbeds
       }
-      const sanitizedName = this.sanitizeFilename(imageName);
-      return `![${imageName}](${urlPath}/${sanitizedName})`;
+      const sanitizedName = this.sanitizeFilename(name);
+      const altText = alt ?? name;
+      return `![${altText}](${urlPath}/${sanitizedName})`;
     });
   }
 

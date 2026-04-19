@@ -158,6 +158,50 @@ describe("Image reference conversion", () => {
   });
 });
 
+describe("image alt text", () => {
+  const processor = new ContentProcessor(DEFAULT_SETTINGS);
+
+  test("bare embed uses filename as alt", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![img.png](/images/img.png)");
+  });
+
+  test("pipe with alt text preserves alt", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|alt text]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![alt text](/images/img.png)");
+  });
+
+  test("pipe with bare size discards size, no alt", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|300]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![img.png](/images/img.png)");
+  });
+
+  test("pipe with WxH size discards size, no alt", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|300x200]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![img.png](/images/img.png)");
+  });
+
+  test("alt-then-size form keeps alt, drops size", () => {
+    const result = processor.process(
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|alt|300]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![alt](/images/img.png)");
+  });
+});
+
 describe("Note embed conversion", () => {
   const cp = makeProcessor();
 
