@@ -122,6 +122,30 @@ export class Publisher {
     return set;
   }
 
+  /**
+   * Detect slug collisions before transforming. Returns the first collision
+   * group found, or undefined if all sanitized filenames are unique.
+   */
+  private detectSlugCollision(
+    files: Array<{ file: TFile }>,
+  ): { slug: string; paths: string[] } | undefined {
+    const byFilename = new Map<string, string[]>();
+    for (const { file } of files) {
+      const sanitized = this.contentProcessor.sanitizeFilename(file.name);
+      const paths = byFilename.get(sanitized) ?? [];
+      paths.push(file.path);
+      byFilename.set(sanitized, paths);
+    }
+    for (const [slug, paths] of byFilename) {
+      if (paths.length > 1) return { slug, paths: paths.sort() };
+    }
+    return undefined;
+  }
+
+  private slugCollisionError(c: { slug: string; paths: string[] }): string {
+    return `Slug collision: ${c.paths.join(", ")} all publish as "${c.slug}"`;
+  }
+
   private async resolveImages(
     imageNames: string[],
     filesByBasename: Map<string, TFile[]>,
@@ -183,6 +207,12 @@ export class Publisher {
    */
   async publishAll(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
+    const collision = this.detectSlugCollision(files);
+    if (collision) {
+      return buildBatchResult(readFailures, {
+        error: this.slugCollisionError(collision),
+      });
+    }
     const { results: prepared, fileEntries } = await this.prepareBatch(files);
     let commitError: string | undefined;
 
@@ -278,6 +308,13 @@ export class Publisher {
     if (files.length === 0) {
       return buildBatchResult(readFailures, {
         error: summarizeReadFailures(readFailures),
+      });
+    }
+
+    const collision = this.detectSlugCollision(files);
+    if (collision) {
+      return buildBatchResult(readFailures, {
+        error: this.slugCollisionError(collision),
       });
     }
 

@@ -784,6 +784,74 @@ describe("Publisher.publishAllWithPR", () => {
   });
 });
 
+describe("Publisher slug collision precheck", () => {
+  test("aborts direct-commit batch when two notes slugify to same filename", async () => {
+    const vault = makeVault([
+      {
+        name: "Hello World.md",
+        content: publishedNote,
+        path: "notes/Hello World.md",
+      },
+      {
+        name: "hello world.md",
+        content: publishedNote,
+        path: "other/hello world.md",
+      },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.error).toContain("Slug collision");
+    expect(result.error).toContain("notes/Hello World.md");
+    expect(result.error).toContain("other/hello world.md");
+    expect(result.error).toContain('"hello-world.md"');
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("aborts PR batch when two notes slugify to same filename", async () => {
+    const vault = makeVault([
+      {
+        name: "Hello World.md",
+        content: publishedNote,
+        path: "notes/Hello World.md",
+      },
+      {
+        name: "hello world.md",
+        content: publishedNote,
+        path: "other/hello world.md",
+      },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.error).toContain("Slug collision");
+    expect(result.error).toContain("notes/Hello World.md");
+    expect(result.error).toContain("other/hello world.md");
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+    expect(gh.createPullRequest).not.toHaveBeenCalled();
+  });
+
+  test("no collision → normal publish proceeds", async () => {
+    const vault = makeVault([
+      { name: "alpha.md", content: publishedNote },
+      { name: "beta.md", content: publishedNote },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.error).toBeUndefined();
+    expect(gh.commitFiles).toHaveBeenCalledTimes(1);
+    expect(result.successful).toBe(2);
+  });
+});
+
 describe("Publisher wikilink publish-set gating", () => {
   const sourceLinkingToTarget = `---
 title: Source
