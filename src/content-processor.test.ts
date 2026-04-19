@@ -281,6 +281,40 @@ date: 2026-01-01
     expect(result.content).toContain("[Other](/posts/other/)");
   });
 
+  test("preserves contentDir that starts with 'content' but isn't 'content/'", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "content-posts",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+[[Other]]`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/content-posts/other/)");
+  });
+
+  test("preserves contentDir starting with 'contentful/'", () => {
+    const processor = new ContentProcessor({
+      ...DEFAULT_SETTINGS,
+      contentDir: "contentful/posts",
+    });
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+[[Other]]`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("[Other](/contentful/posts/other/)");
+  });
+
   test("strips apostrophes from heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
     const result = processor.process(

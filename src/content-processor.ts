@@ -135,7 +135,7 @@ export class ContentProcessor {
   private postsUrlPath(): string {
     const dir = this.settings.contentDir
       .replace(/^\/+|\/+$/g, "")
-      .replace(/^content\/?/, "");
+      .replace(/^content(?:\/|$)/, "");
     return dir ? `/${dir}/` : "/";
   }
 
