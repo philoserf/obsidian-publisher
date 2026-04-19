@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.5.0
+
+### Breaking Changes
+
+- **Callout shortcode default renamed** from `notice` to `callout`. Site repos need `hugo-shortcodes/callout.html` (shipped in this release) or override `calloutShortcodeName` setting to `notice` to preserve old behavior (#164, #168).
+- **Callout types pass through verbatim.** The 12→7 collapse map is gone; per-type styling now lives in the shipped `callout.css`, not in code. Themes relying on the old 7 buckets (`note`, `info`, `tip`, `question`, `warning`, `error`, `example`) should adopt the shipped CSS or continue to receive unstyled callouts (#168).
+- **Wikilinks emit plain `/posts/slug/` URLs** instead of `{{< ref >}}` shortcodes. Links to notes not in the current publish set degrade to plain text (using display/alias if given). Sites no longer need build-time ref resolution (#169).
+- **`removePublishFlag` setting retired.** Replaced by `strippedFrontmatterFields: string[]` with a broader default list. Migration: old `true` → default list (includes `status`); old `false` → default list minus `status` (#165).
+
+### Added
+
+- `strippedFrontmatterFields` setting (#165). Default: `status`, `lastmod`, `cssclass`, `cssclasses`, `aliases`, `position`, `created`, `modified`. Configurable via the settings UI.
+- `calloutShortcodeName` setting, default `callout` (#164). Validated against `[a-zA-Z0-9_-]` at persistence and input.
+- `mermaidShortcodeName` setting, default `mermaid` (#164). Same validation.
+- Image embed alt text preserved: `![[img.png|alt text]]` now emits `![alt text](/path/img.png)`. Bare sizes (`|300`, `|300x200`) still discarded cleanly; alt-then-size form (`|alt|300`) keeps alt. Whitespace in size suffixes trimmed; empty alt falls back to filename (#170).
+- Filename collision precheck. Before transforming, if multiple notes sanitize to the same filename, publish aborts with a multi-line error listing every offending group and path. Both direct-commit and PR batch paths guarded; zero GitHub API activity when collision detected. Synthesized per-file failed results ensure the error surfaces to the user instead of being swallowed by main.ts's "No publishable notes found" guard (#166).
+- `hugo-shortcodes/` directory shipped with reference templates: `callout.html`, `callout.css`, `mermaid.html`, `mermaid.js`, and install README (#171). Mermaid CDN pinned to 10.9.1 for reproducibility; mermaid inner content HTML-escaped; callout title supports title-less callouts.
+- Callout title escaping. Titles containing `"` or `\` no longer produce broken Hugo output — pre-existing latent bug fix.
+- Fresh `THEORY.md` documenting the architecture post-composite alignment.
+
+### Changed
+
+- Wikilink resolution requires the target to be in the current publish set. Out-of-set links degrade instead of producing broken refs.
+- `ContentProcessor.process` / `processFromSplit` accept an optional `publishSet: Set<string>`; defaults to empty. Single-file publish seeds the set with the file's own slug so self-links resolve.
+- `ContentProcessor.sanitizeSlug` is now public (needed by `Publisher` to build the publish set).
+- `postsUrlPath` derives the URL prefix from `contentDir`, normalizing edge slashes and using a boundary regex to preserve directories starting with `content` but not equal to or prefixed by `content/`.
+- Heading anchor slugification strips punctuation, collapses hyphens, and trims edges to match Hugo goldmark's default anchor generation.
+
 ## 1.4.1
 
 ### Fixed
