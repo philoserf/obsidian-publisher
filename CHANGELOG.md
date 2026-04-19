@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Removed dead `new Date()` fallback in `ContentProcessor.processFrontmatter` that would have stamped publish-time onto notes missing a `date` field. `validateFrontmatter` already rejects missing `date` upstream in every publish path, so the fallback was unreachable; this deletes it to eliminate confusion about intended semantics (#167).
+- Dead-code cleanup: removed an unreachable `new Date()` fallback in `ContentProcessor.processFrontmatter`. No user-visible behavior change — `validateFrontmatter` has been rejecting notes with missing `date` upstream in every publish path since 1.4.0. The 1.4.0 entry below announced this removal; the actual deletion was missed at the time. This reconciles the CHANGELOG with the code (#167).
 
 ## 1.5.0
 
