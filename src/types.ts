@@ -134,14 +134,11 @@ function resolveStrippedFields(d: Record<string, unknown>): string[] {
   if (isStringArray(d.strippedFrontmatterFields)) {
     return d.strippedFrontmatterFields;
   }
-  if (typeof d.removePublishFlag === "boolean") {
-    return d.removePublishFlag
-      ? [...DEFAULT_SETTINGS.strippedFrontmatterFields]
-      : DEFAULT_SETTINGS.strippedFrontmatterFields.filter(
-          (f) => f !== "status",
-        );
+  const defaults = [...DEFAULT_SETTINGS.strippedFrontmatterFields];
+  if (d.removePublishFlag === false) {
+    return defaults.filter((f) => f !== "status");
   }
-  return [...DEFAULT_SETTINGS.strippedFrontmatterFields];
+  return defaults;
 }
 
 /**

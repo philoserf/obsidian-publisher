@@ -4,6 +4,7 @@ import type ObsidianPublisher from "./main";
 import {
   PublisherSettingTab,
   parseFrontmatter,
+  parseStrippedFieldsInput,
   sanitizeGitHubOwner,
   sanitizePath,
   sanitizeRepoName,
@@ -121,6 +122,37 @@ describe("parseFrontmatter", () => {
     const parsed = parseFrontmatter(serializeFrontmatter(input));
     expect(parsed.author).toBe("Mark");
     expect(parsed.tag).toBe("obsidian");
+  });
+});
+
+describe("parseStrippedFieldsInput", () => {
+  test("parses simple comma-separated list", () => {
+    expect(parseStrippedFieldsInput("status,lastmod,cssclass")).toEqual([
+      "status",
+      "lastmod",
+      "cssclass",
+    ]);
+  });
+
+  test("trims whitespace around each field", () => {
+    expect(
+      parseStrippedFieldsInput(" status , lastmod ,  , cssclass "),
+    ).toEqual(["status", "lastmod", "cssclass"]);
+  });
+
+  test("filters out empty segments from trailing/double commas", () => {
+    expect(parseStrippedFieldsInput("status,,lastmod,")).toEqual([
+      "status",
+      "lastmod",
+    ]);
+  });
+
+  test("returns empty array for empty string", () => {
+    expect(parseStrippedFieldsInput("")).toEqual([]);
+  });
+
+  test("returns empty array for whitespace-only input", () => {
+    expect(parseStrippedFieldsInput("   ,  ,   ")).toEqual([]);
   });
 });
 
