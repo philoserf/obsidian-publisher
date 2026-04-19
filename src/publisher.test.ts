@@ -784,7 +784,7 @@ describe("Publisher.publishAllWithPR", () => {
   });
 });
 
-describe("Publisher slug collision precheck", () => {
+describe("Publisher filename collision precheck", () => {
   test("aborts direct-commit batch when two notes slugify to same filename", async () => {
     const vault = makeVault([
       {
@@ -803,7 +803,7 @@ describe("Publisher slug collision precheck", () => {
 
     const result = await publisher.publishAll();
 
-    expect(result.error).toContain("Slug collision");
+    expect(result.error).toContain("Filename collision");
     expect(result.error).toContain("notes/Hello World.md");
     expect(result.error).toContain("other/hello world.md");
     expect(result.error).toContain('"hello-world.md"');
@@ -828,7 +828,7 @@ describe("Publisher slug collision precheck", () => {
 
     const result = await publisher.publishAllWithPR();
 
-    expect(result.error).toContain("Slug collision");
+    expect(result.error).toContain("Filename collision");
     expect(result.error).toContain("notes/Hello World.md");
     expect(result.error).toContain("other/hello world.md");
     expect(gh.commitFiles).not.toHaveBeenCalled();
@@ -863,7 +863,7 @@ describe("Publisher slug collision precheck", () => {
 
     const result = await publisher.publishAll();
 
-    expect(result.error).toContain("Slug collisions");
+    expect(result.error).toContain("Filename collisions");
     expect(result.error).toContain('"a.md"');
     expect(result.error).toContain('"b.md"');
     expect(result.error).toContain("notes/A.md");
@@ -884,12 +884,72 @@ describe("Publisher slug collision precheck", () => {
 
     const result = await publisher.publishAll();
 
-    expect(result.error).toContain("Slug collision");
+    expect(result.error).toContain("Filename collision");
     expect(result.error).toContain("one/Hello.md");
     expect(result.error).toContain("two/hello.md");
     expect(result.error).toContain("three/HELLO.md");
     expect(result.error).toContain('"hello.md"');
     expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("collision result surfaces through main.ts guard (total > 0)", async () => {
+    const vault = makeVault([
+      {
+        name: "Hello World.md",
+        content: publishedNote,
+        path: "notes/Hello World.md",
+      },
+      {
+        name: "hello world.md",
+        content: publishedNote,
+        path: "other/hello world.md",
+      },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("Filename collision");
+    expect(result.results).toHaveLength(2);
+    for (const r of result.results) {
+      expect(r.success).toBe(false);
+      expect(r.error).toContain("Filename collision");
+    }
+  });
+
+  test("PR collision result also surfaces through main.ts guard (total > 0)", async () => {
+    const vault = makeVault([
+      {
+        name: "Hello World.md",
+        content: publishedNote,
+        path: "notes/Hello World.md",
+      },
+      {
+        name: "hello world.md",
+        content: publishedNote,
+        path: "other/hello world.md",
+      },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAllWithPR();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("Filename collision");
+    expect(result.results).toHaveLength(2);
+    for (const r of result.results) {
+      expect(r.success).toBe(false);
+      expect(r.error).toContain("Filename collision");
+    }
   });
 });
 
