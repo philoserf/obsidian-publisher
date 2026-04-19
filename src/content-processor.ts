@@ -89,11 +89,6 @@ export class ContentProcessor {
       }
     }
 
-    // Ensure date field exists (Hugo requirement)
-    if (!processed.date) {
-      processed.date = new Date().toISOString();
-    }
-
     return processed;
   }
 
