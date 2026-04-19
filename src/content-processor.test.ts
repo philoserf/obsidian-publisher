@@ -503,26 +503,56 @@ date: 2026-01-01
     expect(result.content).toContain("{{< /notice >}}");
   });
 
-  test("passes unknown callout types through verbatim", () => {
+  test("transforms multiple callouts in a single document", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
     const result = processor.process(
       `---
 title: X
 date: 2026-01-01
 ---
-> [!tldr] Quick
-> summary
+> [!first] Heading A
+> body one
 
-> [!danger]
-> watch out
+> [!second]
+> body two
 
-> [!bug]
-> it broke`,
+> [!third]
+> body three`,
       "x.md",
     );
-    expect(result.content).toContain("{{< callout tldr");
-    expect(result.content).toContain("{{< callout danger >}}");
-    expect(result.content).toContain("{{< callout bug >}}");
+    expect(result.content).toContain("{{< callout first");
+    expect(result.content).toContain("{{< callout second >}}");
+    expect(result.content).toContain("{{< callout third >}}");
+  });
+
+  test("escapes double quotes in callout title", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+> [!note] He said "hi"
+> body`,
+      "x.md",
+    );
+    expect(result.content).toContain('{{< callout note "He said \\"hi\\"" >}}');
+  });
+
+  test("escapes backslashes in callout title", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+> [!note] path\\to\\file
+> body`,
+      "x.md",
+    );
+    expect(result.content).toContain(
+      '{{< callout note "path\\\\to\\\\file" >}}',
+    );
   });
 
   test("lowercases the type but preserves it", () => {
