@@ -209,6 +209,28 @@ export class PublisherSettingTab extends PluginSettingTab {
       },
     });
 
+    this.addTextSetting(containerEl, {
+      name: "Callout Shortcode Name",
+      desc: "Hugo shortcode name used for Obsidian callouts. Ship hugo-shortcodes/callout.html in your theme to match.",
+      placeholder: "callout",
+      getValue: () => settings.calloutShortcodeName,
+      onChange: (value) => {
+        settings.calloutShortcodeName = value.trim() || "callout";
+        save();
+      },
+    });
+
+    this.addTextSetting(containerEl, {
+      name: "Mermaid Shortcode Name",
+      desc: "Hugo shortcode name used for mermaid code fences.",
+      placeholder: "mermaid",
+      getValue: () => settings.mermaidShortcodeName,
+      onChange: (value) => {
+        settings.mermaidShortcodeName = value.trim() || "mermaid";
+        save();
+      },
+    });
+
     containerEl.createEl("h3", { text: "Frontmatter Field Stripping" });
     containerEl.createEl("p", {
       text: "Comma-separated list of frontmatter fields to remove when publishing. Default: status, lastmod, cssclass, cssclasses, aliases, position, created, modified.",
