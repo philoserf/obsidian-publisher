@@ -783,3 +783,94 @@ describe("Publisher.publishAllWithPR", () => {
     expect(gh.deleteBranch).toHaveBeenCalled();
   });
 });
+
+describe("Publisher wikilink publish-set gating", () => {
+  const sourceLinkingToTarget = `---
+title: Source
+status: publish
+date: 2026-01-01
+---
+See [[Target]] for details.`;
+
+  const targetPublished = `---
+title: Target
+status: publish
+date: 2026-01-01
+---
+Target body`;
+
+  const sourceLinkingToUnpublished = `---
+title: Source
+status: publish
+date: 2026-01-01
+---
+See [[Not Published]] for details.`;
+
+  test("batch emits /posts/slug/ URL for links to other files in publish set", async () => {
+    const vault = makeVault([
+      { name: "source.md", content: sourceLinkingToTarget },
+      { name: "target.md", content: targetPublished },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(2);
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string; content: string }>;
+    const sourceEntry = entries.find(
+      (e) => e.path === "content/posts/source.md",
+    );
+    expect(sourceEntry).toBeDefined();
+    expect(sourceEntry?.content).toContain("[Target](/posts/target/)");
+    expect(sourceEntry?.content).not.toContain("{{< ref");
+  });
+
+  test("batch degrades links to notes not in publish set to plain text", async () => {
+    const vault = makeVault([
+      { name: "source.md", content: sourceLinkingToUnpublished },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(1);
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string; content: string }>;
+    const sourceEntry = entries.find(
+      (e) => e.path === "content/posts/source.md",
+    );
+    expect(sourceEntry).toBeDefined();
+    expect(sourceEntry?.content).toContain("See Not Published for details.");
+    expect(sourceEntry?.content).not.toContain("[[");
+    expect(sourceEntry?.content).not.toContain("{{< ref");
+  });
+
+  test("single-file publish links to self work; links to others degrade", async () => {
+    const selfRef = `---
+title: Source
+status: publish
+date: 2026-01-01
+---
+I am [[Source]] and I link to [[Other]].`;
+    const vault = makeVault([
+      { name: "source.md", content: selfRef },
+      { name: "other.md", content: targetPublished },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("source.md") as never);
+
+    expect(result.success).toBe(true);
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string; content: string }>;
+    const sourceEntry = entries.find(
+      (e) => e.path === "content/posts/source.md",
+    );
+    expect(sourceEntry?.content).toContain("[Source](/posts/source/)");
+    expect(sourceEntry?.content).toContain("I link to Other.");
+  });
+});
