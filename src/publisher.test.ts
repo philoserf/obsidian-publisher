@@ -850,6 +850,47 @@ describe("Publisher slug collision precheck", () => {
     expect(gh.commitFiles).toHaveBeenCalledTimes(1);
     expect(result.successful).toBe(2);
   });
+
+  test("reports all independent collision groups in one error", async () => {
+    const vault = makeVault([
+      { name: "A.md", content: publishedNote, path: "notes/A.md" },
+      { name: "a.md", content: publishedNote, path: "other/a.md" },
+      { name: "B.md", content: publishedNote, path: "notes/B.md" },
+      { name: "b.md", content: publishedNote, path: "other/b.md" },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.error).toContain("Slug collisions");
+    expect(result.error).toContain('"a.md"');
+    expect(result.error).toContain('"b.md"');
+    expect(result.error).toContain("notes/A.md");
+    expect(result.error).toContain("other/a.md");
+    expect(result.error).toContain("notes/B.md");
+    expect(result.error).toContain("other/b.md");
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("3-way collision names all three paths", async () => {
+    const vault = makeVault([
+      { name: "Hello.md", content: publishedNote, path: "one/Hello.md" },
+      { name: "hello.md", content: publishedNote, path: "two/hello.md" },
+      { name: "HELLO.md", content: publishedNote, path: "three/HELLO.md" },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.error).toContain("Slug collision");
+    expect(result.error).toContain("one/Hello.md");
+    expect(result.error).toContain("two/hello.md");
+    expect(result.error).toContain("three/HELLO.md");
+    expect(result.error).toContain('"hello.md"');
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
 });
 
 describe("Publisher wikilink publish-set gating", () => {
