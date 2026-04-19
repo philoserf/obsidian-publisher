@@ -1,3 +1,5 @@
+import { REQUIRED_FRONTMATTER_FIELDS } from "./schema";
+
 /**
  * Plugin settings interface
  */
@@ -138,13 +140,18 @@ function isStringArray(value: unknown): value is string[] {
  */
 function resolveStrippedFields(d: Record<string, unknown>): string[] {
   if (isStringArray(d.strippedFrontmatterFields)) {
-    return d.strippedFrontmatterFields;
+    return filterRequiredFields(d.strippedFrontmatterFields);
   }
   const defaults = [...DEFAULT_SETTINGS.strippedFrontmatterFields];
   if (d.removePublishFlag === false) {
-    return defaults.filter((f) => f !== "status");
+    return filterRequiredFields(defaults.filter((f) => f !== "status"));
   }
-  return defaults;
+  return filterRequiredFields(defaults);
+}
+
+function filterRequiredFields(fields: string[]): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+  return fields.filter((f) => !required.has(f));
 }
 
 /**
