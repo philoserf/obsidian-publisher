@@ -123,12 +123,14 @@ export class Publisher {
   }
 
   /**
-   * Detect slug collisions before transforming. Returns the first collision
-   * group found, or undefined if all sanitized filenames are unique.
+   * Detect all slug collisions before transforming. Returns an array of
+   * collision groups, each with the sanitized filename and the source
+   * paths that produce it. Empty array means all sanitized filenames are
+   * unique. Groups are sorted by slug for stable output across runs.
    */
-  private detectSlugCollision(
+  private detectSlugCollisions(
     files: Array<{ file: TFile }>,
-  ): { slug: string; paths: string[] } | undefined {
+  ): Array<{ slug: string; paths: string[] }> {
     const byFilename = new Map<string, string[]>();
     for (const { file } of files) {
       const sanitized = this.contentProcessor.sanitizeFilename(file.name);
@@ -136,14 +138,20 @@ export class Publisher {
       paths.push(file.path);
       byFilename.set(sanitized, paths);
     }
+    const collisions: Array<{ slug: string; paths: string[] }> = [];
     for (const [slug, paths] of byFilename) {
-      if (paths.length > 1) return { slug, paths: paths.sort() };
+      if (paths.length > 1) collisions.push({ slug, paths: paths.sort() });
     }
-    return undefined;
+    return collisions.sort((a, b) => a.slug.localeCompare(b.slug));
   }
 
-  private slugCollisionError(c: { slug: string; paths: string[] }): string {
-    return `Slug collision: ${c.paths.join(", ")} all publish as "${c.slug}"`;
+  private slugCollisionError(
+    collisions: Array<{ slug: string; paths: string[] }>,
+  ): string {
+    const lines = collisions.map(
+      (c) => `  ${c.paths.join(", ")} all publish as "${c.slug}"`,
+    );
+    return `Slug collision${collisions.length > 1 ? "s" : ""}:\n${lines.join("\n")}`;
   }
 
   private async resolveImages(
@@ -207,10 +215,10 @@ export class Publisher {
    */
   async publishAll(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
-    const collision = this.detectSlugCollision(files);
-    if (collision) {
+    const collisions = this.detectSlugCollisions(files);
+    if (collisions.length > 0) {
       return buildBatchResult(readFailures, {
-        error: this.slugCollisionError(collision),
+        error: this.slugCollisionError(collisions),
       });
     }
     const { results: prepared, fileEntries } = await this.prepareBatch(files);
@@ -311,10 +319,10 @@ export class Publisher {
       });
     }
 
-    const collision = this.detectSlugCollision(files);
-    if (collision) {
+    const collisions = this.detectSlugCollisions(files);
+    if (collisions.length > 0) {
       return buildBatchResult(readFailures, {
-        error: this.slugCollisionError(collision),
+        error: this.slugCollisionError(collisions),
       });
     }
 
