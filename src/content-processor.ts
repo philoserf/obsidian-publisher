@@ -128,10 +128,14 @@ export class ContentProcessor {
   /**
    * Derive the URL prefix for wikilinks from the contentDir setting.
    * Strips leading "content/" so "content/posts" -> "/posts/",
-   * "content" -> "/", "content/blog" -> "/blog/".
+   * "content" -> "/", "content/blog" -> "/blog/". Normalizes edge
+   * slashes first so "content/posts/", "/content/posts", and bare
+   * "posts" all produce "/posts/".
    */
   private postsUrlPath(): string {
-    const dir = this.settings.contentDir.replace(/^content\/?/, "");
+    const dir = this.settings.contentDir
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/^content\/?/, "");
     return dir ? `/${dir}/` : "/";
   }
 
@@ -239,9 +243,7 @@ export class ContentProcessor {
         const display = displayText || (heading ? `${page}#${heading}` : page);
         const slug = this.sanitizeSlug(page);
         if (!publishSet.has(slug)) return display;
-        const fragment = heading
-          ? `#${heading.toLowerCase().replace(/\s+/g, "-")}`
-          : "";
+        const fragment = heading ? `#${this.slugifyHeading(heading)}` : "";
         return `[${display}](${urlPath}${slug}/${fragment})`;
       },
     );
@@ -308,6 +310,20 @@ export class ContentProcessor {
    */
   sanitizeSlug(page: string): string {
     return this.sanitizeName(page);
+  }
+
+  /**
+   * Slugify a heading to match Hugo's default goldmark anchor ID generation:
+   * lowercase, strip punctuation, spaces -> hyphens, collapse and trim hyphens.
+   */
+  private slugifyHeading(heading: string): string {
+    return heading
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "");
   }
 
   /**
