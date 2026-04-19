@@ -123,35 +123,55 @@ export class Publisher {
   }
 
   /**
-   * Detect all slug collisions before transforming. Returns an array of
-   * collision groups, each with the sanitized filename and the source
+   * Detect all filename collisions before transforming. Returns an array
+   * of collision groups, each with the sanitized filename and the source
    * paths that produce it. Empty array means all sanitized filenames are
-   * unique. Groups are sorted by slug for stable output across runs.
+   * unique. Groups are sorted by filename for stable output across runs.
    */
-  private detectSlugCollisions(
+  private detectFilenameCollisions(
     files: Array<{ file: TFile }>,
-  ): Array<{ slug: string; paths: string[] }> {
+  ): Array<{ filename: string; paths: string[] }> {
     const byFilename = new Map<string, string[]>();
     for (const { file } of files) {
-      const sanitized = this.contentProcessor.sanitizeFilename(file.name);
-      const paths = byFilename.get(sanitized) ?? [];
+      const sanitizedFilename = this.contentProcessor.sanitizeFilename(
+        file.name,
+      );
+      const paths = byFilename.get(sanitizedFilename) ?? [];
       paths.push(file.path);
-      byFilename.set(sanitized, paths);
+      byFilename.set(sanitizedFilename, paths);
     }
-    const collisions: Array<{ slug: string; paths: string[] }> = [];
-    for (const [slug, paths] of byFilename) {
-      if (paths.length > 1) collisions.push({ slug, paths: paths.sort() });
+    const collisions: Array<{ filename: string; paths: string[] }> = [];
+    for (const [filename, paths] of byFilename) {
+      if (paths.length > 1) collisions.push({ filename, paths: paths.sort() });
     }
-    return collisions.sort((a, b) => a.slug.localeCompare(b.slug));
+    return collisions.sort((a, b) => a.filename.localeCompare(b.filename));
   }
 
-  private slugCollisionError(
-    collisions: Array<{ slug: string; paths: string[] }>,
+  private filenameCollisionError(
+    collisions: Array<{ filename: string; paths: string[] }>,
   ): string {
     const lines = collisions.map(
-      (c) => `  ${c.paths.join(", ")} all publish as "${c.slug}"`,
+      (c) => `  ${c.paths.join(", ")} all publish as "${c.filename}"`,
     );
-    return `Slug collision${collisions.length > 1 ? "s" : ""}:\n${lines.join("\n")}`;
+    return `Filename collision${collisions.length > 1 ? "s" : ""}:\n${lines.join("\n")}`;
+  }
+
+  /**
+   * Synthesize a failed PublishResult for each file so the batch's
+   * total count reflects attempted publishes. Without this, a
+   * collision-only failure (no read failures) produces total=0,
+   * which main.ts's "No publishable notes found" guard swallows.
+   */
+  private synthesizeCollisionFailures(
+    files: Array<{ file: TFile }>,
+    error: string,
+  ): PublishResult[] {
+    return files.map(({ file }) => ({
+      filePath: file.path,
+      success: false,
+      error,
+      warnings: [],
+    }));
   }
 
   private async resolveImages(
@@ -215,10 +235,15 @@ export class Publisher {
    */
   async publishAll(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
-    const collisions = this.detectSlugCollisions(files);
+    const collisions = this.detectFilenameCollisions(files);
     if (collisions.length > 0) {
-      return buildBatchResult(readFailures, {
-        error: this.slugCollisionError(collisions),
+      const collisionError = this.filenameCollisionError(collisions);
+      const collisionFailures = this.synthesizeCollisionFailures(
+        files,
+        collisionError,
+      );
+      return buildBatchResult([...readFailures, ...collisionFailures], {
+        error: collisionError,
       });
     }
     const { results: prepared, fileEntries } = await this.prepareBatch(files);
@@ -319,10 +344,15 @@ export class Publisher {
       });
     }
 
-    const collisions = this.detectSlugCollisions(files);
+    const collisions = this.detectFilenameCollisions(files);
     if (collisions.length > 0) {
-      return buildBatchResult(readFailures, {
-        error: this.slugCollisionError(collisions),
+      const collisionError = this.filenameCollisionError(collisions);
+      const collisionFailures = this.synthesizeCollisionFailures(
+        files,
+        collisionError,
+      );
+      return buildBatchResult([...readFailures, ...collisionFailures], {
+        error: collisionError,
       });
     }
 
