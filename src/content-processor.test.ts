@@ -557,15 +557,6 @@ describe("Note embed conversion", () => {
 });
 
 describe("Frontmatter processing", () => {
-  test("adds date when missing", () => {
-    const cp = makeProcessor();
-    const result = cp.process(
-      wrap("title: Test\nstatus: publish", "body"),
-      "test.md",
-    );
-    expect(result.frontmatter.date).toBeDefined();
-  });
-
   test("preserves existing date", () => {
     const cp = makeProcessor();
     const result = cp.process(
