@@ -139,7 +139,9 @@ export class ContentProcessor {
       (_match, type: string, title: string | undefined, body: string) => {
         const calloutType = type.toLowerCase();
         const cleanBody = body.replace(/^> ?/gm, "").trim();
-        const titleAttr = title ? ` "${title}"` : "";
+        const titleAttr = title
+          ? ` "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+          : "";
         return `{{< ${name} ${calloutType}${titleAttr} >}}\n${cleanBody}\n{{< /${name} >}}`;
       },
     );
