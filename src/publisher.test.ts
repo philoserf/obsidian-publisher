@@ -656,7 +656,7 @@ Also ![[photo.png]]`;
     const vault = makeVault([
       { name: "a.md", content: noteA },
       { name: "b.md", content: noteB },
-      { name: "photo.png", content: imageData as unknown as string },
+      { name: "photo.png", content: imageData },
     ]);
     const gh = makeGitHubService();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
