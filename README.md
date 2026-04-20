@@ -1,13 +1,13 @@
 # Obsidian Publisher
 
-Publish [Obsidian](https://obsidian.md/) notes to GitHub for [Hugo](https://gohugo.io/) processing. Tailored for [hugo-coder](https://github.com/luizdepra/hugo-coder) as used by [philoserf.com](https://philoserf.com).
+Publish [Obsidian](https://obsidian.md/) notes to GitHub for [Hugo](https://gohugo.io/) processing. Tailored for [philoserf.com](https://philoserf.com).
 
 ## You probably shouldn't install this
 
 This is personal tooling, not a general-purpose plugin. It is opinionated in ways that only make sense for one person's workflow:
 
 - **Single user.** The only known installation is the maintainer's. Breaking changes ship without migration paths (see `CHANGELOG.md` — 1.4.0 renamed the publish sentinel, 1.5.0 retired `removePublishFlag` and the `{{< ref >}}` wikilinks, 1.6.0 retired the direct-commit publish mode entirely).
-- **One target shape.** The Hugo destination is expected to look like a hugo-coder site with `content/posts/`, `static/images/`, and the shipped `hugo-shortcodes/` (callout + mermaid) installed. Other site layouts will see broken links or missing renderers.
+- **One target shape.** The Hugo destination is expected to use `content/posts/`, `static/images/`, and the shipped `hugo-shortcodes/` (callout + mermaid) installed in the site's theme. Other layouts will see broken links or missing renderers.
 - **PR workflow only, mandatory.** Every publish creates a timestamped feature branch and opens a PR against `baseBranch`. There is no direct-commit escape hatch.
 - **Required frontmatter.** Notes must carry `status: publish`, plus a non-empty `title` and `date`. Missing or empty required fields fail the publish per-note.
 - **No issue triage for feature requests.** Bugs are welcome; feature requests from other users will almost always be closed as out-of-scope.
