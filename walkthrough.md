@@ -67,6 +67,27 @@ sed -n '67,96p' src/main.ts
 ```
 
 ```output
+    );
+  }
+  const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
+  if (labelFailures.length > 0) {
+    const all = [...new Set(labelFailures.flatMap((w) => w.labels))];
+    new Notice(`Warning: failed to apply PR labels: ${all.join(", ")}`);
+  }
+}
+
+export default class ObsidianPublisher extends Plugin {
+  settings!: PublisherSettings;
+  private settingTab?: PublisherSettingTab;
+
+  // Constructs a fresh Publisher on each access; assign to a local once per command.
+  // Reading `this.publisher` twice yields two distinct instances.
+  private get publisher(): Publisher {
+    return new Publisher(this.app.vault, this.settings, (done, total) => {
+      new Notice(`Prepared: ${done}/${total}`);
+    });
+  }
+
   async onload() {
     await this.loadSettings();
 
@@ -76,27 +97,6 @@ sed -n '67,96p' src/main.ts
 
     // Register commands
     this.addCommand({
-      id: "publish-current-note",
-      name: "Publish current note to GitHub",
-      editorCallback: async (_editor, view) => {
-        const file = view.file;
-        if (!file) {
-          new Notice("No active file");
-          return;
-        }
-
-        await this.publishCurrentNote(file);
-      },
-    });
-
-    this.addCommand({
-      id: "publish-all-notes",
-      name: "Publish all notes to GitHub",
-      callback: async () => {
-        await this.publishAllNotes();
-      },
-    });
-  }
 ```
 
 Both command callbacks delegate to private methods on the plugin class. Those methods:
@@ -166,6 +166,22 @@ sed -n '159,200p' src/types.ts
 ```
 
 ```output
+/**
+ * Trim-and-filter persisted prLabels. Whitespace-only labels are dropped
+ * (matching the settings UI input sanitizer); an empty result falls back
+ * to DEFAULT_SETTINGS.prLabels, symmetric with baseBranch handling.
+ */
+function resolvePrLabels(value: unknown): string[] {
+  if (!isStringArray(value)) return DEFAULT_SETTINGS.prLabels;
+  const trimmed = value.map((l) => l.trim()).filter((l) => l.length > 0);
+  return trimmed.length > 0 ? trimmed : DEFAULT_SETTINGS.prLabels;
+}
+
+/**
+ * Validate persisted plugin data against the PublisherSettings shape.
+ * Per-field fallback to DEFAULT_SETTINGS on type mismatch — a single
+ * corrupted field shouldn't wipe the user's configuration.
+ */
 export function parseSettings(data: unknown): PublisherSettings {
   const d = isPlainObject(data) ? data : {};
   return {
@@ -192,22 +208,6 @@ export function parseSettings(data: unknown): PublisherSettings {
     baseBranch:
       typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""
         ? d.baseBranch
-        : DEFAULT_SETTINGS.baseBranch,
-    prLabels: isStringArray(d.prLabels)
-      ? d.prLabels
-      : DEFAULT_SETTINGS.prLabels,
-    calloutShortcodeName:
-      typeof d.calloutShortcodeName === "string" &&
-      /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)
-        ? d.calloutShortcodeName
-        : DEFAULT_SETTINGS.calloutShortcodeName,
-    mermaidShortcodeName:
-      typeof d.mermaidShortcodeName === "string" &&
-      /^[a-zA-Z0-9_-]+$/.test(d.mermaidShortcodeName)
-        ? d.mermaidShortcodeName
-        : DEFAULT_SETTINGS.mermaidShortcodeName,
-  };
-}
 ```
 
 Two behaviors worth noting:
@@ -220,6 +220,11 @@ sed -n '138,152p' src/types.ts
 ```
 
 ```output
+/**
+ * Resolve strippedFrontmatterFields from persisted data. Accepts the
+ * current field; falls back to the legacy removePublishFlag boolean for
+ * migration; otherwise returns the default list.
+ */
 function resolveStrippedFields(d: Record<string, unknown>): string[] {
   if (isStringArray(d.strippedFrontmatterFields)) {
     return filterRequiredFields(d.strippedFrontmatterFields);
@@ -229,11 +234,6 @@ function resolveStrippedFields(d: Record<string, unknown>): string[] {
     return filterRequiredFields(defaults.filter((f) => f !== "status"));
   }
   return filterRequiredFields(defaults);
-}
-
-function filterRequiredFields(fields: string[]): string[] {
-  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
-  return fields.filter((f) => !required.has(f));
 }
 ```
 
@@ -249,6 +249,11 @@ sed -n '75,114p' src/types.ts
 export type PublishWarning =
   | { kind: "image-failed"; name: string }
   | { kind: "image-collision"; name: string; paths: string[] }
+  | {
+      kind: "image-target-collision";
+      targetPath: string;
+      sourceNames: string[];
+    }
   | { kind: "pr-label-failed"; labels: string[]; error: string };
 
 /**
@@ -281,11 +286,6 @@ export interface BatchPublishResult {
   results: PublishResult[];
   /** URL to the pull request if created */
   prUrl?: string;
-  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
-  error?: string;
-  /** Batch-level non-fatal conditions (e.g. PR label apply failed) */
-  warnings?: PublishWarning[];
-}
 ```
 
 ## Frontmatter Gate: schema.ts
@@ -314,6 +314,12 @@ sed -n '30,55p' src/schema.ts
 ```
 
 ```output
+      body: match[2],
+      error: `Malformed frontmatter YAML: ${message}`,
+    };
+  }
+}
+
 export function hasPublishFlag(frontmatter: Frontmatter): boolean {
   return frontmatter[PUBLISH_STATUS_FIELD] === PUBLISH_STATUS_VALUE;
 }
@@ -334,12 +340,6 @@ export function validateFrontmatter(frontmatter: Frontmatter): string | null {
   const issues: string[] = [];
   for (const field of REQUIRED_FRONTMATTER_FIELDS) {
     const issue = validateField(frontmatter[field], field);
-    if (issue) issues.push(issue);
-  }
-  return issues.length === 0
-    ? null
-    : `Invalid frontmatter: ${issues.join("; ")}`;
-}
 ```
 
 `date` accepts both strings (e.g. `"2026-04-20"`) and JavaScript `Date` instances (because `parseYaml` coerces ISO-like dates). All other required fields must be non-empty strings. Errors from multiple missing/invalid fields are joined into one message so the user sees every problem at once.
@@ -357,6 +357,27 @@ sed -n '234,278p' src/publisher.ts
 ```
 
 ```output
+        if (!imageContent) {
+          imageContent = await this.vault.readBinary(sourceFile);
+          readCache.set(sourceFile.path, imageContent);
+        }
+        targetPathOwners.set(imgPath, imageName);
+        entries.push({ path: imgPath, content: imageContent });
+      } catch (error) {
+        console.error(
+          `Failed to read image ${imageName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        warnings.push({ kind: "image-failed", name: imageName });
+      }
+    }
+
+    return { entries, warnings };
+  }
+
+  /**
+   * Publish a single note to GitHub: creates a feature branch, commits the
+   * file to it, and opens a pull request against baseBranch.
+   */
   async publishNote(file: TFile): Promise<PublishResult> {
     let content: string;
     try {
@@ -365,7 +386,10 @@ sed -n '234,278p' src/publisher.ts
       return failedResult(file.path, "Failed to read file");
     }
 
-    const { frontmatter, body } = splitFrontmatter(content);
+    const { frontmatter, body, error: parseError } = splitFrontmatter(content);
+    if (parseError) {
+      return failedResult(file.path, parseError);
+    }
     if (!hasPublishFlag(frontmatter)) {
       return failedResult(
         file.path,
@@ -378,10 +402,17 @@ sed -n '234,278p' src/publisher.ts
     }
 
     const result = await this.runPublishWorkflow({
-      branchPrefix: "publish",
-      readFailures: [],
-      prepare: async () => {
-        const batch = await this.prepareBatch([{ file, frontmatter, body }]);
+```
+
+Single-note publishes route through `prepareBatch` with a one-element list — the same pipeline batches use. The trailing adapter reconciles the batch-shaped return to a single `PublishResult`.
+
+`publishAll` adds the vault scan and collision precheck, then delegates to the same workflow:
+
+```bash
+sed -n '283,320p' src/publisher.ts
+```
+
+```output
         return { prepared: batch.results, fileEntries: batch.fileEntries };
       },
       synthesizeFailures: (message) => [failedResult(file.path, message)],
@@ -399,20 +430,13 @@ sed -n '234,278p' src/publisher.ts
     return {
       ...single,
       prUrl: result.prUrl,
-      warnings: [...single.warnings, ...(result.warnings ?? [])],
+      warnings: [...single.warnings, ...result.warnings],
     };
   }
-```
 
-Single-note publishes route through `prepareBatch` with a one-element list — the same pipeline batches use. The trailing adapter reconciles the batch-shaped return to a single `PublishResult`.
-
-`publishAll` adds the vault scan and collision precheck, then delegates to the same workflow:
-
-```bash
-sed -n '283,320p' src/publisher.ts
-```
-
-```output
+  /**
+   * Publish all notes with status: publish to a single branch and PR.
+   */
   async publishAll(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
     if (files.length === 0) {
@@ -427,30 +451,6 @@ sed -n '283,320p' src/publisher.ts
       const collisionFailures = this.synthesizeCollisionFailures(
         files,
         collisionError,
-      );
-      return buildBatchResult([...readFailures, ...collisionFailures], {
-        error: collisionError,
-      });
-    }
-
-    return this.runPublishWorkflow({
-      branchPrefix: "publish-batch",
-      readFailures,
-      prepare: async () => {
-        const batch = await this.prepareBatch(files);
-        return { prepared: batch.results, fileEntries: batch.fileEntries };
-      },
-      synthesizeFailures: (message) =>
-        files.map(({ file }) => failedResult(file.path, message)),
-      commitMessage: (n) =>
-        `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian`,
-      prTitle: (succeeded) => `Batch Publish: ${succeeded.length} notes`,
-      prBody: (succeeded) =>
-        `Published ${succeeded.length} notes from Obsidian\n\n${succeeded
-          .map((r) => `- ${r.filePath}`)
-          .join("\n")}`,
-    });
-  }
 ```
 
 The collision precheck — added in 1.5.0 — blocks the batch before any GitHub API calls when two notes would sanitize to the same filename (e.g., `Hello World.md` and `hello world.md` both → `hello-world.md`). This surfaces synthetic per-file failures so the error reaches the user instead of being swallowed by the "no publishable notes" guard in `main.ts`.
@@ -462,6 +462,30 @@ sed -n '353,425p' src/publisher.ts
 ```
 
 ```output
+    results: PublishResult[],
+    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>,
+    message: string,
+  ): Promise<string | undefined> {
+    if (fileEntries.length === 0) return undefined;
+    try {
+      await this.githubService.commitFiles(fileEntries, message, branchName);
+      return undefined;
+    } catch (error) {
+      this.markResultsFailed(results, error, "Commit failed");
+      return errorMessage(error);
+    }
+  }
+
+  /**
+   * Shared branch + commit + PR orchestration. Creates a branch first,
+   * then calls the caller's `prepare` closure to produce the entries to
+   * commit. If branch creation fails, `synthesizeFailures` is used to
+   * build per-file failed results (so the user sees N failures, not just
+   * a bare error). On any other failure, the prepared results are marked
+   * failed. Callers supply the branch prefix plus the commit-message and
+   * PR title/body builders so single-note and batch paths share this
+   * workflow while keeping their distinct PR shapes.
+   */
   private async runPublishWorkflow(opts: {
     branchPrefix: string;
     readFailures: PublishResult[];
@@ -511,30 +535,6 @@ sed -n '353,425p' src/publisher.ts
 
       const pr = await this.githubService.createPullRequest(
         branchName,
-        this.baseBranch,
-        opts.prTitle(succeeded),
-        opts.prBody(succeeded),
-        this.prLabels,
-      );
-      return buildBatchResult(results, {
-        prUrl: pr.url,
-        warnings: pr.warnings,
-      });
-    } catch (error) {
-      await this.cleanupBranch(branchName);
-      const message = errorMessage(error);
-      if (prepared.length === 0) {
-        return buildBatchResult(
-          [...opts.readFailures, ...opts.synthesizeFailures(message)],
-          { error: message },
-        );
-      }
-      this.markResultsFailed(prepared, error);
-      return buildBatchResult([...opts.readFailures, ...prepared], {
-        error: message,
-      });
-    }
-  }
 ```
 
 Two distinct failure paths:
@@ -551,6 +551,41 @@ sed -n '492,540p' src/publisher.ts
 ```
 
 ```output
+
+    for (const file of markdownFiles) {
+      try {
+        const content = await this.vault.read(file);
+        const {
+          frontmatter,
+          body,
+          error: parseError,
+        } = splitFrontmatter(content);
+        // A malformed frontmatter block hides publish intent — surface it
+        // rather than silently skipping. We can't tell whether the user
+        // meant status: publish when the YAML doesn't parse.
+        if (parseError) {
+          readFailures.push(failedResult(file.path, parseError));
+          continue;
+        }
+        if (hasPublishFlag(frontmatter)) {
+          files.push({ file, frontmatter, body });
+        }
+      } catch (error) {
+        readFailures.push(
+          failedResult(file.path, `Failed to read: ${errorMessage(error)}`),
+        );
+      }
+    }
+
+    return { files, readFailures };
+  }
+
+  /**
+   * Prepare all files for a batch commit.
+   * Validates each file's frontmatter; invalid files become failed
+   * results. Returns per-file results and collected file entries for
+   * commitFiles().
+   */
   private async prepareBatch(
     files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>,
   ): Promise<{
@@ -561,45 +596,10 @@ sed -n '492,540p' src/publisher.ts
     const entryMap = new Map<string, string | ArrayBuffer>();
     const filesByBasename = this.buildFilesByBasename();
     const publishSet = this.buildPublishSet(files);
-
-    for (const { file, frontmatter, body } of files) {
-      try {
-        const validationError = validateFrontmatter(frontmatter);
-        if (validationError) {
-          results.push(failedResult(file.path, validationError));
-        } else {
-          const processed = this.contentProcessor.processFromSplit(
-            frontmatter,
-            body,
-            file.name,
-            publishSet,
-          );
-
-          const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-          entryMap.set(targetPath, processed.content);
-
-          const { entries: imageEntries, warnings } = await this.resolveImages(
-            processed.images,
-            filesByBasename,
-          );
-          for (const entry of imageEntries) {
-            entryMap.set(entry.path, entry.content);
-          }
-
-          results.push({ filePath: file.path, success: true, warnings });
-        }
-      } catch (error) {
-        results.push(failedResult(file.path, errorMessage(error)));
-      }
-
-      this.onProgress?.(results.length, files.length);
-    }
-
-    const fileEntries = Array.from(entryMap.entries()).map(
-      ([path, content]) => ({ path, content }),
-    );
-    return { results, fileEntries };
-  }
+    // Read each image source once per batch; multiple notes referencing
+    // the same image share the buffer.
+    const imageReadCache = new Map<string, ArrayBuffer>();
+    // Target imgPath -> first imageName that claimed it. Surfaces silent
 ```
 
 Key design choices here:
@@ -1057,10 +1057,10 @@ grep -cE '^  test\(' src/*.test.ts | grep -v ':0'
 src/content-processor.test.ts:89
 src/github-service.test.ts:17
 src/main.test.ts:5
-src/publisher.test.ts:37
-src/schema.test.ts:22
+src/publisher.test.ts:41
+src/schema.test.ts:24
 src/settings.test.ts:41
-src/types.test.ts:23
+src/types.test.ts:26
 ```
 
 ## Concerns
@@ -1083,4 +1083,3 @@ Readers evaluating the codebase should know:
    - `pull_requests:write` token scope is unconditional as of 1.6.0 (PR workflow is the only mode).
 
 6. **Single maintainer, single user.** The codebase makes decisions optimized for that reality — e.g., the `usePullRequests` setting was retired in 1.6.0 as a breaking change rather than carried as migration cruft. Future forks or users would need to re-evaluate.
-

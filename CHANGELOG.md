@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.7.0
+
+### Fixed
+
+- Malformed frontmatter YAML no longer silently masquerades as "missing required field" or "no publish flag" (#129). `splitFrontmatter` now returns an optional `error` field when YAML parsing fails; `Publisher.publishNote` surfaces it as a per-file failed result, and `prepareBatch` flags every file with a malformed block regardless of publish intent (since the malformed YAML hides whether `status: publish` was meant). Previously the parse failure was only logged to `console.error`, invisible on mobile.
+- Image target-path collisions now emit a user-visible `image-target-collision` warning instead of silently overwriting (#215). When two distinct vault filenames sanitize to the same published target (e.g. `A.png` and `a.png` both → `static/images/a.png`), the first writer wins and the user sees a Notice listing the colliding target path and every source that contributed. Distinct from the existing `image-collision` warning (which covers multiple files sharing a basename at different vault paths).
+- Batch image reads now share a per-batch cache (#154). When multiple notes in the same batch reference the same image, `readBinary` is called exactly once. The commit payload was already deduped by target path, so this is a pure I/O win, not a correctness change.
+
+### Changed
+
+- `parseSettings` now treats an empty or whitespace-only `prLabels` array the same way it treats `baseBranch: ""` — falls back to `DEFAULT_SETTINGS.prLabels` (#204). Whitespace entries are trimmed and filtered. The defensive `|| ["chore"]` in the `Publisher` getter is gone. Symmetric with `baseBranch` handling.
+- `BatchPublishResult.warnings` is now non-optional (`PublishWarning[]`, `[]` when none) — previously optional and always-set, causing defensive `?? []` spreads in callers (#205). `buildBatchResult` always initializes it; `main.ts` and the single-note unwrap drop the fallback.
+- Test mock for `parseYaml`/`stringifyYaml` now uses the real `yaml` package rather than a hand-rolled flat parser (#129). Tests exercise the same YAML behavior Obsidian does at runtime; nested mappings, multi-line strings, and quoted values now round-trip correctly in test fixtures. Added as devDependency only — not bundled.
+- `ProgressCallback` type is now internal to `publisher.ts` (not exported); the callback is still wired from `main.ts` via constructor inference (#206).
+
+### Added
+
+- `TESTING.md` — policy doc for what the repo tests, what it doesn't, and why (#143). Documents the unit-first strategy, the manual build-deploy-reload loop for end-to-end verification, and the signals that would justify revisiting.
+- README note documenting the Hugo `autoIDType: "github"` assumption for heading anchors (#209).
+- Revived `THEORY.md` with a post-1.6.0 architecture narrative for future maintainers.
+
 ## 1.6.0
 
 ### Breaking Changes
