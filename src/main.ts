@@ -26,6 +26,22 @@ function notifyImageWarnings(
   new Notice(format(names));
 }
 
+export function batchNoticeText(
+  result: BatchPublishResult,
+  usePullRequests: boolean,
+): string {
+  if (result.error) return `✗ Failed to publish: ${result.error}`;
+  if (result.total === 0) return "No publishable notes found";
+  if (result.successful === 0) {
+    return usePullRequests
+      ? "All files failed to process. No PR created."
+      : "All files failed to process.";
+  }
+  return usePullRequests
+    ? `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`
+    : `Publishing complete: ${result.successful} succeeded, ${result.failed} failed out of ${result.total} total`;
+}
+
 function notifyWarnings(warnings: PublishWarning[]): void {
   notifyImageWarnings(
     warnings,
@@ -171,29 +187,11 @@ export default class ObsidianPublisher extends Plugin {
         ? await publisher.publishAllWithPR()
         : await publisher.publishAll();
 
-      if (result.total === 0) {
-        new Notice("No publishable notes found");
-        return;
-      }
+      new Notice(batchNoticeText(result, this.settings.usePullRequests));
 
-      if (result.error) {
-        new Notice(`✗ Failed to publish: ${result.error}`);
-      } else if (result.successful === 0) {
-        new Notice(
-          this.settings.usePullRequests
-            ? "All files failed to process. No PR created."
-            : "All files failed to process.",
-        );
-      } else {
-        const summary = this.settings.usePullRequests
-          ? `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`
-          : `Publishing complete: ${result.successful} succeeded, ${result.failed} failed out of ${result.total} total`;
-        new Notice(summary);
-
-        if (result.prUrl) {
-          new Notice(`✓ Pull request created: ${result.prUrl}`);
-          console.log(`Pull Request: ${result.prUrl}`);
-        }
+      if (!result.error && result.successful > 0 && result.prUrl) {
+        new Notice(`✓ Pull request created: ${result.prUrl}`);
+        console.log(`Pull Request: ${result.prUrl}`);
       }
 
       notifyWarnings([
