@@ -152,6 +152,17 @@ function filterRequiredFields(fields: string[]): string[] {
 }
 
 /**
+ * Trim-and-filter persisted prLabels. Whitespace-only labels are dropped
+ * (matching the settings UI input sanitizer); an empty result falls back
+ * to DEFAULT_SETTINGS.prLabels, symmetric with baseBranch handling.
+ */
+function resolvePrLabels(value: unknown): string[] {
+  if (!isStringArray(value)) return DEFAULT_SETTINGS.prLabels;
+  const trimmed = value.map((l) => l.trim()).filter((l) => l.length > 0);
+  return trimmed.length > 0 ? trimmed : DEFAULT_SETTINGS.prLabels;
+}
+
+/**
  * Validate persisted plugin data against the PublisherSettings shape.
  * Per-field fallback to DEFAULT_SETTINGS on type mismatch — a single
  * corrupted field shouldn't wipe the user's configuration.
@@ -183,10 +194,7 @@ export function parseSettings(data: unknown): PublisherSettings {
       typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""
         ? d.baseBranch
         : DEFAULT_SETTINGS.baseBranch,
-    prLabels:
-      isStringArray(d.prLabels) && d.prLabels.length > 0
-        ? d.prLabels
-        : DEFAULT_SETTINGS.prLabels,
+    prLabels: resolvePrLabels(d.prLabels),
     calloutShortcodeName:
       typeof d.calloutShortcodeName === "string" &&
       /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)
