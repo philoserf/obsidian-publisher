@@ -674,6 +674,51 @@ Also ![[photo.png]]`;
     expect(imagePaths[0].path).toBe("static/images/photo.png");
   });
 
+  test("surfaces target-path collision when different sources sanitize to same target", async () => {
+    const noteA = `---
+title: A
+status: publish
+date: 2026-01-01
+---
+Has ![[A.png]]`;
+    const noteB = `---
+title: B
+status: publish
+date: 2026-01-01
+---
+Has ![[a.png]]`;
+    const imageA = new Uint8Array([1]).buffer;
+    const imageB = new Uint8Array([2]).buffer;
+    const vault = makeVault([
+      { name: "a.md", content: noteA },
+      { name: "b.md", content: noteB },
+      { name: "A.png", content: imageA },
+      { name: "a.png", content: imageB },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(2);
+    const collisions = result.results
+      .flatMap((r) => r.warnings)
+      .filter((w) => w.kind === "image-target-collision");
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]).toEqual({
+      kind: "image-target-collision",
+      targetPath: "static/images/a.png",
+      sourceNames: ["A.png", "a.png"],
+    });
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string }>;
+    const imagePaths = entries.filter((e) =>
+      e.path.startsWith("static/images/"),
+    );
+    expect(imagePaths).toHaveLength(1);
+    expect(imagePaths[0].path).toBe("static/images/a.png");
+  });
+
   test("surfaces read failures as per-file failed results", async () => {
     const vault = makeVault([
       { name: "ok.md", content: publishedNote },

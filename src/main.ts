@@ -45,6 +45,15 @@ function notifyWarnings(warnings: PublishWarning[]): void {
     (names) =>
       `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
   );
+  const targetCollisions = warnings.filter(
+    (w) => w.kind === "image-target-collision",
+  );
+  if (targetCollisions.length > 0) {
+    const targets = [...new Set(targetCollisions.map((w) => w.targetPath))];
+    new Notice(
+      `Warning: ${targets.length} image target(s) collide, overwrites skipped: ${targets.join(", ")}`,
+    );
+  }
   const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
   if (labelFailures.length > 0) {
     const all = [...new Set(labelFailures.flatMap((w) => w.labels))];

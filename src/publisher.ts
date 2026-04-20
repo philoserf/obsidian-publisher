@@ -183,6 +183,7 @@ export class Publisher {
     imageNames: string[],
     filesByBasename: Map<string, TFile[]>,
     readCache: Map<string, ArrayBuffer>,
+    targetPathOwners: Map<string, string>,
   ): Promise<{
     entries: Array<{ path: string; content: ArrayBuffer }>;
     warnings: PublishWarning[];
@@ -212,6 +213,21 @@ export class Publisher {
         continue;
       }
 
+      const sanitizedName = this.contentProcessor.sanitizeImageName(imageName);
+      const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+      const owner = targetPathOwners.get(imgPath);
+      if (owner !== undefined && owner !== imageName) {
+        console.warn(
+          `Image target path collision at ${imgPath}: ${owner}, ${imageName}`,
+        );
+        warnings.push({
+          kind: "image-target-collision",
+          targetPath: imgPath,
+          sourceNames: [owner, imageName].sort(),
+        });
+        continue;
+      }
+
       try {
         const sourceFile = matches[0];
         let imageContent = readCache.get(sourceFile.path);
@@ -219,9 +235,7 @@ export class Publisher {
           imageContent = await this.vault.readBinary(sourceFile);
           readCache.set(sourceFile.path, imageContent);
         }
-        const sanitizedName =
-          this.contentProcessor.sanitizeImageName(imageName);
-        const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+        targetPathOwners.set(imgPath, imageName);
         entries.push({ path: imgPath, content: imageContent });
       } catch (error) {
         console.error(
@@ -523,6 +537,9 @@ export class Publisher {
     // Read each image source once per batch; multiple notes referencing
     // the same image share the buffer.
     const imageReadCache = new Map<string, ArrayBuffer>();
+    // Target imgPath -> first imageName that claimed it. Surfaces silent
+    // overwrites when different sources sanitize to the same target.
+    const targetPathOwners = new Map<string, string>();
 
     for (const { file, frontmatter, body } of files) {
       try {
@@ -544,6 +561,7 @@ export class Publisher {
             processed.images,
             filesByBasename,
             imageReadCache,
+            targetPathOwners,
           );
           for (const entry of imageEntries) {
             entryMap.set(entry.path, entry.content);

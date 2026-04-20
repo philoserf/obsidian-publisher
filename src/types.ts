@@ -75,6 +75,11 @@ export interface ProcessedContent {
 export type PublishWarning =
   | { kind: "image-failed"; name: string }
   | { kind: "image-collision"; name: string; paths: string[] }
+  | {
+      kind: "image-target-collision";
+      targetPath: string;
+      sourceNames: string[];
+    }
   | { kind: "pr-label-failed"; labels: string[]; error: string };
 
 /**
