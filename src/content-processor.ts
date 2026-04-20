@@ -114,10 +114,19 @@ export class ContentProcessor {
 
   /**
    * Derive the URL path for images from the imageDir setting.
-   * Strips "static/" prefix since Hugo serves static/ at the root.
+   * Strips leading "static/" since Hugo serves static/ at the root, so
+   * "static/images" -> "/images/", "static" -> "/", "assets/img" ->
+   * "/assets/img/". Normalizes edge slashes first so "static/images/",
+   * "/static/images", and bare "images" all produce "/images/". The
+   * boundary regex preserves directories that merely start with
+   * "static" but are not "static" or "static/*" (e.g. "static-assets",
+   * "staticfiles/img").
    */
   private imageUrlPath(): string {
-    return `/${this.settings.imageDir.replace(/^static\/?/, "")}`;
+    const dir = this.settings.imageDir
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/^static(?:\/|$)/, "");
+    return dir ? `/${dir}/` : "/";
   }
 
   /**
@@ -279,7 +288,7 @@ export class ContentProcessor {
       const sanitizedName = this.sanitizeFilename(name);
       const normalizedAlt = alt?.trim();
       const altText = normalizedAlt ? normalizedAlt : name;
-      return `![${altText}](${urlPath}/${sanitizedName})`;
+      return `![${altText}](${urlPath}${sanitizedName})`;
     });
   }
 
