@@ -247,12 +247,14 @@ export class Publisher {
       return failedResult(file.path, validationError);
     }
 
-    const batch = await this.prepareBatch([{ file, frontmatter, body }]);
     const result = await this.runPublishWorkflow({
-      prepared: batch.results,
-      fileEntries: batch.fileEntries,
-      readFailures: [],
       branchPrefix: "publish",
+      readFailures: [],
+      prepare: async () => {
+        const batch = await this.prepareBatch([{ file, frontmatter, body }]);
+        return { prepared: batch.results, fileEntries: batch.fileEntries };
+      },
+      synthesizeFailures: (message) => [failedResult(file.path, message)],
       commitMessage: () => `Publish: ${file.basename}`,
       prTitle: () => `Publish: ${file.basename}`,
       prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
@@ -294,12 +296,15 @@ export class Publisher {
       });
     }
 
-    const batch = await this.prepareBatch(files);
     return this.runPublishWorkflow({
-      prepared: batch.results,
-      fileEntries: batch.fileEntries,
-      readFailures,
       branchPrefix: "publish-batch",
+      readFailures,
+      prepare: async () => {
+        const batch = await this.prepareBatch(files);
+        return { prepared: batch.results, fileEntries: batch.fileEntries };
+      },
+      synthesizeFailures: (message) =>
+        files.map(({ file }) => failedResult(file.path, message)),
       commitMessage: (n) =>
         `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian`,
       prTitle: (succeeded) => `Batch Publish: ${succeeded.length} notes`,
@@ -332,39 +337,56 @@ export class Publisher {
   }
 
   /**
-   * Shared branch + commit + PR orchestration. Given prepared results and
-   * file entries, creates a branch, commits the entries, and opens a PR —
-   * cleaning up the branch on any failure. Callers supply the branch
-   * prefix and the commit-message / PR-title / PR-body builders so the
-   * single-note and batch paths can share the workflow while preserving
-   * their distinct PR shapes.
+   * Shared branch + commit + PR orchestration. Creates a branch first,
+   * then calls the caller's `prepare` closure to produce the entries to
+   * commit. If branch creation fails, `synthesizeFailures` is used to
+   * build per-file failed results (so the user sees N failures, not just
+   * a bare error). On any other failure, the prepared results are marked
+   * failed. Callers supply the branch prefix plus the commit-message and
+   * PR title/body builders so single-note and batch paths share this
+   * workflow while keeping their distinct PR shapes.
    */
   private async runPublishWorkflow(opts: {
-    prepared: PublishResult[];
-    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
-    readFailures: PublishResult[];
     branchPrefix: string;
+    readFailures: PublishResult[];
+    prepare: () => Promise<{
+      prepared: PublishResult[];
+      fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
+    }>;
+    synthesizeFailures: (message: string) => PublishResult[];
     commitMessage: (successCount: number) => string;
     prTitle: (succeeded: PublishResult[]) => string;
     prBody: (succeeded: PublishResult[]) => string;
   }): Promise<BatchPublishResult> {
-    let branchName: string | null = null;
+    let branchName: string;
     try {
       branchName = await this.githubService.createBranchWithRetry(
         opts.branchPrefix,
         this.baseBranch,
       );
+    } catch (error) {
+      const message = errorMessage(error);
+      return buildBatchResult(
+        [...opts.readFailures, ...opts.synthesizeFailures(message)],
+        { error: message },
+      );
+    }
 
-      const successCount = opts.prepared.filter((r) => r.success).length;
+    let prepared: PublishResult[] = [];
+    try {
+      const batch = await opts.prepare();
+      prepared = batch.prepared;
+
+      const successCount = prepared.filter((r) => r.success).length;
       const commitError = await this.commitPreparedBatch(
         branchName,
-        opts.prepared,
-        opts.fileEntries,
+        prepared,
+        batch.fileEntries,
         opts.commitMessage(successCount),
       );
 
-      const succeeded = opts.prepared.filter((r) => r.success);
-      const results = [...opts.readFailures, ...opts.prepared];
+      const succeeded = prepared.filter((r) => r.success);
+      const results = [...opts.readFailures, ...prepared];
 
       if (succeeded.length === 0) {
         await this.cleanupBranch(branchName);
@@ -383,10 +405,17 @@ export class Publisher {
         warnings: pr.warnings,
       });
     } catch (error) {
-      if (branchName) await this.cleanupBranch(branchName);
-      this.markResultsFailed(opts.prepared, error);
-      return buildBatchResult([...opts.readFailures, ...opts.prepared], {
-        error: errorMessage(error),
+      await this.cleanupBranch(branchName);
+      const message = errorMessage(error);
+      if (prepared.length === 0) {
+        return buildBatchResult(
+          [...opts.readFailures, ...opts.synthesizeFailures(message)],
+          { error: message },
+        );
+      }
+      this.markResultsFailed(prepared, error);
+      return buildBatchResult([...opts.readFailures, ...prepared], {
+        error: message,
       });
     }
   }
