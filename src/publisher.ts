@@ -182,6 +182,7 @@ export class Publisher {
   private async resolveImages(
     imageNames: string[],
     filesByBasename: Map<string, TFile[]>,
+    readCache: Map<string, ArrayBuffer>,
   ): Promise<{
     entries: Array<{ path: string; content: ArrayBuffer }>;
     warnings: PublishWarning[];
@@ -212,7 +213,12 @@ export class Publisher {
       }
 
       try {
-        const imageContent = await this.vault.readBinary(matches[0]);
+        const sourceFile = matches[0];
+        let imageContent = readCache.get(sourceFile.path);
+        if (!imageContent) {
+          imageContent = await this.vault.readBinary(sourceFile);
+          readCache.set(sourceFile.path, imageContent);
+        }
         const sanitizedName =
           this.contentProcessor.sanitizeImageName(imageName);
         const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
@@ -514,6 +520,9 @@ export class Publisher {
     const entryMap = new Map<string, string | ArrayBuffer>();
     const filesByBasename = this.buildFilesByBasename();
     const publishSet = this.buildPublishSet(files);
+    // Read each image source once per batch; multiple notes referencing
+    // the same image share the buffer.
+    const imageReadCache = new Map<string, ArrayBuffer>();
 
     for (const { file, frontmatter, body } of files) {
       try {
@@ -534,6 +543,7 @@ export class Publisher {
           const { entries: imageEntries, warnings } = await this.resolveImages(
             processed.images,
             filesByBasename,
+            imageReadCache,
           );
           for (const entry of imageEntries) {
             entryMap.set(entry.path, entry.content);
