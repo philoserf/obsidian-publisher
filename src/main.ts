@@ -46,12 +46,24 @@ function notifyWarnings(warnings: PublishWarning[]): void {
       `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
   );
   const targetCollisions = warnings.filter(
-    (w) => w.kind === "image-target-collision",
+    (w): w is Extract<PublishWarning, { kind: "image-target-collision" }> =>
+      w.kind === "image-target-collision",
   );
   if (targetCollisions.length > 0) {
-    const targets = [...new Set(targetCollisions.map((w) => w.targetPath))];
+    // One warning per (file, collision) pair can mean multiple warnings for
+    // the same targetPath when 3+ sources collide. Union sourceNames per
+    // target so every contributor reaches the user.
+    const byTarget = new Map<string, Set<string>>();
+    for (const w of targetCollisions) {
+      const names = byTarget.get(w.targetPath) ?? new Set<string>();
+      for (const n of w.sourceNames) names.add(n);
+      byTarget.set(w.targetPath, names);
+    }
+    const details = [...byTarget.entries()]
+      .map(([target, names]) => `${target} (${[...names].sort().join(", ")})`)
+      .join("; ");
     new Notice(
-      `Warning: ${targets.length} image target(s) collide, overwrites skipped: ${targets.join(", ")}`,
+      `Warning: ${byTarget.size} image target(s) collide, overwrites skipped: ${details}`,
     );
   }
   const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
