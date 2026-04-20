@@ -31,26 +31,20 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 3. **Branch/PR creation** — `github-service.ts` creates feature branch (if PR workflow enabled)
 4. **Content processing** — `content-processor.ts` converts Obsidian syntax to Hugo markdown
 5. **File upload** — `github-service.ts` uploads markdown and images via GitHub API
-6. **PR creation** — `github-service.ts` creates pull request (if PR workflow enabled)
+6. **PR creation** — `github-service.ts` creates pull request
 
 ### Component Responsibilities
 
-- **`main.ts`** — Plugin entry point: registers commands, loads settings, routes to Publisher, handles settings migration
-- **`publisher.ts`** — Orchestration: two workflows (`publishNote()` for direct commit, `publishNoteWithPR()` for branch+PR), batch publishing, frontmatter validation
+- **`main.ts`** — Plugin entry point: registers commands, loads settings, routes to Publisher
+- **`publisher.ts`** — Orchestration: `publishNote()` (single) and `publishAll()` (batch), both branch+PR, frontmatter validation
 - **`github-service.ts`** — GitHub API wrapper using Octokit. All REST API calls must be iOS-compatible
 - **`content-processor.ts`** — Wikilink/image conversion, filename sanitization, frontmatter processing
 - **`settings.ts`** — Plugin settings UI with GitHub connection test
 - **`types.ts`** — Type definitions: `PublisherSettings`, `PublishResult`, `BatchPublishResult`, `ProcessedContent`
 
-### Two Publishing Workflows
+### Publishing Workflow
 
-**Direct Commit (`usePullRequests = false`):** Files committed directly to base branch. Legacy mode for backward compatibility.
-
-**Branch + PR (`usePullRequests = true`):** Creates timestamped branch (`publish/2026-01-08-143022`), commits changes, creates PR with labels. Batch publishing uses one branch and one PR for all files. Branch collision handled via `createBranchWithRetry()` with suffix.
-
-### Settings Migration
-
-Existing users default to `usePullRequests = false` (preserves old behavior). New users default to `usePullRequests = true`. Migration logic in `main.ts:loadSettings()` checks for undefined `usePullRequests` field.
+Every publish (single note or batch) creates a timestamped branch (`publish/2026-01-08-143022`), commits changes, and opens a PR with configured labels against `baseBranch`. Batch publishing uses one branch and one PR for all files. Branch collision handled via `createBranchWithRetry()` with suffix.
 
 ### Content Transformations
 

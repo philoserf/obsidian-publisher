@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Direct-commit publish mode retired.** The `usePullRequests` setting is gone; every publish now creates a branch and opens a PR against `baseBranch`. Any user configured with `usePullRequests = false` (the pre-1.4.1 default for existing users) will see PR workflow at upgrade. The GitHub token now unconditionally requires `pull_requests:write` in addition to `contents:write`. The `"Use Pull Requests"` toggle has been removed from the settings UI (#198).
+
 ### Fixed
 
 - Dead-code cleanup: removed an unreachable `new Date()` fallback in `ContentProcessor.processFrontmatter`. No user-visible behavior change — `validateFrontmatter` has been rejecting notes with missing `date` upstream in every publish path since 1.4.0. The 1.4.0 entry below announced this removal; the actual deletion was missed at the time. This reconciles the CHANGELOG with the code (#167).

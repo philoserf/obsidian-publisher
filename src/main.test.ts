@@ -19,7 +19,6 @@ describe("batchNoticeText", () => {
     expect(
       batchNoticeText(
         result({ total: 0, error: "Filename collision: a.md, b.md" }),
-        false,
       ),
     ).toBe("✗ Failed to publish: Filename collision: a.md, b.md");
   });
@@ -28,36 +27,23 @@ describe("batchNoticeText", () => {
     expect(
       batchNoticeText(
         result({ total: 2, successful: 1, failed: 1, error: "batch abort" }),
-        true,
       ),
     ).toBe("✗ Failed to publish: batch abort");
   });
 
   test("no error, total=0 reports empty publish set", () => {
-    expect(batchNoticeText(result(), false)).toBe("No publishable notes found");
+    expect(batchNoticeText(result())).toBe("No publishable notes found");
   });
 
-  test("all failed, PR workflow", () => {
+  test("all failed", () => {
     expect(
-      batchNoticeText(result({ total: 3, successful: 0, failed: 3 }), true),
+      batchNoticeText(result({ total: 3, successful: 0, failed: 3 })),
     ).toBe("All files failed to process. No PR created.");
   });
 
-  test("all failed, direct commit", () => {
+  test("success summary", () => {
     expect(
-      batchNoticeText(result({ total: 3, successful: 0, failed: 3 }), false),
-    ).toBe("All files failed to process.");
-  });
-
-  test("success summary, PR workflow", () => {
-    expect(
-      batchNoticeText(result({ total: 3, successful: 2, failed: 1 }), true),
+      batchNoticeText(result({ total: 3, successful: 2, failed: 1 })),
     ).toBe("Batch publish complete: 2 succeeded, 1 failed");
-  });
-
-  test("success summary, direct commit", () => {
-    expect(
-      batchNoticeText(result({ total: 3, successful: 2, failed: 1 }), false),
-    ).toBe("Publishing complete: 2 succeeded, 1 failed out of 3 total");
   });
 });
