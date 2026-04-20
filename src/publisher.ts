@@ -70,7 +70,7 @@ export class Publisher {
   }
 
   private get baseBranch(): string {
-    return this.settings.baseBranch || "main";
+    return this.settings.baseBranch;
   }
 
   private get prLabels(): string[] {
@@ -95,8 +95,14 @@ export class Publisher {
   private async cleanupBranch(branchName: string): Promise<void> {
     try {
       await this.githubService.deleteBranch(branchName);
-    } catch {
-      // Best-effort cleanup
+    } catch (error) {
+      // Best-effort: a failed cleanup shouldn't mask the original publish
+      // error. Log so the dev console shows the orphaned branch and the
+      // reason — the user can delete it manually via the GitHub UI.
+      console.warn(
+        `Failed to clean up branch ${branchName}:`,
+        errorMessage(error),
+      );
     }
   }
 

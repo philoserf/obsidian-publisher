@@ -17,6 +17,7 @@
 ### Changed
 
 - Publisher: single-note and batch publishes now share one `runPublishWorkflow` orchestrator for branch creation, commit, PR creation, and cleanup. Internal refactor; no user-visible behavior change (branch prefix, commit message, PR title/body preserved per mode). Deletes the `publishFileToTarget`, `createBatchPR`, and `recoverFailedBatch` helpers; net −100 lines in `publisher.ts` (#153).
+- Tech-debt cleanup (#155): (1) `GitHubService.commitFiles` error narrowing now matches the pattern used by `createBranch` — generic `Error` gets wrapped with a descriptive prefix; `RequestError` rethrows unchanged so its status code survives. (2) `Publisher.cleanupBranch` no longer silently swallows delete-branch failures; logs a `console.warn` with the branch name so orphaned branches leave a dev-visible trace. Best-effort semantics preserved. (3) Removed a redundant `|| "main"` fallback from the `baseBranch` getter — `parseSettings` and the settings UI both guarantee a non-empty value.
 
 ## 1.5.0
 
