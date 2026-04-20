@@ -51,6 +51,15 @@ describe("parseSettings", () => {
     expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
   });
 
+  test("falls back when baseBranch is empty or whitespace", () => {
+    expect(parseSettings({ baseBranch: "" }).baseBranch).toBe(
+      DEFAULT_SETTINGS.baseBranch,
+    );
+    expect(parseSettings({ baseBranch: "   " }).baseBranch).toBe(
+      DEFAULT_SETTINGS.baseBranch,
+    );
+  });
+
   test("falls back when prLabels contains non-string items", () => {
     const result = parseSettings({ prLabels: ["chore", 42, "publish"] });
     expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);

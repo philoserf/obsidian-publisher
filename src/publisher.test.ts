@@ -243,15 +243,18 @@ describe("Publisher.publishNote", () => {
       throw new Error("delete refused");
     });
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
+    try {
+      const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishNote(makeTFile("test.md") as never);
+      const result = await publisher.publishNote(makeTFile("test.md") as never);
 
-    expect(result.success).toBe(false);
-    expect(warnSpy).toHaveBeenCalled();
-    const firstArg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(firstArg).toContain("Failed to clean up branch");
-    warnSpy.mockRestore();
+      expect(result.success).toBe(false);
+      expect(warnSpy).toHaveBeenCalled();
+      const firstArg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(firstArg).toContain("Failed to clean up branch");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test("accepts quoted status value", async () => {
