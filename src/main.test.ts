@@ -10,6 +10,7 @@ function result(
     successful: 0,
     failed: 0,
     results: [],
+    warnings: [],
     ...overrides,
   };
 }
