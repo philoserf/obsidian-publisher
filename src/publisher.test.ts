@@ -191,6 +191,19 @@ describe("Publisher.publishNote", () => {
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
   });
 
+  test("surfaces malformed frontmatter YAML as parse error", async () => {
+    const malformed = "---\n: bad yaml :\n---\nbody";
+    const vault = makeVault([{ name: "broken.md", content: malformed }]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("broken.md") as never);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/^Malformed frontmatter YAML: /);
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+  });
+
   test("returns success with label warning when label apply fails", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
     const gh = makeGitHubService();
@@ -582,6 +595,25 @@ describe("Publisher.publishAll", () => {
     expect(progress).toHaveBeenCalledTimes(3);
     expect(progress.mock.calls[0]).toEqual([1, 3]);
     expect(progress.mock.calls[2]).toEqual([3, 3]);
+  });
+
+  test("batch surfaces malformed frontmatter YAML per-file", async () => {
+    const malformed = "---\n: bad yaml :\n---\nbody";
+    const vault = makeVault([
+      { name: "good.md", content: publishedNote },
+      { name: "broken.md", content: malformed },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(1);
+    expect(result.failed).toBe(1);
+    const brokenResult = result.results.find((r) => r.filePath === "broken.md");
+    expect(brokenResult?.success).toBe(false);
+    expect(brokenResult?.error).toMatch(/^Malformed frontmatter YAML: /);
   });
 
   test("batch publish fails per-file on missing required field", async () => {

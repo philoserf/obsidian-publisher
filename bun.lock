@@ -5,15 +5,16 @@
     "": {
       "name": "obsidian-publisher",
       "dependencies": {
-        "@octokit/request-error": "latest",
-        "@octokit/rest": "latest",
+        "@octokit/request-error": "^7.1.0",
+        "@octokit/rest": "^22.0.1",
       },
       "devDependencies": {
-        "@biomejs/biome": "latest",
-        "@types/bun": "latest",
-        "@types/node": "latest",
-        "obsidian": "latest",
-        "typescript": "latest",
+        "@biomejs/biome": "^2.4.10",
+        "@types/bun": "^1.3.11",
+        "@types/node": "^25.5.2",
+        "obsidian": "^1.12.3",
+        "typescript": "^6.0.2",
+        "yaml": "^2.8.3",
       },
     },
   },
@@ -97,6 +98,8 @@
     "universal-user-agent": ["universal-user-agent@7.0.3", "", {}, "sha512-TmnEAEAsBJVZM/AADELsK76llnwcf9vMKuPz8JflO1frO8Lchitr0fNaN9d+Ap0BjKtqWqd/J17qeDnXh8CL2A=="],
 
     "w3c-keyname": ["w3c-keyname@2.2.8", "", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
+
+    "yaml": ["yaml@2.8.3", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg=="],
 
     "bun-types/@types/node": ["@types/node@25.5.0", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw=="],
   }
