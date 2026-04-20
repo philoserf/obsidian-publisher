@@ -1,72 +1,69 @@
 # Obsidian Publisher Walkthrough
 
-*2026-04-18T14:20:50Z by Showboat 0.6.1*
-<!-- showboat-id: 0831c464-e5bf-40e6-9a68-8f30a9f62256 -->
+*2026-04-20T15:43:18Z by Showboat 0.6.1*
+<!-- showboat-id: 332d17de-2bbd-4eaf-9f1a-8f253b839e88 -->
 
 ## Overview
 
-Obsidian Publisher is an Obsidian plugin that publishes vault notes to a Hugo
-site's GitHub repository. It scans for notes marked `status: publish`,
-transforms Obsidian-flavored markdown into Hugo-ready output, and commits the
-files via the GitHub REST API. No local Git binary is involved — the plugin
-runs on desktop **and iOS** from a single codebase.
+Obsidian Publisher is an Obsidian plugin that publishes notes marked `status: publish` from an Obsidian vault to a GitHub repository for Hugo static-site processing. Every publish creates a timestamped feature branch, commits the transformed files, and opens a pull request — the "direct commit" workflow was retired in 1.6.0.
 
-**Tech stack**
+**Key constraint:** all GitHub operations use Octokit's REST API. Never local Git commands or shell-bound tools — the plugin must work on iOS.
 
-- TypeScript, bundled to a single `main.js` via Bun
-- Obsidian Plugin API (`obsidian` peer dep)
-- Octokit (`@octokit/rest`) for all GitHub operations
-- `bun:test` for unit tests
-
-**Key constraint:** every GitHub operation must go through Octokit's REST
-endpoints. Anything requiring shell access would break iOS.
+**Stack:** TypeScript, Bun runtime + bundler + test runner, Biome for format/lint, Octokit for GitHub API.
 
 ## Architecture
 
-The source lives in a flat `src/` directory. Each module has a narrow
-responsibility; test files sit next to their source.
+The source lives in `src/`, with one file per responsibility:
 
 ```bash
-ls src/*.ts | grep -v '\.test\.ts$'
+ls src/*.ts | sort
 ```
 
 ```output
+src/content-processor.test.ts
 src/content-processor.ts
+src/github-service.test.ts
 src/github-service.ts
+src/main.test.ts
 src/main.ts
+src/publisher.test.ts
 src/publisher.ts
+src/schema.test.ts
 src/schema.ts
+src/settings.test.ts
 src/settings.ts
 src/test-preload.ts
+src/types.test.ts
 src/types.ts
 ```
 
-**Module responsibilities**
+Module boundaries:
 
-| Module | Role |
-|---|---|
-| `main.ts` | Plugin entry point — command registration, settings load with shape validation, publish dispatch, warning aggregation |
-| `publisher.ts` | Orchestration — four publish workflows (single/batch × direct/PR), image resolution, read-failure surfacing, error recovery |
-| `content-processor.ts` | Transform pipeline — frontmatter, callouts, mermaid, images, wikilinks, slug sanitization |
-| `github-service.ts` | Octokit wrapper — branch/PR/blob/tree/commit via REST; iOS-safe base64; non-fatal label failures |
-| `schema.ts` | Frontmatter split (LF + CRLF) + publish-flag gate + required-field validation |
-| `settings.ts` | Plugin settings UI with debounced save and GitHub connection test |
-| `types.ts` | Shared types: `PublisherSettings`, `PublishResult`, `BatchPublishResult`, `PublishWarning`, plus `parseSettings` and `isPlainObject` helpers |
-| `test-preload.ts` | Consolidated mocks for `obsidian` imports in tests |
+- **`main.ts`** — Plugin entry. Registers commands, loads/saves settings, routes commands to `Publisher`, renders user Notices.
+- **`publisher.ts`** — Publishing orchestration. `publishNote` (single) and `publishAll` (batch) share a `runPublishWorkflow` helper.
+- **`github-service.ts`** — Octokit wrapper. Branch/commit/PR/delete primitives; a `rethrowWithPrefix` helper normalizes error narrowing.
+- **`content-processor.ts`** — Obsidian-to-Hugo transforms: wikilinks, image embeds, callouts, mermaid, frontmatter shaping.
+- **`schema.ts`** — Frontmatter parsing, the `status: publish` gate, `title`/`date` validation.
+- **`settings.ts`** — Plugin settings UI and input sanitizers.
+- **`types.ts`** — Shared types (`PublisherSettings`, `PublishResult`, `BatchPublishResult`, `PublishWarning`, `ProcessedContent`) and `parseSettings` — the single load-time data validator.
 
-**Data flow for a single publish:** `main` → `Publisher.publishNote*` →
-(read file, `schema.splitFrontmatter`, gate, validate) →
-`ContentProcessor.processFromSplit` → `Publisher.resolveImages` →
-`GitHubService.commitFiles` → optional `createPullRequest`.
-
-## Entry point: `main.ts`
-
-The plugin class extends Obsidian's `Plugin`. On load it hydrates settings,
-installs the settings tab, and registers two commands: "Publish current note"
-(editor-bound) and "Publish all notes" (vault-wide).
+Tests live next to source as `*.test.ts`. Bun's runner is configured via `bunfig.toml` to preload a mock for the `obsidian` module and Octokit:
 
 ```bash
-sed -n '60,89p' src/main.ts
+cat bunfig.toml
+```
+
+```output
+[test]
+preload = ["./src/test-preload.ts"]
+```
+
+## Entry Point: main.ts
+
+The plugin registers two commands on load:
+
+```bash
+sed -n '67,96p' src/main.ts
 ```
 
 ```output
@@ -102,138 +99,201 @@ sed -n '60,89p' src/main.ts
   }
 ```
 
-**Publisher access is deliberately per-call.** The `publisher` getter
-returns a *fresh* `Publisher` each time. Commands assign it to a local once
-so progress notices and the call chain share a single instance. The
-`onProgress` callback fires a transient `Prepared: done/total` notice
-during batch preparation.
+Both command callbacks delegate to private methods on the plugin class. Those methods:
+1. Build a `Publisher` via a cached getter
+2. Run `publisher.validateSettings()` — refuses publish with a Notice if GitHub creds or content/image dirs are missing
+3. Call `publisher.publishNote(file)` or `publisher.publishAll()`
+4. Classify the result and fire a Notice
+
+Batch classification is factored into a pure helper for test coverage — the helper takes a `BatchPublishResult` and returns exactly one Notice string:
 
 ```bash
-sed -n '48,58p' src/main.ts
+sed -n '27,34p' src/main.ts
 ```
 
 ```output
-export default class ObsidianPublisher extends Plugin {
-  settings!: PublisherSettings;
-  private settingTab?: PublisherSettingTab;
-
-  // Constructs a fresh Publisher on each access; assign to a local once per command.
-  // Reading `this.publisher` twice yields two distinct instances.
-  private get publisher(): Publisher {
-    return new Publisher(this.app.vault, this.settings, (done, total) => {
-      new Notice(`Prepared: ${done}/${total}`);
-    });
+export function batchNoticeText(result: BatchPublishResult): string {
+  if (result.error) return `✗ Failed to publish: ${result.error}`;
+  if (result.total === 0) return "No publishable notes found";
+  if (result.successful === 0) {
+    return "All files failed to process. No PR created.";
   }
-```
-
-**Settings load is shape-validated.** `loadSettings` runs persisted data
-through `parseSettings` (in `types.ts`), which falls back per-field to
-`DEFAULT_SETTINGS` on type mismatch. This guards against corrupted or
-hand-edited `data.json` — `prLabels` as a string, `frontmatterTemplate`
-as `null`, `usePullRequests` as a string — that previously crashed
-downstream code. The migration check (existing users → `usePullRequests:
-false`) reads raw `data` so the "no key present" signal isn't erased by
-`parseSettings`'s default fill-in.
-
-```bash
-sed -n '96,109p' src/main.ts
-```
-
-```output
-  async loadSettings() {
-    const data = await this.loadData();
-    this.settings = parseSettings(data);
-
-    // Migration: existing users (data exists, no usePullRequests field) default
-    // to false to preserve pre-PR-workflow behavior. Check raw data so the
-    // signal isn't erased by parseSettings's default fill-in.
-    if (isPlainObject(data) && !("usePullRequests" in data)) {
-      this.settings.usePullRequests = false;
-      await this.saveSettings();
-    }
-  }
-
-  async saveSettings() {
-```
-
-**Warnings are kind-tagged.** Non-fatal conditions travel through
-`PublishResult.warnings` (per file) and `BatchPublishResult.warnings`
-(batch-level, e.g. PR label apply failure) as a discriminated union.
-Image warnings share a `name` field; `pr-label-failed` carries
-`labels` and `error`. Image-kind dispatch goes through
-`notifyImageWarnings`, which uses `Extract<PublishWarning, { name:
-string }>` to narrow the shape; the `pr-label-failed` branch is
-inline because its shape diverges.
-
-```bash
-sed -n '14,46p' src/main.ts
-```
-
-```output
-type NamedImageWarning = Extract<PublishWarning, { name: string }>;
-
-function notifyImageWarnings(
-  warnings: PublishWarning[],
-  kind: NamedImageWarning["kind"],
-  format: (names: string[]) => string,
-): void {
-  const filtered = warnings.filter(
-    (w): w is NamedImageWarning => w.kind === kind,
-  );
-  if (filtered.length === 0) return;
-  const names = [...new Set(filtered.map((w) => w.name))];
-  new Notice(format(names));
-}
-
-function notifyWarnings(warnings: PublishWarning[]): void {
-  notifyImageWarnings(
-    warnings,
-    "image-failed",
-    (names) => `Warning: ${names.length} image(s) failed: ${names.join(", ")}`,
-  );
-  notifyImageWarnings(
-    warnings,
-    "image-collision",
-    (names) =>
-      `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
-  );
-  const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
-  if (labelFailures.length > 0) {
-    const all = [...new Set(labelFailures.flatMap((w) => w.labels))];
-    new Notice(`Warning: failed to apply PR labels: ${all.join(", ")}`);
-  }
+  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`;
 }
 ```
 
-**Batch warnings flow into the notifier too.** The batch publish path
-sources warnings from both per-file results and `BatchPublishResult.warnings`
-so PR-level conditions surface in the same place as image-level ones.
+Error-first ordering matters: `result.error` wins over `total === 0`, so a batch-level abort (e.g., filename collision) surfaces the real cause instead of the misleading "No publishable notes found."
+
+## Types & Settings: types.ts
+
+All shared types and `parseSettings` (the single load-time validator) live here. `PublisherSettings` defines the persisted config shape:
 
 ```bash
-sed -n '199,202p' src/main.ts
+sed -n '6,29p' src/types.ts
 ```
 
 ```output
-      notifyWarnings([
-        ...result.results.flatMap((r) => r.warnings),
-        ...(result.warnings ?? []),
-      ]);
+export interface PublisherSettings {
+  /** GitHub personal access token */
+  githubToken: string;
+  /** Repository owner (username or organization) */
+  repoOwner: string;
+  /** Repository name */
+  repoName: string;
+  /** Content directory path in the Hugo repository (e.g., "content/posts") */
+  contentDir: string;
+  /** Image directory path in the Hugo repository (e.g., "static/images") */
+  imageDir: string;
+  /** Additional frontmatter fields to inject during publishing */
+  frontmatterTemplate: Record<string, unknown>;
+  /** Frontmatter field names to strip when publishing */
+  strippedFrontmatterFields: string[];
+  /** Base branch to create PRs against (default: "main") */
+  baseBranch: string;
+  /** Labels to apply to pull requests */
+  prLabels: string[];
+  /** Hugo shortcode name for Obsidian callouts (default: "callout") */
+  calloutShortcodeName: string;
+  /** Hugo shortcode name for mermaid diagrams (default: "mermaid") */
+  mermaidShortcodeName: string;
+}
 ```
 
-## The schema module
-
-`schema.ts` is the single source of truth for frontmatter handling. It
-exports three constants (the publish field, the sentinel value, and the
-required-field list), a `splitFrontmatter` parser, a `hasPublishFlag`
-gate, and a `validateFrontmatter` check.
-
-**Sentinel: `status: publish`** — this is *intent*, not state. The
-`FRONTMATTER_REGEX` accepts both LF and CRLF line endings (the optional
-`\r?` makes Windows / Windows-host iCloud / Dropbox files parse instead
-of silently failing the gate).
+`parseSettings` is the only entry path for persisted data. It type-checks each field, falling back to `DEFAULT_SETTINGS` on type mismatch; a single corrupted field does not wipe the user's config:
 
 ```bash
-sed -n '1,9p' src/schema.ts
+sed -n '159,200p' src/types.ts
+```
+
+```output
+export function parseSettings(data: unknown): PublisherSettings {
+  const d = isPlainObject(data) ? data : {};
+  return {
+    githubToken:
+      typeof d.githubToken === "string"
+        ? d.githubToken
+        : DEFAULT_SETTINGS.githubToken,
+    repoOwner:
+      typeof d.repoOwner === "string"
+        ? d.repoOwner
+        : DEFAULT_SETTINGS.repoOwner,
+    repoName:
+      typeof d.repoName === "string" ? d.repoName : DEFAULT_SETTINGS.repoName,
+    contentDir:
+      typeof d.contentDir === "string"
+        ? d.contentDir
+        : DEFAULT_SETTINGS.contentDir,
+    imageDir:
+      typeof d.imageDir === "string" ? d.imageDir : DEFAULT_SETTINGS.imageDir,
+    frontmatterTemplate: isPlainObject(d.frontmatterTemplate)
+      ? d.frontmatterTemplate
+      : DEFAULT_SETTINGS.frontmatterTemplate,
+    strippedFrontmatterFields: resolveStrippedFields(d),
+    baseBranch:
+      typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""
+        ? d.baseBranch
+        : DEFAULT_SETTINGS.baseBranch,
+    prLabels: isStringArray(d.prLabels)
+      ? d.prLabels
+      : DEFAULT_SETTINGS.prLabels,
+    calloutShortcodeName:
+      typeof d.calloutShortcodeName === "string" &&
+      /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)
+        ? d.calloutShortcodeName
+        : DEFAULT_SETTINGS.calloutShortcodeName,
+    mermaidShortcodeName:
+      typeof d.mermaidShortcodeName === "string" &&
+      /^[a-zA-Z0-9_-]+$/.test(d.mermaidShortcodeName)
+        ? d.mermaidShortcodeName
+        : DEFAULT_SETTINGS.mermaidShortcodeName,
+  };
+}
+```
+
+Two behaviors worth noting:
+
+- `baseBranch` accepts non-empty strings only — trims then falls back if empty. Guarantees the invariant that downstream code assumes.
+- `strippedFrontmatterFields` is resolved via `resolveStrippedFields`, which filters required fields (`title`, `date`) so a misconfigured list can't strip them:
+
+```bash
+sed -n '138,152p' src/types.ts
+```
+
+```output
+function resolveStrippedFields(d: Record<string, unknown>): string[] {
+  if (isStringArray(d.strippedFrontmatterFields)) {
+    return filterRequiredFields(d.strippedFrontmatterFields);
+  }
+  const defaults = [...DEFAULT_SETTINGS.strippedFrontmatterFields];
+  if (d.removePublishFlag === false) {
+    return filterRequiredFields(defaults.filter((f) => f !== "status"));
+  }
+  return filterRequiredFields(defaults);
+}
+
+function filterRequiredFields(fields: string[]): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+  return fields.filter((f) => !required.has(f));
+}
+```
+
+`removePublishFlag` is the legacy boolean setting that `strippedFrontmatterFields` replaced in 1.4.0; the `false` branch preserves the migration for users who persisted it.
+
+`PublishResult` and `BatchPublishResult` are the return shapes callers consume:
+
+```bash
+sed -n '75,114p' src/types.ts
+```
+
+```output
+export type PublishWarning =
+  | { kind: "image-failed"; name: string }
+  | { kind: "image-collision"; name: string; paths: string[] }
+  | { kind: "pr-label-failed"; labels: string[]; error: string };
+
+/**
+ * Publishing result for a single note
+ */
+export interface PublishResult {
+  /** Original file path */
+  filePath: string;
+  /** Whether the publish was successful */
+  success: boolean;
+  /** Error message if failed */
+  error?: string;
+  /** Non-fatal conditions noticed during publish; always present, [] when none */
+  warnings: PublishWarning[];
+  /** URL to the pull request if created (single-file PR workflow only) */
+  prUrl?: string;
+}
+
+/**
+ * Batch publishing summary
+ */
+export interface BatchPublishResult {
+  /** Total number of notes attempted */
+  total: number;
+  /** Number of successful publishes */
+  successful: number;
+  /** Number of failed publishes */
+  failed: number;
+  /** Individual results */
+  results: PublishResult[];
+  /** URL to the pull request if created */
+  prUrl?: string;
+  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
+  error?: string;
+  /** Batch-level non-fatal conditions (e.g. PR label apply failed) */
+  warnings?: PublishWarning[];
+}
+```
+
+## Frontmatter Gate: schema.ts
+
+Two functions guard publishing: `hasPublishFlag` (intent check) and `validateFrontmatter` (correctness check). Constants define the publish sentinel and required fields:
+
+```bash
+sed -n '1,10p' src/schema.ts
 ```
 
 ```output
@@ -246,52 +306,18 @@ export const REQUIRED_FRONTMATTER_FIELDS = ["title", "date"] as const;
 export type Frontmatter = Record<string, unknown>;
 
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
+
 ```
 
-**`splitFrontmatter` is forgiving.** A missing delimiter yields `{}` +
-full body; a YAML parse error logs and returns `{}` + the body portion.
-Non-object YAML (arrays, scalars) is coerced to `{}`. This means the
-*presence* of the `status: publish` flag becomes the gate — callers rely
-on `hasPublishFlag` rather than on structural YAML validity.
-
 ```bash
-sed -n '11,32p' src/schema.ts
+sed -n '30,55p' src/schema.ts
 ```
 
 ```output
-export function splitFrontmatter(content: string): {
-  frontmatter: Frontmatter;
-  body: string;
-} {
-  const match = content.match(FRONTMATTER_REGEX);
-  if (!match) return { frontmatter: {}, body: content };
-  try {
-    const parsed = parseYaml(match[1]);
-    const frontmatter =
-      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-        ? (parsed as Frontmatter)
-        : {};
-    return { frontmatter, body: match[2] };
-  } catch (error) {
-    console.error("Failed to parse frontmatter:", error);
-    return { frontmatter: {}, body: match[2] };
-  }
-}
-
 export function hasPublishFlag(frontmatter: Frontmatter): boolean {
   return frontmatter[PUBLISH_STATUS_FIELD] === PUBLISH_STATUS_VALUE;
 }
-```
 
-**Required-field validation aggregates all issues.** Each missing/invalid
-field contributes to the joined error message so a single publish attempt
-reports every problem at once, not just the first.
-
-```bash
-sed -n '34,55p' src/schema.ts
-```
-
-```output
 type RequiredField = (typeof REQUIRED_FRONTMATTER_FIELDS)[number];
 
 function validateField(value: unknown, field: RequiredField): string | null {
@@ -316,71 +342,22 @@ export function validateFrontmatter(frontmatter: Frontmatter): string | null {
 }
 ```
 
-## The Publisher class
+`date` accepts both strings (e.g. `"2026-04-20"`) and JavaScript `Date` instances (because `parseYaml` coerces ISO-like dates). All other required fields must be non-empty strings. Errors from multiple missing/invalid fields are joined into one message so the user sees every problem at once.
 
-`Publisher` owns orchestration. It's constructed fresh per command
-(see the getter in `main.ts`) and holds a `ContentProcessor`, a
-`GitHubService`, and an optional progress callback. The `baseBranch`
-and `prLabels` getters apply literal fallback defaults so empty-string
-or missing settings don't leak into API calls.
+`hasPublishFlag` is an *intent* check — missing or non-`publish` status is silent (file just doesn't enter the publish set). `validateFrontmatter` is a *correctness* check — an intended-to-publish file with missing `title` or `date` becomes a per-file failure.
+
+## Publisher: the orchestration
+
+`Publisher` owns the publish workflow. Its public surface is three methods: `publishNote`, `publishAll`, `validateSettings`. Internally, both publish methods share a private `runPublishWorkflow` for the branch-commit-PR dance.
+
+`publishNote` reads, gates, validates, then delegates:
 
 ```bash
-sed -n '53,78p' src/publisher.ts
+sed -n '234,278p' src/publisher.ts
 ```
 
 ```output
-export class Publisher {
-  private vault: Vault;
-  private settings: PublisherSettings;
-  private contentProcessor: ContentProcessor;
-  private githubService: GitHubService;
-  private onProgress?: ProgressCallback;
-
-  constructor(
-    vault: Vault,
-    settings: PublisherSettings,
-    onProgress?: ProgressCallback,
-  ) {
-    this.vault = vault;
-    this.settings = settings;
-    this.contentProcessor = new ContentProcessor(settings);
-    this.githubService = new GitHubService(settings);
-    this.onProgress = onProgress;
-  }
-
-  private get baseBranch(): string {
-    return this.settings.baseBranch || "main";
-  }
-
-  private get prLabels(): string[] {
-    return this.settings.prLabels || ["chore"];
-  }
-```
-
-**Four public workflows.** Single-file and batch, each in direct-commit
-and branch+PR flavors.
-
-- `publishNote` — thin wrapper over `publishFileToTarget` (no branch).
-- `publishNoteWithPR` — creates a timestamped branch, commits, opens a
-  PR, rolls back the branch on commit failure (but **not** on label
-  failure — labels surface as warnings, see GitHub service section).
-- `publishAll` — scans the vault, prepares a batch, commits to
-  `baseBranch` atomically. Read failures from the scan thread back as
-  per-file failed results.
-- `publishAllWithPR` — scans, prepares, commits to a single batch
-  branch, opens one PR listing all succeeded files. Read failures and
-  PR-level warnings flow into the batch result.
-
-The common shape is: read → split → gate → validate → transform →
-resolve images → commit. PR variants add branch lifecycle + PR creation
-around that.
-
-```bash
-sed -n '200,251p' src/publisher.ts
-```
-
-```output
-  async publishNoteWithPR(file: TFile): Promise<PublishResult> {
+  async publishNote(file: TFile): Promise<PublishResult> {
     let content: string;
     try {
       content = await this.vault.read(file);
@@ -400,114 +377,177 @@ sed -n '200,251p' src/publisher.ts
       return failedResult(file.path, validationError);
     }
 
-    let branchName: string | null = null;
+    const result = await this.runPublishWorkflow({
+      branchPrefix: "publish",
+      readFailures: [],
+      prepare: async () => {
+        const batch = await this.prepareBatch([{ file, frontmatter, body }]);
+        return { prepared: batch.results, fileEntries: batch.fileEntries };
+      },
+      synthesizeFailures: (message) => [failedResult(file.path, message)],
+      commitMessage: () => `Publish: ${file.basename}`,
+      prTitle: () => `Publish: ${file.basename}`,
+      prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
+    });
 
-    try {
-      branchName = await this.githubService.createBranchWithRetry(
-        "publish",
-        this.baseBranch,
-      );
-
-      const result = await this.publishFileToTarget(file, branchName, {
-        frontmatter,
-        body,
-      });
-
-      if (!result.success) {
-        await this.cleanupBranch(branchName);
-        return result;
-      }
-
-      const prTitle = `Publish: ${file.basename}`;
-      const prBody = `Published from Obsidian\n\n**File:** ${file.path}`;
-      const pr = await this.githubService.createPullRequest(
-        branchName,
-        this.baseBranch,
-        prTitle,
-        prBody,
-        this.prLabels,
-      );
-
-      return {
-        ...result,
-        prUrl: pr.url,
-        warnings: [...result.warnings, ...pr.warnings],
-```
-
-**Vault scan surfaces read failures.** `getPublishableFiles` reads each
-markdown file, splits frontmatter, and keeps notes with the publish
-flag. Files that fail to read are no longer silently dropped — they
-become per-file failed results that flow into the batch result so a
-mobile user sees them in a Notice instead of `console.error`.
-
-```bash
-sed -n '483,510p' src/publisher.ts
-```
-
-```output
-  private async getPublishableFiles(): Promise<{
-    files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>;
-    readFailures: PublishResult[];
-  }> {
-    const markdownFiles = this.vault.getMarkdownFiles();
-    const files: Array<{
-      file: TFile;
-      frontmatter: Frontmatter;
-      body: string;
-    }> = [];
-    const readFailures: PublishResult[] = [];
-
-    for (const file of markdownFiles) {
-      try {
-        const content = await this.vault.read(file);
-        const { frontmatter, body } = splitFrontmatter(content);
-        if (hasPublishFlag(frontmatter)) {
-          files.push({ file, frontmatter, body });
-        }
-      } catch (error) {
-        readFailures.push(
-          failedResult(file.path, `Failed to read: ${errorMessage(error)}`),
-        );
-      }
+    const single =
+      result.results[0] ??
+      failedResult(file.path, result.error ?? "Unknown error");
+    if (!single.success) {
+      return single;
     }
-
-    return { files, readFailures };
+    return {
+      ...single,
+      prUrl: result.prUrl,
+      warnings: [...single.warnings, ...(result.warnings ?? [])],
+    };
   }
 ```
 
-**Read-failure summarization.** When the only failures are read failures
-(no commit was attempted), the batch-level `error` is set to a summary
-so `main.ts` can surface it in a Notice rather than the generic "All
-files failed to process" message. Single read failure → its message
-verbatim; multiple → "Failed to read N files".
+Single-note publishes route through `prepareBatch` with a one-element list — the same pipeline batches use. The trailing adapter reconciles the batch-shaped return to a single `PublishResult`.
+
+`publishAll` adds the vault scan and collision precheck, then delegates to the same workflow:
 
 ```bash
-sed -n '40,52p' src/publisher.ts
+sed -n '283,320p' src/publisher.ts
 ```
 
 ```output
-}
+  async publishAll(): Promise<BatchPublishResult> {
+    const { files, readFailures } = await this.getPublishableFiles();
+    if (files.length === 0) {
+      return buildBatchResult(readFailures, {
+        error: summarizeReadFailures(readFailures),
+      });
+    }
 
-// Summary surfaces in the user-facing Notice when no commit was attempted
-// and read failures are the only cause; per-file errors otherwise live in
-// console.log, which mobile users can't see.
-function summarizeReadFailures(
-  readFailures: PublishResult[],
-): string | undefined {
-  if (readFailures.length === 0) return undefined;
-  if (readFailures.length === 1) return readFailures[0].error;
-  return `Failed to read ${readFailures.length} files`;
-}
+    const collisions = this.detectFilenameCollisions(files);
+    if (collisions.length > 0) {
+      const collisionError = this.filenameCollisionError(collisions);
+      const collisionFailures = this.synthesizeCollisionFailures(
+        files,
+        collisionError,
+      );
+      return buildBatchResult([...readFailures, ...collisionFailures], {
+        error: collisionError,
+      });
+    }
 
+    return this.runPublishWorkflow({
+      branchPrefix: "publish-batch",
+      readFailures,
+      prepare: async () => {
+        const batch = await this.prepareBatch(files);
+        return { prepared: batch.results, fileEntries: batch.fileEntries };
+      },
+      synthesizeFailures: (message) =>
+        files.map(({ file }) => failedResult(file.path, message)),
+      commitMessage: (n) =>
+        `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian`,
+      prTitle: (succeeded) => `Batch Publish: ${succeeded.length} notes`,
+      prBody: (succeeded) =>
+        `Published ${succeeded.length} notes from Obsidian\n\n${succeeded
+          .map((r) => `- ${r.filePath}`)
+          .join("\n")}`,
+    });
+  }
 ```
 
-**Batch preparation deduplicates by target path.** An `entryMap` keyed
-by `contentDir/filename` means two notes that sanitize to the same slug
-collapse into one entry (last-write-wins). This is a known gap — slug
-collision precheck is tracked in issue #166.
+The collision precheck — added in 1.5.0 — blocks the batch before any GitHub API calls when two notes would sanitize to the same filename (e.g., `Hello World.md` and `hello world.md` both → `hello-world.md`). This surfaces synthetic per-file failures so the error reaches the user instead of being swallowed by the "no publishable notes" guard in `main.ts`.
+
+`runPublishWorkflow` is where the branch-commit-PR sequence lives. It accepts closures for the caller's mode (single vs batch) so the workflow stays generic:
 
 ```bash
-sed -n '518,560p' src/publisher.ts
+sed -n '353,425p' src/publisher.ts
+```
+
+```output
+  private async runPublishWorkflow(opts: {
+    branchPrefix: string;
+    readFailures: PublishResult[];
+    prepare: () => Promise<{
+      prepared: PublishResult[];
+      fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
+    }>;
+    synthesizeFailures: (message: string) => PublishResult[];
+    commitMessage: (successCount: number) => string;
+    prTitle: (succeeded: PublishResult[]) => string;
+    prBody: (succeeded: PublishResult[]) => string;
+  }): Promise<BatchPublishResult> {
+    let branchName: string;
+    try {
+      branchName = await this.githubService.createBranchWithRetry(
+        opts.branchPrefix,
+        this.baseBranch,
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      return buildBatchResult(
+        [...opts.readFailures, ...opts.synthesizeFailures(message)],
+        { error: message },
+      );
+    }
+
+    let prepared: PublishResult[] = [];
+    try {
+      const batch = await opts.prepare();
+      prepared = batch.prepared;
+
+      const successCount = prepared.filter((r) => r.success).length;
+      const commitError = await this.commitPreparedBatch(
+        branchName,
+        prepared,
+        batch.fileEntries,
+        opts.commitMessage(successCount),
+      );
+
+      const succeeded = prepared.filter((r) => r.success);
+      const results = [...opts.readFailures, ...prepared];
+
+      if (succeeded.length === 0) {
+        await this.cleanupBranch(branchName);
+        return buildBatchResult(results, { error: commitError });
+      }
+
+      const pr = await this.githubService.createPullRequest(
+        branchName,
+        this.baseBranch,
+        opts.prTitle(succeeded),
+        opts.prBody(succeeded),
+        this.prLabels,
+      );
+      return buildBatchResult(results, {
+        prUrl: pr.url,
+        warnings: pr.warnings,
+      });
+    } catch (error) {
+      await this.cleanupBranch(branchName);
+      const message = errorMessage(error);
+      if (prepared.length === 0) {
+        return buildBatchResult(
+          [...opts.readFailures, ...opts.synthesizeFailures(message)],
+          { error: message },
+        );
+      }
+      this.markResultsFailed(prepared, error);
+      return buildBatchResult([...opts.readFailures, ...prepared], {
+        error: message,
+      });
+    }
+  }
+```
+
+Two distinct failure paths:
+
+1. **Branch creation fails** — nothing to clean up; return per-file failures synthesized by the caller's `synthesizeFailures` closure with the branch-error message.
+2. **Anything after branch creation fails** — clean up the branch (best-effort), mark the already-prepared results as failed, or synthesize if `prepare` itself threw.
+
+The call order is deliberate: branch first, then prepare. Preparing before branch creation would waste vault reads and image resolution when auth fails, and would mix validation results with a batch-level branch error in the user's per-file output.
+
+`prepareBatch` does the per-file content transformation — validate, process, resolve images — accumulating results and a deduplicated entry map:
+
+```bash
+sed -n '492,540p' src/publisher.ts
 ```
 
 ```output
@@ -520,6 +560,7 @@ sed -n '518,560p' src/publisher.ts
     const results: PublishResult[] = [];
     const entryMap = new Map<string, string | ArrayBuffer>();
     const filesByBasename = this.buildFilesByBasename();
+    const publishSet = this.buildPublishSet(files);
 
     for (const { file, frontmatter, body } of files) {
       try {
@@ -531,6 +572,7 @@ sed -n '518,560p' src/publisher.ts
             frontmatter,
             body,
             file.name,
+            publishSet,
           );
 
           const targetPath = `${this.settings.contentDir}/${processed.filename}`;
@@ -554,145 +596,24 @@ sed -n '518,560p' src/publisher.ts
     }
 
     const fileEntries = Array.from(entryMap.entries()).map(
-```
-
-**Image resolution is basename-based with collision detection.** The
-vault is indexed by file basename once, then each referenced image
-lookup yields zero (missing → warning), one (read + rewrite path), or
-many matches (collision → skip + warning with sorted paths). The
-sorted paths make collision warnings stable across runs.
-
-```bash
-sed -n '113,160p' src/publisher.ts
-```
-
-```output
-  private async resolveImages(
-    imageNames: string[],
-    filesByBasename: Map<string, TFile[]>,
-  ): Promise<{
-    entries: Array<{ path: string; content: ArrayBuffer }>;
-    warnings: PublishWarning[];
-  }> {
-    const entries: Array<{ path: string; content: ArrayBuffer }> = [];
-    const warnings: PublishWarning[] = [];
-    const seen = new Set<string>();
-
-    for (const imageName of imageNames) {
-      if (seen.has(imageName)) continue;
-      seen.add(imageName);
-
-      const matches = filesByBasename.get(imageName) ?? [];
-
-      if (matches.length === 0) {
-        console.warn(`Image not found in vault: ${imageName}`);
-        warnings.push({ kind: "image-failed", name: imageName });
-        continue;
-      }
-
-      if (matches.length > 1) {
-        const paths = matches.map((f) => f.path).sort();
-        console.warn(
-          `Image basename collision for ${imageName}: ${paths.join(", ")}`,
-        );
-        warnings.push({ kind: "image-collision", name: imageName, paths });
-        continue;
-      }
-
-      try {
-        const imageContent = await this.vault.readBinary(matches[0]);
-        const sanitizedName =
-          this.contentProcessor.sanitizeImageName(imageName);
-        const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
-        entries.push({ path: imgPath, content: imageContent });
-      } catch (error) {
-        console.error(
-          `Failed to read image ${imageName}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        warnings.push({ kind: "image-failed", name: imageName });
-      }
-    }
-
-    return { entries, warnings };
+      ([path, content]) => ({ path, content }),
+    );
+    return { results, fileEntries };
   }
 ```
 
-**Error recovery in the batch-PR flow.** Three responsibilities are
-teased apart: commit (`commitPreparedBatch`), PR creation
-(`createBatchPR`), and outer recovery (`recoverFailedBatch`). The
-recovery path takes both `prepared` and `readFailures` separately so
-read failures aren't relabeled with the outer error message —
-`markResultsFailed` only touches the prepared results.
+Key design choices here:
+
+- **`entryMap` keyed on path** dedupes entries naturally — the same image referenced from multiple notes writes once.
+- **`publishSet`** is the set of slugs being published in this operation; `ContentProcessor` uses it to gate wikilinks (in-set → markdown link; out-of-set → plain text).
+- **Per-file validation failures** don't abort the batch — they land as failed results alongside successes. The batch as a whole still commits the valid files and opens a PR for them.
+
+## Content Processing: content-processor.ts
+
+The pipeline lives in `processFromSplit`, which runs transforms in a specific order:
 
 ```bash
-sed -n '364,388p' src/publisher.ts
-```
-
-```output
-  private async recoverFailedBatch(
-    files: Array<{
-      file: TFile;
-      frontmatter: Frontmatter;
-      body: string;
-    }>,
-    prepared: PublishResult[],
-    readFailures: PublishResult[],
-    branchName: string | null,
-    error: unknown,
-  ): Promise<BatchPublishResult> {
-    if (branchName) {
-      await this.cleanupBranch(branchName);
-    }
-    const message = errorMessage(error);
-    if (prepared.length === 0) {
-      for (const { file } of files) {
-        prepared.push(failedResult(file.path, message));
-      }
-    } else {
-      this.markResultsFailed(prepared, error);
-    }
-    return buildBatchResult([...readFailures, ...prepared], { error: message });
-  }
-
-```
-
-**`markResultsFailed` is prefix-parameterized.** Commit failures get a
-`"Commit failed: ..."` prefix from `commitPreparedBatch` (the only
-place where commit was the actual cause). The recovery path calls it
-without a prefix because the underlying error message ("Failed to
-create pull request: ..." / "Failed to create branch ...") is
-self-describing.
-
-```bash
-sed -n '80,93p' src/publisher.ts
-```
-
-```output
-  private markResultsFailed(
-    results: PublishResult[],
-    error: unknown,
-    prefix?: string,
-  ): void {
-    const message = errorMessage(error);
-    const formatted = prefix ? `${prefix}: ${message}` : message;
-    for (const r of results) {
-      if (r.success) {
-        r.success = false;
-        r.error = formatted;
-      }
-    }
-  }
-```
-
-## Content transformation pipeline
-
-`ContentProcessor.processFromSplit` is the pipeline. Order matters —
-comments strip first so commented-out markup never reaches later
-regexes; image references run before note embeds because note embeds
-fall through to image conversion for the image case.
-
-```bash
-sed -n '26,55p' src/content-processor.ts
+sed -n '37,67p' src/content-processor.ts
 ```
 
 ```output
@@ -700,6 +621,7 @@ sed -n '26,55p' src/content-processor.ts
     frontmatter: Frontmatter,
     body: string,
     originalFilename: string,
+    publishSet: Set<string> = new Set(),
   ): ProcessedContent {
     const processedFrontmatter = this.processFrontmatter(frontmatter);
     const images = this.extractImages(body);
@@ -710,8 +632,8 @@ sed -n '26,55p' src/content-processor.ts
     processedBody = this.convertCallouts(processedBody);
     processedBody = this.convertMermaid(processedBody);
     processedBody = this.convertImageReferences(processedBody);
-    processedBody = this.convertNoteEmbeds(processedBody);
-    processedBody = this.convertWikilinks(processedBody);
+    processedBody = this.convertNoteEmbeds(processedBody, publishSet);
+    processedBody = this.convertWikilinks(processedBody, publishSet);
 
     const processedContent = this.assembleFrontmatter(
       processedFrontmatter,
@@ -728,231 +650,145 @@ sed -n '26,55p' src/content-processor.ts
   }
 ```
 
-**Frontmatter processing.** The status field is optionally stripped
-(controlled by `removePublishFlag`), template fields are merged without
-overriding existing keys, and a `date` fallback is injected if the note
-lacks one. The `date` fallback is a carryover that the schema validator
-now makes unreachable via `publishNote` paths — the public `process()`
-entry is still reachable by callers that bypass validation.
+Order matters: image references must be converted before note embeds (both match `![[...]]` but image references check for image extensions first). Wikilinks run last so they don't swallow heading anchors that callouts or other transforms might have touched.
+
+A few transforms worth highlighting.
+
+**Callouts** convert Obsidian callout syntax to Hugo shortcodes, passing the type through verbatim:
 
 ```bash
-sed -n '60,86p' src/content-processor.ts
+sed -n '165,178p' src/content-processor.ts
 ```
 
 ```output
-  private processFrontmatter(
-    frontmatter: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const processed = { ...frontmatter };
-
-    // Remove status field if configured
-    if (this.settings.removePublishFlag) {
-      delete processed.status;
-    }
-
-    // Add template fields
-    for (const [key, value] of Object.entries(
-      this.settings.frontmatterTemplate,
-    )) {
-      // Don't override existing fields
-      if (!(key in processed)) {
-        processed[key] = value;
-      }
-    }
-
-    // Ensure date field exists (Hugo requirement)
-    if (!processed.date) {
-      processed.date = new Date().toISOString();
-    }
-
-    return processed;
-  }
-```
-
-**Callout conversion maps Obsidian types to a smaller set.** The static
-`CALLOUT_TYPE_MAP` collapses Obsidian's ~20 callout types into 7
-notice types (`note`, `info`, `tip`, `question`, `warning`, `error`,
-`example`). The composite-spec plan in `TODO.md` calls for passing the
-types through verbatim in a future release — see issue #168.
-
-```bash
-sed -n '160,174p' src/content-processor.ts
-```
-
-```output
-  /**
-   * Convert Obsidian callouts to notice shortcodes
-   */
   private convertCallouts(content: string): string {
+    const name = this.settings.calloutShortcodeName;
     return content.replace(
       /^> \[!([\w-]+)\][-+]?(?: (.+))?\n((?:^> .*(?:\n|$))*)/gm,
       (_match, type: string, title: string | undefined, body: string) => {
-        const noticeType =
-          ContentProcessor.CALLOUT_TYPE_MAP[type.toLowerCase()] ?? "note";
+        const calloutType = type.toLowerCase();
         const cleanBody = body.replace(/^> ?/gm, "").trim();
-        const titleAttr = title ? ` "${title}"` : "";
-        return `{{< notice ${noticeType}${titleAttr} >}}\n${cleanBody}\n{{< /notice >}}`;
+        const titleAttr = title
+          ? ` "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+          : "";
+        return `{{< ${name} ${calloutType}${titleAttr} >}}\n${cleanBody}\n{{< /${name} >}}`;
       },
     );
   }
 ```
 
-**Image references strip Obsidian sizing suffixes.** The Obsidian
-`![[img.png|300]]` syntax has the `|300` dropped cleanly (current
-behavior — see issue #170 for the `|alt` enhancement). The URL path is
-derived from `imageDir` with the `static/` prefix stripped, since Hugo
-serves `static/` at the site root.
+Foldable callouts (`> [!note]-` / `> [!note]+`) have their `-`/`+` stripped but the type preserved. Titles are escaped for the Hugo shortcode attribute syntax.
+
+**Wikilinks** gate on the publish set so out-of-set references degrade to plain text instead of producing broken `{{< ref >}}` shortcodes:
 
 ```bash
-sed -n '253,263p' src/content-processor.ts
+sed -n '242,260p' src/content-processor.ts
 ```
 
 ```output
-  private convertImageReferences(content: string): string {
-    const urlPath = this.imageUrlPath();
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const imageName = this.stripImageSize(raw);
-      if (!IMAGE_EXTENSIONS.test(imageName)) {
-        return _match; // not an image — leave for convertNoteEmbeds
-      }
-      const sanitizedName = this.sanitizeFilename(imageName);
-      return `![${imageName}](${urlPath}/${sanitizedName})`;
-    });
-  }
-```
-
-**Wikilinks and note embeds emit Hugo `ref` shortcodes.** The wikilink
-regex handles display text, heading anchors, and the combination. The
-composite-spec plan proposes replacing `{{< ref >}}` with plain
-`/posts/slug/` paths gated by the publish set (issue #169) — the trade
-is decoupling from Hugo's build-time ref resolver.
-
-```bash
-sed -n '217,247p' src/content-processor.ts
-```
-
-```output
-  private convertWikilinks(content: string): string {
+  private convertWikilinks(content: string, publishSet: Set<string>): string {
+    const urlPath = this.postsUrlPath();
     return content.replace(
       /\[\[([^\]|#]+)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
       (_match, page, _hashGroup, heading, _pipeGroup, displayText) => {
         const display = displayText || (heading ? `${page}#${heading}` : page);
         const slug = this.sanitizeSlug(page);
-        const fragment = heading
-          ? `#${heading.toLowerCase().replace(/\s+/g, "-")}`
-          : "";
-        return `[${display}]({{< ref "${slug}${fragment}" >}})`;
+        if (!publishSet.has(slug)) return display;
+        const fragment = heading ? `#${this.slugifyHeading(heading)}` : "";
+        return `[${display}](${urlPath}${slug}/${fragment})`;
       },
     );
   }
 
   /**
-   * Convert note embeds (![[Note Name]]) to Hugo ref links.
-   * Only matches embeds that are NOT image files.
+   * Convert note embeds (![[Note Name]]) to markdown links when the
+   * target slug is in the publish set; otherwise degrade to plain
+   * display text. Image embeds are left alone for convertImageReferences.
    */
-  private convertNoteEmbeds(content: string): string {
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const nameForCheck = this.stripImageSize(raw);
-      if (IMAGE_EXTENSIONS.test(nameForCheck)) {
-        return _match; // leave for convertImageReferences (already processed)
-      }
-      // For note embeds, pipe is display text: ![[Note|Display]]
-      const [name, displayText] = raw.split("|");
-      const display = displayText ?? name;
-      const slug = this.sanitizeSlug(name);
-      return `[${display}]({{< ref "${slug}" >}})`;
-    });
-  }
 ```
 
-**Filename sanitization.** The core `sanitizeName` lowercases, converts
-whitespace to hyphens, strips non-alphanumerics (keeping hyphens and
-underscores), collapses runs of hyphens, trims edges, and falls back to
-`"untitled"`. `sanitizeFilename` preserves the file extension;
-`sanitizeSlug` drops it. Both `sanitizeImageName` and wikilink slugging
-route through this.
+Two URL-path helpers compute the prefix for posts and images from user settings; both normalize edge slashes and use boundary regexes to avoid prefix bleed (e.g., `static-assets` must survive as `/static-assets/`, not `/-assets/`):
 
 ```bash
-sed -n '269,302p' src/content-processor.ts
+sed -n '119,144p' src/content-processor.ts
 ```
 
 ```output
-  private sanitizeName(value: string): string {
-    return (
-      value
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9\-_]/g, "")
-        .replace(/-+/g, "-")
-        .replace(/^-+|-+$/g, "") || "untitled"
-    );
+   * "/assets/img/". Normalizes edge slashes first so "static/images/",
+   * "/static/images", and bare "images" all produce "/images/". The
+   * boundary regex preserves directories that merely start with
+   * "static" but are not "static" or "static/*" (e.g. "static-assets",
+   * "staticfiles/img").
+   */
+  private imageUrlPath(): string {
+    const dir = this.settings.imageDir
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/^static(?:\/|$)/, "");
+    return dir ? `/${dir}/` : "/";
   }
 
   /**
-   * Sanitize a page name into a slug (no extension)
+   * Derive the URL prefix for wikilinks from the contentDir setting.
+   * Strips leading "content/" so "content/posts" -> "/posts/",
+   * "content" -> "/", "content/blog" -> "/blog/". Normalizes edge
+   * slashes first so "content/posts/", "/content/posts", and bare
+   * "posts" all produce "/posts/".
    */
-  private sanitizeSlug(page: string): string {
-    return this.sanitizeName(page);
-  }
-
-  /**
-   * Sanitize filename for Hugo URLs (preserves extension)
-   */
-  sanitizeFilename(filename: string): string {
-    const lastDotIndex = filename.lastIndexOf(".");
-    const hasExtension = lastDotIndex > 0 && lastDotIndex < filename.length - 1;
-
-    if (!hasExtension) {
-      return this.sanitizeName(filename);
-    }
-
-    const name = this.sanitizeName(filename.slice(0, lastDotIndex));
-    const extension = filename.slice(lastDotIndex);
-    return name + extension;
+  private postsUrlPath(): string {
+    const dir = this.settings.contentDir
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/^content(?:\/|$)/, "");
+    return dir ? `/${dir}/` : "/";
   }
 ```
 
-## GitHub service
-
-`GitHubService` is a thin Octokit wrapper. Every method that touches
-the repo routes through the REST API — no shell-out, no file system,
-iOS-safe. The surface is deliberately small so a future client swap
-stays cheap.
-
-**iOS-safe base64.** Node's `Buffer` isn't available on iOS, and
-`btoa` on a full payload blows the call stack for large binaries. The
-`toBase64` helper chunks `fromCharCode` at 8192 bytes to avoid both.
+**Heading anchor slugs** match Hugo goldmark's default `autoIDType: "github"`: NFC-normalize first so decomposed diacritics (`e + U+0301`) survive, then preserve any Unicode letter/number via property escapes:
 
 ```bash
-sed -n '40,52p' src/github-service.ts
+sed -n '326,335p' src/content-processor.ts
 ```
 
 ```output
-   * Convert string or ArrayBuffer to base64 (cross-platform, chunked for large payloads)
-   */
-  private toBase64(input: string | ArrayBuffer): string {
-    const bytes =
-      typeof input === "string"
-        ? new TextEncoder().encode(input)
-        : new Uint8Array(input);
-    const chunks: string[] = [];
-    for (let i = 0; i < bytes.length; i += 8192) {
-      chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
-    }
-    return btoa(chunks.join(""));
+  private slugifyHeading(heading: string): string {
+    return heading
+      .normalize("NFC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}_\s-]/gu, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "");
   }
 ```
 
-**Atomic multi-file commits via the Git Trees API.** Rather than one
-commit per file (which would leak half-published state on failure),
-`commitFiles` creates blobs sequentially, builds a single tree over the
-base commit's tree, creates one commit pointing at it, and fast-forwards
-the branch ref. Blobs are serialized — parallelizing them provoked
-GitHub rate limits during batch publishes.
+## GitHub API Layer: github-service.ts
+
+`GitHubService` is a thin Octokit wrapper. Every Octokit call site uses a shared narrowing helper so errors surface consistently:
 
 ```bash
-sed -n '171,231p' src/github-service.ts
+sed -n '9,19p' src/github-service.ts
+```
+
+```output
+/**
+ * Rethrow from an Octokit call site with a consistent narrowing:
+ * RequestError passes through (caller gets the status code); generic
+ * Error gets wrapped with a descriptive prefix; anything else rethrows
+ * as-is.
+ */
+function rethrowWithPrefix(error: unknown, prefix: string): never {
+  if (error instanceof RequestError) throw error;
+  if (error instanceof Error) throw new Error(`${prefix}: ${error.message}`);
+  throw error;
+}
+```
+
+`RequestError` carries an HTTP status code. Callers that care about status — notably `createBranchWithRetry`, which retries on 422 — need the instance unchanged; generic errors get a descriptive prefix.
+
+**Atomic commits** use the Git Data API: one blob per file, one tree, one commit, one ref update — all unrelated-file updates land in a single commit:
+
+```bash
+sed -n '175,232p' src/github-service.ts
 ```
 
 ```output
@@ -1011,36 +847,18 @@ sed -n '171,231p' src/github-service.ts
         sha: newCommit.data.sha,
       });
     } catch (error) {
-      if (error instanceof RequestError) {
-        throw new Error(`Failed to commit files: ${error.message}`);
-      }
-      throw error;
+      rethrowWithPrefix(error, "Failed to commit files");
     }
   }
 ```
 
-**Branch creation retries on 422.** `createBranchWithRetry` collides on
-a timestamp suffix if another publish ran in the same second, and
-applies a numeric suffix up to 3 attempts. The inner `createBranch`
-deliberately re-throws a `RequestError` without wrapping it — the
-retry logic needs the status code preserved.
+**Branch-name collision** (422 "Reference already exists") is the one error treated as recoverable. `createBranchWithRetry` retries with an incrementing suffix:
 
 ```bash
-sed -n '247,282p' src/github-service.ts
+sed -n '259,283p' src/github-service.ts
 ```
 
 ```output
-  generateBranchName(prefix = "publish"): string {
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, -5);
-    return `${prefix}/${timestamp}`;
-  }
-
-  /**
-   * Create a branch with retry logic for name collisions
-   */
   async createBranchWithRetry(
     basePrefix: string,
     baseBranch = "main",
@@ -1068,16 +886,10 @@ sed -n '247,282p' src/github-service.ts
   }
 ```
 
-**PR creation with non-fatal label warnings.** `pulls.create` and
-`addLabels` are now in separate try blocks. Label apply failure
-(unknown label, permissions, transient network) logs `console.warn`
-and returns a `pr-label-failed` warning alongside the PR url —
-**without throwing**. This avoids the orphaned-PR side effect from
-1.4.0 where the cleanupBranch reaction to a label-failure would delete
-the just-created PR's head ref.
+**PR label application** is intentionally non-fatal: a failing label-apply returns a warning rather than throwing, because throwing after the PR exists would orphan the PR:
 
 ```bash
-sed -n '119,167p' src/github-service.ts
+sed -n '123,170p' src/github-service.ts
 ```
 
 ```output
@@ -1129,47 +941,16 @@ sed -n '119,167p' src/github-service.ts
       warnings,
     };
   }
-
 ```
 
-## Settings UI
+## Settings UI: settings.ts
 
-`PublisherSettingTab` renders the settings panel. Persistence is
-**debounced to 500ms** (trailing edge) via Obsidian's `debounce`
-helper. The plugin hooks `hide()` on the tab and `onunload()` on the
-plugin to flush a pending save and then cancel the timer — without the
-flush-before-cancel ordering (added in 1.4.0), in-flight edits could
-be lost on tab switch or plugin reload.
+`PublisherSettingTab` renders the configuration UI. The nonobvious parts are the sanitizers and the debounced save.
+
+**Input sanitizers** live as free functions so they're independently testable:
 
 ```bash
-sed -n '89,102p' src/settings.ts
-```
-
-```output
-export class PublisherSettingTab extends PluginSettingTab {
-  plugin: ObsidianPublisher;
-  readonly save: Debouncer<[], Promise<void>>;
-
-  constructor(app: App, plugin: ObsidianPublisher) {
-    super(app, plugin);
-    this.plugin = plugin;
-    this.save = debounce(() => this.plugin.saveSettings(), 500, true);
-  }
-
-  hide(): void {
-    this.save.cancel();
-    void this.plugin.saveSettings();
-  }
-```
-
-**Input sanitization at the boundary.** GitHub owner, repo name, and
-path settings are cleaned on every keystroke to prevent path
-traversal and to keep fields inside GitHub's own length/character
-rules. These helpers are extracted to top-level functions so they can
-be unit-tested in isolation.
-
-```bash
-sed -n '15,35p' src/settings.ts
+sed -n '16,40p' src/settings.ts
 ```
 
 ```output
@@ -1194,196 +975,112 @@ export function sanitizePath(value: string): string {
     .replace(/~/g, "")
     .replace(/^\/+|\/+$/g, "");
 }
+
+export function sanitizeShortcodeName(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9_-]/g, "");
+}
 ```
 
-**Frontmatter template parsing falls back to a line-based parser.**
-If the user's textarea input doesn't parse as YAML, a simple
-`key: value` parser runs instead so a stray formatting glitch doesn't
-silently blank their template.
+**`strippedFrontmatterFields` handling** is layered. The UI parses comma-separated input and filters required fields in one pass; a separate helper detects which required fields were blocked so the UI can fire a Notice:
 
 ```bash
-sed -n '50,77p' src/settings.ts
+sed -n '55,66p' src/settings.ts
 ```
 
 ```output
-export function parseFrontmatter(text: string): Record<string, unknown> {
-  const trimmed = text.trim();
-  if (!trimmed) return {};
-  try {
-    const parsed = parseYaml(trimmed);
-    return typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed)
-      ? parsed
-      : {};
-  } catch {
-    return parseSimpleFrontmatter(trimmed);
+export function parseStrippedFieldsInput(value: string): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+  return value
+    .split(",")
+    .map((f) => f.trim())
+    .filter((f) => f.length > 0 && !required.has(f));
+}
+
+export function requiredFieldsIn(fields: string[]): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+  return [...new Set(fields.filter((f) => required.has(f)))];
+}
+```
+
+The settings tab wires a debounced save — typing into the textarea fires a Notice only when a required field *newly* appears in the input (not on every keystroke after).
+
+## Build & Test
+
+The build produces a single `main.js` bundle. `obsidian` and `electron` are external; `@octokit/rest` is bundled:
+
+```bash
+sed -n '1,30p' build.ts
+```
+
+```output
+import { watch } from "node:fs";
+
+const isWatch = process.argv.includes("--watch");
+
+async function build() {
+  const result = await Bun.build({
+    entrypoints: ["src/main.ts"],
+    outdir: ".",
+    format: "cjs",
+    external: ["obsidian", "electron"],
+    minify: !isWatch,
+  });
+
+  if (!result.success) {
+    console.error("Build failed");
+    for (const message of result.logs) console.error(message);
+    if (!isWatch) process.exit(1);
+    return;
   }
+
+  console.log(
+    `Built main.js (${(result.outputs[0].size / 1024).toFixed(1)} KB)`,
+  );
 }
 
-function parseSimpleFrontmatter(text: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    const colonIndex = t.indexOf(":");
-    if (colonIndex === -1) continue;
-    const key = t.slice(0, colonIndex).trim();
-    const value = t.slice(colonIndex + 1).trim();
-    if (key && value) result[key] = value;
-  }
-  return result;
-}
+await build();
+
+if (isWatch) {
+  console.log("Watching src/ for changes...");
+  let timeout: ReturnType<typeof setTimeout> | null = null;
 ```
 
-## Types and warnings
+**Test mocks** live in `src/test-preload.ts`, registered as a Bun preload module. The Obsidian API is mocked minimally — just `parseYaml`, `stringifyYaml`, `Notice`, `Plugin`, `PluginSettingTab`, `Setting`, and `debounce`. Octokit is a stub class so tests substitute their own mock. This keeps tests from pulling in the real Obsidian runtime.
 
-The `PublishWarning` discriminated union is the contract between the
-publisher (which produces warnings) and `main.ts` (which renders per-kind
-notices). The 1.4.1 release added a third kind, `pr-label-failed`, with
-a different shape (`labels` + `error` rather than `name`).
-`BatchPublishResult.warnings` is optional so PR-level conditions
-(currently just label failures) can travel alongside per-file warnings.
+Counts:
 
 ```bash
-sed -n '57,100p' src/types.ts
+grep -cE '^  test\(' src/*.test.ts | grep -v ':0'
 ```
 
 ```output
-/**
- * Non-fatal condition noticed during publish. Tagged for test stability
- * and per-kind display in main.ts.
- */
-export type PublishWarning =
-  | { kind: "image-failed"; name: string }
-  | { kind: "image-collision"; name: string; paths: string[] }
-  | { kind: "pr-label-failed"; labels: string[]; error: string };
-
-/**
- * Publishing result for a single note
- */
-export interface PublishResult {
-  /** Original file path */
-  filePath: string;
-  /** Whether the publish was successful */
-  success: boolean;
-  /** Error message if failed */
-  error?: string;
-  /** Non-fatal conditions noticed during publish; always present, [] when none */
-  warnings: PublishWarning[];
-  /** URL to the pull request if created (single-file PR workflow only) */
-  prUrl?: string;
-}
-
-/**
- * Batch publishing summary
- */
-export interface BatchPublishResult {
-  /** Total number of notes attempted */
-  total: number;
-  /** Number of successful publishes */
-  successful: number;
-  /** Number of failed publishes */
-  failed: number;
-  /** Individual results */
-  results: PublishResult[];
-  /** URL to the pull request if created */
-  prUrl?: string;
-  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
-  error?: string;
-  /** Batch-level non-fatal conditions (e.g. PR label apply failed) */
-  warnings?: PublishWarning[];
-}
+src/content-processor.test.ts:89
+src/github-service.test.ts:17
+src/main.test.ts:5
+src/publisher.test.ts:37
+src/schema.test.ts:22
+src/settings.test.ts:41
+src/types.test.ts:23
 ```
 
-**Settings shape validation lives in `types.ts`.** `parseSettings`
-checks each field's runtime type and falls back to `DEFAULT_SETTINGS`
-on mismatch. `isPlainObject` is exported because `main.ts` reuses it
-to detect whether persisted data was a real object (for the migration
-gate).
+## Concerns
 
-```bash
-sed -n '109,118p' src/types.ts
-```
+Readers evaluating the codebase should know:
 
-```output
-export function isPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+1. **Persisted-token exposure.** `data.json` stores the GitHub PAT in plaintext — an Obsidian platform constraint (no encrypted storage API). README's Security section flags this; recommend single-repo-scoped tokens. No in-repo mitigation possible.
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((v) => typeof v === "string");
-}
+2. **No integration tests.** Unit coverage is solid (234 tests; every transform, validator, and orchestration branch pinned). The cross-module publish flow — content transform → GitHub API → PR → label handling — has no integration-shaped test. Tracked in issue #143.
 
-```
+3. **Per-file order-dependence in transforms.** `processFromSplit` runs transforms in a specific order (image references before note embeds; wikilinks last) because some transforms produce output that later transforms must not rewrite. Correct, but fragile — reordering would silently regress.
 
-## Tests
+4. **`autoIDType: "github-ascii"` mismatch.** Heading slugs preserve Unicode to match Hugo's default `autoIDType: "github"`. Sites configured with the opt-in `github-ascii` variant will see mismatched anchors. Documented in CHANGELOG 1.6.0; no runtime warning.
 
-Tests live alongside source with `.test.ts` suffixes. `bun:test` is the
-runner; `src/test-preload.ts` (loaded via `bunfig.toml`) consolidates
-mocks for the `obsidian` module — `parseYaml`, `stringifyYaml`,
-`debounce`, and a fake `Notice`. That one-file mock means individual
-tests don't each re-mock Obsidian.
+5. **Community standard adherence.**
+   - TypeScript: strict mode on, clean typecheck.
+   - Biome: formatter + linter; `bun run check` passes on CI.
+   - Bun native APIs where applicable (test runner, bundler).
+   - Single `main.js` artifact committed per Obsidian plugin convention.
+   - `pull_requests:write` token scope is unconditional as of 1.6.0 (PR workflow is the only mode).
 
-```bash
-ls src/*.test.ts
-```
-
-```output
-src/content-processor.test.ts
-src/github-service.test.ts
-src/publisher.test.ts
-src/schema.test.ts
-src/settings.test.ts
-src/types.test.ts
-```
-
-## Concerns and known gaps
-
-The composite-spec alignment plan in `TODO.md` is an umbrella
-(issue #172). The 1.4.x bug backlog is closed; remaining gaps are all
-forward-looking enhancements:
-
-- **#166 slug collision precheck** — two notes that sanitize to the
-  same slug silently collapse in `prepareBatch`'s `entryMap`. Composite
-  plan calls for blocking publish with a named-conflict error.
-- **#168 callout types pass-through** — the 20→7 collapse in
-  `CALLOUT_TYPE_MAP` loses information; the composite plan calls for
-  letting theme CSS render the original type.
-- **#170 image `|alt` syntax** — `![[img.png|alt]]` alt text is
-  currently discarded; only `|300` sizing is cleanly stripped.
-- **#169 wikilinks emit `/posts/slug/`** — the current `{{< ref >}}`
-  output couples to Hugo's build-time ref resolver. Composite plan
-  proposes plain markdown links with publish-set gating.
-- **#164 configurable shortcode names** — `notice` and `mermaid`
-  shortcode names are hardcoded; composite plan adds settings.
-- **#165 `strippedFrontmatterFields` setting** — replaces
-  `removePublishFlag` with a configurable list (default-strips `status`
-  and `lastmod`).
-- **#167 strict `date` requirement** — drop the `new Date()` fallback
-  in `processFrontmatter` since the schema validator already requires it.
-- **#171 ship `hugo-shortcodes/` reference templates** — the publisher
-  emits shortcode syntax with no way to verify the destination site
-  defines the templates.
-
-**Code smell: `process()` bypasses the schema gate.** The public
-`ContentProcessor.process(content, filename)` path splits frontmatter
-and runs the pipeline *without* calling `hasPublishFlag` or
-`validateFrontmatter`. Only `processFromSplit` is used by the
-publisher; `process` is reachable from tests and would process an
-unvalidated file if any future caller used it.
-
-**Cross-platform hygiene.** No top-to-bottom guard prevents a future
-change from importing `node:fs`, `node:path`, or `child_process` into
-the runtime bundle — only code review catches it. A Biome rule or a
-bundle-size check would enforce the iOS constraint mechanically.
-
-**Content-processor frontmatter `date` fallback is dead code on the
-primary path.** Since 1.4.0, `publishFileToTarget` and `prepareBatch`
-reject any note missing `date` before the content processor runs; the
-`processed.date = new Date().toISOString()` branch survives only for
-the public `process()` entry point. Issue #167 tracks removal as part
-of the composite spec work.
+6. **Single maintainer, single user.** The codebase makes decisions optimized for that reality — e.g., the `usePullRequests` setting was retired in 1.6.0 as a breaking change rather than carried as migration cruft. Future forks or users would need to re-evaluate.
 
