@@ -247,45 +247,28 @@ export class Publisher {
       return failedResult(file.path, validationError);
     }
 
-    let branchName: string | null = null;
+    const batch = await this.prepareBatch([{ file, frontmatter, body }]);
+    const result = await this.runPublishWorkflow({
+      prepared: batch.results,
+      fileEntries: batch.fileEntries,
+      readFailures: [],
+      branchPrefix: "publish",
+      commitMessage: () => `Publish: ${file.basename}`,
+      prTitle: () => `Publish: ${file.basename}`,
+      prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
+    });
 
-    try {
-      branchName = await this.githubService.createBranchWithRetry(
-        "publish",
-        this.baseBranch,
-      );
-
-      const result = await this.publishFileToTarget(file, branchName, {
-        frontmatter,
-        body,
-      });
-
-      if (!result.success) {
-        await this.cleanupBranch(branchName);
-        return result;
-      }
-
-      const prTitle = `Publish: ${file.basename}`;
-      const prBody = `Published from Obsidian\n\n**File:** ${file.path}`;
-      const pr = await this.githubService.createPullRequest(
-        branchName,
-        this.baseBranch,
-        prTitle,
-        prBody,
-        this.prLabels,
-      );
-
-      return {
-        ...result,
-        prUrl: pr.url,
-        warnings: [...result.warnings, ...pr.warnings],
-      };
-    } catch (error) {
-      if (branchName) {
-        await this.cleanupBranch(branchName);
-      }
-      return failedResult(file.path, errorMessage(error));
+    const single =
+      result.results[0] ??
+      failedResult(file.path, result.error ?? "Unknown error");
+    if (!single.success) {
+      return single;
     }
+    return {
+      ...single,
+      prUrl: result.prUrl,
+      warnings: [...single.warnings, ...(result.warnings ?? [])],
+    };
   }
 
   /**
@@ -311,46 +294,20 @@ export class Publisher {
       });
     }
 
-    let branchName: string | null = null;
-    let prepared: PublishResult[] = [];
-
-    try {
-      branchName = await this.githubService.createBranchWithRetry(
-        "publish-batch",
-        this.baseBranch,
-      );
-
-      const batch = await this.prepareBatch(files);
-      prepared = batch.results;
-
-      const commitError = await this.commitPreparedBatch(
-        branchName,
-        prepared,
-        batch.fileEntries,
-      );
-
-      const succeeded = prepared.filter((r) => r.success);
-      const results = [...readFailures, ...prepared];
-
-      if (succeeded.length === 0) {
-        await this.cleanupBranch(branchName);
-        return buildBatchResult(results, { error: commitError });
-      }
-
-      const pr = await this.createBatchPR(branchName, succeeded);
-      return buildBatchResult(results, {
-        prUrl: pr.url,
-        warnings: pr.warnings,
-      });
-    } catch (error) {
-      return this.recoverFailedBatch(
-        files,
-        prepared,
-        readFailures,
-        branchName,
-        error,
-      );
-    }
+    const batch = await this.prepareBatch(files);
+    return this.runPublishWorkflow({
+      prepared: batch.results,
+      fileEntries: batch.fileEntries,
+      readFailures,
+      branchPrefix: "publish-batch",
+      commitMessage: (n) =>
+        `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian`,
+      prTitle: (succeeded) => `Batch Publish: ${succeeded.length} notes`,
+      prBody: (succeeded) =>
+        `Published ${succeeded.length} notes from Obsidian\n\n${succeeded
+          .map((r) => `- ${r.filePath}`)
+          .join("\n")}`,
+    });
   }
 
   /**
@@ -362,15 +319,11 @@ export class Publisher {
     branchName: string,
     results: PublishResult[],
     fileEntries: Array<{ path: string; content: string | ArrayBuffer }>,
+    message: string,
   ): Promise<string | undefined> {
     if (fileEntries.length === 0) return undefined;
     try {
-      const successCount = results.filter((r) => r.success).length;
-      await this.githubService.commitFiles(
-        fileEntries,
-        `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
-        branchName,
-      );
+      await this.githubService.commitFiles(fileEntries, message, branchName);
       return undefined;
     } catch (error) {
       this.markResultsFailed(results, error, "Commit failed");
@@ -379,53 +332,63 @@ export class Publisher {
   }
 
   /**
-   * Build and create the batch PR listing the succeeded file paths.
+   * Shared branch + commit + PR orchestration. Given prepared results and
+   * file entries, creates a branch, commits the entries, and opens a PR —
+   * cleaning up the branch on any failure. Callers supply the branch
+   * prefix and the commit-message / PR-title / PR-body builders so the
+   * single-note and batch paths can share the workflow while preserving
+   * their distinct PR shapes.
    */
-  private async createBatchPR(
-    branchName: string,
-    succeeded: PublishResult[],
-  ): Promise<{ url: string; number: number; warnings: PublishWarning[] }> {
-    const successful = succeeded.length;
-    const prTitle = `Batch Publish: ${successful} notes`;
-    const fileList = succeeded.map((r) => `- ${r.filePath}`).join("\n");
-    const prBody = `Published ${successful} notes from Obsidian\n\n${fileList}`;
-    return this.githubService.createPullRequest(
-      branchName,
-      this.baseBranch,
-      prTitle,
-      prBody,
-      this.prLabels,
-    );
-  }
+  private async runPublishWorkflow(opts: {
+    prepared: PublishResult[];
+    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
+    readFailures: PublishResult[];
+    branchPrefix: string;
+    commitMessage: (successCount: number) => string;
+    prTitle: (succeeded: PublishResult[]) => string;
+    prBody: (succeeded: PublishResult[]) => string;
+  }): Promise<BatchPublishResult> {
+    let branchName: string | null = null;
+    try {
+      branchName = await this.githubService.createBranchWithRetry(
+        opts.branchPrefix,
+        this.baseBranch,
+      );
 
-  /**
-   * Recover from the outer catch: clean up the branch, then either
-   * synthesize failed results (when none were produced yet) or mark
-   * existing results failed. Returns a fully-populated batch result.
-   */
-  private async recoverFailedBatch(
-    files: Array<{
-      file: TFile;
-      frontmatter: Frontmatter;
-      body: string;
-    }>,
-    prepared: PublishResult[],
-    readFailures: PublishResult[],
-    branchName: string | null,
-    error: unknown,
-  ): Promise<BatchPublishResult> {
-    if (branchName) {
-      await this.cleanupBranch(branchName);
-    }
-    const message = errorMessage(error);
-    if (prepared.length === 0) {
-      for (const { file } of files) {
-        prepared.push(failedResult(file.path, message));
+      const successCount = opts.prepared.filter((r) => r.success).length;
+      const commitError = await this.commitPreparedBatch(
+        branchName,
+        opts.prepared,
+        opts.fileEntries,
+        opts.commitMessage(successCount),
+      );
+
+      const succeeded = opts.prepared.filter((r) => r.success);
+      const results = [...opts.readFailures, ...opts.prepared];
+
+      if (succeeded.length === 0) {
+        await this.cleanupBranch(branchName);
+        return buildBatchResult(results, { error: commitError });
       }
-    } else {
-      this.markResultsFailed(prepared, error);
+
+      const pr = await this.githubService.createPullRequest(
+        branchName,
+        this.baseBranch,
+        opts.prTitle(succeeded),
+        opts.prBody(succeeded),
+        this.prLabels,
+      );
+      return buildBatchResult(results, {
+        prUrl: pr.url,
+        warnings: pr.warnings,
+      });
+    } catch (error) {
+      if (branchName) await this.cleanupBranch(branchName);
+      this.markResultsFailed(opts.prepared, error);
+      return buildBatchResult([...opts.readFailures, ...opts.prepared], {
+        error: errorMessage(error),
+      });
     }
-    return buildBatchResult([...readFailures, ...prepared], { error: message });
   }
 
   /**
@@ -448,74 +411,6 @@ export class Publisher {
   }
 
   // === Private helpers ===
-
-  /**
-   * Publish a single file to a target branch (or default branch).
-   * If `preparsed` is supplied, the caller has already parsed and
-   * validated the frontmatter — we skip the re-parse and gate/validate.
-   */
-  private async publishFileToTarget(
-    file: TFile,
-    branch?: string,
-    preparsed?: { frontmatter: Frontmatter; body: string },
-  ): Promise<PublishResult> {
-    try {
-      let frontmatter: Frontmatter;
-      let body: string;
-
-      if (preparsed) {
-        ({ frontmatter, body } = preparsed);
-      } else {
-        const content = await this.vault.read(file);
-        const split = splitFrontmatter(content);
-        frontmatter = split.frontmatter;
-        body = split.body;
-
-        if (!hasPublishFlag(frontmatter)) {
-          return failedResult(
-            file.path,
-            "File does not have 'status: publish' in frontmatter",
-          );
-        }
-        const validationError = validateFrontmatter(frontmatter);
-        if (validationError) {
-          return failedResult(file.path, validationError);
-        }
-      }
-
-      const publishSet = new Set([
-        this.contentProcessor.sanitizeSlug(file.basename),
-      ]);
-      const processed = this.contentProcessor.processFromSplit(
-        frontmatter,
-        body,
-        file.name,
-        publishSet,
-      );
-      const targetBranch = branch ?? this.baseBranch;
-
-      const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-      const { entries: imageEntries, warnings } = await this.resolveImages(
-        processed.images,
-        this.buildFilesByBasename(),
-      );
-
-      const fileEntries: Array<{
-        path: string;
-        content: string | ArrayBuffer;
-      }> = [{ path: targetPath, content: processed.content }, ...imageEntries];
-
-      await this.githubService.commitFiles(
-        fileEntries,
-        `Publish: ${file.basename}`,
-        targetBranch,
-      );
-
-      return { filePath: file.path, success: true, warnings };
-    } catch (error) {
-      return failedResult(file.path, errorMessage(error));
-    }
-  }
 
   /**
    * Scan the vault for files with status: publish, returning each with

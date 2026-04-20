@@ -26,7 +26,7 @@ Wikilinks and note embeds only resolve to URLs for notes the user is _actively_ 
 
 The old `{{< ref >}}` approach coupled the plugin's output to Hugo's build-time ref resolver. A link to a note that wasn't published produced a build-time error on Hugo's side. That error lived far from the author, who couldn't fix it without re-opening the Obsidian note and re-publishing. The degrade-to-plain-text model keeps the error-surface local: the link the author sees in Obsidian reflects the site visitor's experience.
 
-`Publisher.buildPublishSet` computes the set from the current operation's file list, routing each `file.basename` through `sanitizeSlug`. Single-file publish (`publishFileToTarget`) seeds the set with just the current file's own slug, so self-links still resolve.
+`Publisher.buildPublishSet` computes the set from the current operation's file list, routing each `file.basename` through `sanitizeSlug`. Single-file publish routes through `prepareBatch` with a one-entry list, so the set contains just the current file's own slug and self-links still resolve.
 
 ## Shortcodes over inline HTML
 

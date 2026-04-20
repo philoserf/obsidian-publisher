@@ -14,6 +14,10 @@
 - Batch publish errors no longer silently masked by the "No publishable notes found" notice. When a batch aborts at the batch level (setting `BatchPublishResult.error` without populating `results[]`), the error text now surfaces to the user instead of being hidden by the empty-results short-circuit in `main.ts`. Factored the notice classification into a pure `batchNoticeText` helper for direct unit test coverage (#193).
 - Heading anchor slugs now preserve non-ASCII letters (`é`, `ñ`, `日本語`, Cyrillic, etc.) to match Hugo's default `autoIDType: "github"`. The previous `[^\w\s-]` punctuation strip treated every non-ASCII character as punctuation and dropped it, producing broken anchors. The new regex uses Unicode property escapes (`\p{L}`, `\p{N}`) with the `u` flag, and NFC-normalizes first so decomposed diacritics (e.g. `é` as `e + U+0301`) survive. Sites configured with `autoIDType: "github-ascii"` will see mismatched anchors — opt-in setting, not the default (#195).
 
+### Changed
+
+- Publisher: single-note and batch publishes now share one `runPublishWorkflow` orchestrator for branch creation, commit, PR creation, and cleanup. Internal refactor; no user-visible behavior change (branch prefix, commit message, PR title/body preserved per mode). Deletes the `publishFileToTarget`, `createBatchPR`, and `recoverFailedBatch` helpers; net −100 lines in `publisher.ts` (#153).
+
 ## 1.5.0
 
 ### Breaking Changes
