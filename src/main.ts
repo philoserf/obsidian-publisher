@@ -4,9 +4,7 @@ import { PublisherSettingTab } from "./settings";
 import {
   type BatchPublishResult,
   errorMessage,
-  isPlainObject,
   type PublisherSettings,
-  type PublishResult,
   type PublishWarning,
   parseSettings,
 } from "./types";
@@ -26,20 +24,13 @@ function notifyImageWarnings(
   new Notice(format(names));
 }
 
-export function batchNoticeText(
-  result: BatchPublishResult,
-  usePullRequests: boolean,
-): string {
+export function batchNoticeText(result: BatchPublishResult): string {
   if (result.error) return `✗ Failed to publish: ${result.error}`;
   if (result.total === 0) return "No publishable notes found";
   if (result.successful === 0) {
-    return usePullRequests
-      ? "All files failed to process. No PR created."
-      : "All files failed to process.";
+    return "All files failed to process. No PR created.";
   }
-  return usePullRequests
-    ? `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`
-    : `Publishing complete: ${result.successful} succeeded, ${result.failed} failed out of ${result.total} total`;
+  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`;
 }
 
 function notifyWarnings(warnings: PublishWarning[]): void {
@@ -112,14 +103,6 @@ export default class ObsidianPublisher extends Plugin {
   async loadSettings() {
     const data = await this.loadData();
     this.settings = parseSettings(data);
-
-    // Migration: existing users (data exists, no usePullRequests field) default
-    // to false to preserve pre-PR-workflow behavior. Check raw data so the
-    // signal isn't erased by parseSettings's default fill-in.
-    if (isPlainObject(data) && !("usePullRequests" in data)) {
-      this.settings.usePullRequests = false;
-      await this.saveSettings();
-    }
   }
 
   async saveSettings() {
@@ -140,25 +123,13 @@ export default class ObsidianPublisher extends Plugin {
     new Notice(`Publishing ${file.basename}...`);
 
     try {
-      let result: PublishResult;
+      const result = await publisher.publishNote(file);
 
-      if (this.settings.usePullRequests) {
-        result = await publisher.publishNoteWithPR(file);
-
-        if (result.success && result.prUrl) {
-          new Notice(`✓ Pull request created for ${file.basename}`);
-          console.log(`Pull Request: ${result.prUrl}`);
-        } else {
-          new Notice(`✗ Failed to publish: ${result.error}`);
-        }
+      if (result.success && result.prUrl) {
+        new Notice(`✓ Pull request created for ${file.basename}`);
+        console.log(`Pull Request: ${result.prUrl}`);
       } else {
-        result = await publisher.publishNote(file);
-
-        if (result.success) {
-          new Notice(`✓ Successfully published ${file.basename}`);
-        } else {
-          new Notice(`✗ Failed to publish: ${result.error}`);
-        }
+        new Notice(`✗ Failed to publish: ${result.error}`);
       }
 
       notifyWarnings(result.warnings);
@@ -183,11 +154,9 @@ export default class ObsidianPublisher extends Plugin {
     new Notice("Scanning vault for publishable notes...");
 
     try {
-      const result: BatchPublishResult = this.settings.usePullRequests
-        ? await publisher.publishAllWithPR()
-        : await publisher.publishAll();
+      const result: BatchPublishResult = await publisher.publishAll();
 
-      new Notice(batchNoticeText(result, this.settings.usePullRequests));
+      new Notice(batchNoticeText(result));
 
       if (!result.error && result.successful > 0 && result.prUrl) {
         new Notice(`✓ Pull request created: ${result.prUrl}`);

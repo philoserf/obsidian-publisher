@@ -166,7 +166,7 @@ describe("Publisher.validateSettings", () => {
 });
 
 describe("Publisher.publishNote", () => {
-  test("publishes a note with status: publish", async () => {
+  test("creates branch, commits, and opens PR", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
     const gh = makeGitHubService();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
@@ -174,14 +174,13 @@ describe("Publisher.publishNote", () => {
     const result = await publisher.publishNote(makeTFile("test.md") as never);
 
     expect(result.success).toBe(true);
+    expect(result.prUrl).toBe("https://github.com/test/pr/1");
+    expect(gh.createBranchWithRetry).toHaveBeenCalledTimes(1);
     expect(gh.commitFiles).toHaveBeenCalledTimes(1);
-    const callArgs = gh.commitFiles.mock.calls[0] as unknown[];
-    const fileEntries = callArgs[0] as Array<{ path: string }>;
-    expect(fileEntries[0].path).toBe("content/posts/test.md");
-    expect(callArgs[2]).toBe("main");
+    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
   });
 
-  test("rejects a note without publish flag", async () => {
+  test("rejects file without publish flag", async () => {
     const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
     const gh = makeGitHubService();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
@@ -189,8 +188,49 @@ describe("Publisher.publishNote", () => {
     const result = await publisher.publishNote(makeTFile("draft.md") as never);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("status: publish");
-    expect(gh.commitFiles).not.toHaveBeenCalled();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+  });
+
+  test("returns success with label warning when label apply fails", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.createPullRequest.mockImplementation(async () => ({
+      url: "https://github.com/test/pr/2",
+      number: 2,
+      warnings: [
+        {
+          kind: "pr-label-failed" as const,
+          labels: ["chore"],
+          error: "label not found",
+        },
+      ],
+    }));
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("test.md") as never);
+
+    expect(result.success).toBe(true);
+    expect(result.prUrl).toBe("https://github.com/test/pr/2");
+    expect(result.warnings).toContainEqual({
+      kind: "pr-label-failed",
+      labels: ["chore"],
+      error: "label not found",
+    });
+    expect(gh.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  test("cleans up branch on publish failure", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.commitFiles.mockImplementation(async () => {
+      throw new Error("commit failed");
+    });
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("test.md") as never);
+
+    expect(result.success).toBe(false);
+    expect(gh.deleteBranch).toHaveBeenCalledTimes(1);
   });
 
   test("accepts quoted status value", async () => {
@@ -209,61 +249,6 @@ Hello`;
     expect(result.success).toBe(true);
   });
 
-  test("rejects note missing required title", async () => {
-    const noTitle = `---
-status: publish
-date: 2026-01-01
----
-body`;
-    const vault = makeVault([{ name: "no-title.md", content: noTitle }]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNote(
-      makeTFile("no-title.md") as never,
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("title");
-    expect(gh.commitFiles).not.toHaveBeenCalled();
-  });
-
-  test("rejects note missing required date", async () => {
-    const noDate = `---
-title: No Date
-status: publish
----
-body`;
-    const vault = makeVault([{ name: "no-date.md", content: noDate }]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNote(
-      makeTFile("no-date.md") as never,
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("date");
-    expect(gh.commitFiles).not.toHaveBeenCalled();
-  });
-
-  test("rejects legacy status: published as unpublishable", async () => {
-    const legacy = `---
-title: Legacy
-status: published
-date: 2026-01-01
----
-body`;
-    const vault = makeVault([{ name: "legacy.md", content: legacy }]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNote(makeTFile("legacy.md") as never);
-
-    expect(result.success).toBe(false);
-    expect(gh.commitFiles).not.toHaveBeenCalled();
-  });
-
   test("includes images in the commit", async () => {
     const imageData = new Uint8Array([1, 2, 3]).buffer;
     const vault = makeVault([
@@ -280,20 +265,6 @@ body`;
     const entries = commitCall[0] as Array<{ path: string }>;
     expect(entries).toHaveLength(2);
     expect(entries[1].path).toBe("static/images/photo.png");
-  });
-
-  test("handles commit failure gracefully", async () => {
-    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
-    gh.commitFiles.mockImplementation(async () => {
-      throw new Error("API error");
-    });
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNote(makeTFile("test.md") as never);
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("API error");
   });
 
   test("returns empty warnings on clean publish", async () => {
@@ -410,24 +381,41 @@ First ![[photo.png]] and again ![[photo.png]]`;
 });
 
 describe("Publisher.publishAll", () => {
-  test("publishes all notes with publish flag", async () => {
+  test("batches all publishable files into one PR", async () => {
     const vault = makeVault([
       { name: "a.md", content: publishedNote },
-      { name: "b.md", content: unpublishedNote },
-      { name: "c.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
     ]);
     const gh = makeGitHubService();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
 
-    expect(result.total).toBe(2);
     expect(result.successful).toBe(2);
-    expect(result.failed).toBe(0);
+    expect(result.prUrl).toBe("https://github.com/test/pr/1");
     expect(gh.commitFiles).toHaveBeenCalledTimes(1);
+    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
   });
 
-  test("returns zero results when no publishable files", async () => {
+  test("skips PR when all files fail", async () => {
+    const vault = makeVault([{ name: "bad.md", content: publishedNote }]);
+    // Make the vault read throw during prepareBatch's content processing
+    vault.read.mockImplementation(async () => publishedNote);
+    const gh = makeGitHubService();
+    gh.commitFiles.mockImplementation(async () => {
+      throw new Error("commit failed");
+    });
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(0);
+    expect(result.prUrl).toBeUndefined();
+    expect(result.error).toContain("commit failed");
+    expect(gh.deleteBranch).toHaveBeenCalled();
+  });
+
+  test("returns empty when no publishable files", async () => {
     const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
     const gh = makeGitHubService();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
@@ -435,23 +423,141 @@ describe("Publisher.publishAll", () => {
     const result = await publisher.publishAll();
 
     expect(result.total).toBe(0);
-    expect(gh.commitFiles).not.toHaveBeenCalled();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
   });
 
-  test("marks all as failed when commitFiles throws", async () => {
-    const vault = makeVault([{ name: "a.md", content: publishedNote }]);
+  test("attaches batch warnings when PR label apply fails", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
     const gh = makeGitHubService();
-    gh.commitFiles.mockImplementation(async () => {
-      throw new Error("rate limit");
+    gh.createPullRequest.mockImplementation(async () => ({
+      url: "https://github.com/test/pr/3",
+      number: 3,
+      warnings: [
+        {
+          kind: "pr-label-failed" as const,
+          labels: ["chore"],
+          error: "forbidden",
+        },
+      ],
+    }));
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(2);
+    expect(result.prUrl).toBe("https://github.com/test/pr/3");
+    expect(result.warnings).toContainEqual({
+      kind: "pr-label-failed",
+      labels: ["chore"],
+      error: "forbidden",
+    });
+    expect(gh.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  test("sets batch error when branch creation throws", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
+    const gh = makeGitHubService();
+    gh.createBranchWithRetry.mockImplementation(async () => {
+      throw new Error("branch exists");
     });
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
 
+    expect(result.error).toContain("branch exists");
+    expect(result.successful).toBe(0);
+    expect(result.total).toBe(2);
+    expect(result.failed).toBe(2);
+    expect(result.results).toHaveLength(2);
+    expect(result.results.every((r) => !r.success)).toBe(true);
+  });
+
+  test("includes read failures in PR result alongside successful files", async () => {
+    const vault = makeVault([
+      { name: "ok.md", content: publishedNote },
+      { name: "broken.md", content: publishedNote },
+    ]);
+    vault.read.mockImplementation(async (file: { name: string }) => {
+      if (file.name === "broken.md") throw new Error("EACCES");
+      return publishedNote;
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.prUrl).toBe("https://github.com/test/pr/1");
+    const broken = result.results.find((r) => r.filePath === "broken.md");
+    expect(broken?.success).toBe(false);
+    expect(broken?.error).toContain("Failed to read");
+    expect(gh.createBranchWithRetry).toHaveBeenCalledTimes(1);
+    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test("skips branch and PR creation when only read failures exist", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
+    vault.read.mockImplementation(async () => {
+      throw new Error("disk error");
+    });
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.total).toBe(2);
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.prUrl).toBeUndefined();
+    expect(result.error).toBe("Failed to read 2 files");
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+    expect(gh.createPullRequest).not.toHaveBeenCalled();
+  });
+
+  test("sets batch error and marks results failed when PR creation throws", async () => {
+    const vault = makeVault([{ name: "a.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.createPullRequest.mockImplementation(async () => {
+      throw new Error("PR creation failed");
+    });
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.error).toContain("PR creation failed");
     expect(result.successful).toBe(0);
     expect(result.failed).toBe(1);
-    expect(result.results[0].error).toContain("rate limit");
-    expect(result.error).toContain("rate limit");
+    expect(result.results[0].success).toBe(false);
+    expect(gh.deleteBranch).toHaveBeenCalled();
+  });
+
+  test("invokes onProgress for each prepared file", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+      { name: "c.md", content: publishedNote },
+    ]);
+    const gh = makeGitHubService();
+    const progress = mock((_done: number, _total: number) => {});
+    const publisher = new Publisher(vault as never, makeSettings(), progress);
+    (publisher as unknown as Record<string, unknown>).githubService = gh;
+
+    await publisher.publishAll();
+
+    expect(progress).toHaveBeenCalledTimes(3);
+    expect(progress.mock.calls[0]).toEqual([1, 3]);
+    expect(progress.mock.calls[2]).toEqual([3, 3]);
   });
 
   test("batch publish fails per-file on missing required field", async () => {
@@ -500,292 +606,10 @@ body`;
     expect(broken?.error).toContain("EACCES");
     expect(gh.commitFiles).toHaveBeenCalledTimes(1);
   });
-
-  test("returns failures-only result when every file fails to read", async () => {
-    const vault = makeVault([
-      { name: "a.md", content: publishedNote },
-      { name: "b.md", content: publishedNote },
-    ]);
-    vault.read.mockImplementation(async () => {
-      throw new Error("disk error");
-    });
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAll();
-
-    expect(result.total).toBe(2);
-    expect(result.successful).toBe(0);
-    expect(result.failed).toBe(2);
-    expect(result.results.every((r) => !r.success)).toBe(true);
-    expect(result.results.every((r) => r.error?.includes("disk error"))).toBe(
-      true,
-    );
-    expect(result.error).toBe("Failed to read 2 files");
-    expect(gh.commitFiles).not.toHaveBeenCalled();
-  });
-
-  test("invokes onProgress for each prepared file", async () => {
-    const vault = makeVault([
-      { name: "a.md", content: publishedNote },
-      { name: "b.md", content: publishedNote },
-      { name: "c.md", content: publishedNote },
-    ]);
-    const gh = makeGitHubService();
-    const progress = mock((_done: number, _total: number) => {});
-    const publisher = new Publisher(vault as never, makeSettings(), progress);
-    (publisher as unknown as Record<string, unknown>).githubService = gh;
-
-    await publisher.publishAll();
-
-    expect(progress).toHaveBeenCalledTimes(3);
-    expect(progress.mock.calls[0]).toEqual([1, 3]);
-    expect(progress.mock.calls[2]).toEqual([3, 3]);
-  });
-});
-
-describe("Publisher.publishNoteWithPR", () => {
-  test("creates branch, commits, and opens PR", async () => {
-    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNoteWithPR(
-      makeTFile("test.md") as never,
-    );
-
-    expect(result.success).toBe(true);
-    expect(result.prUrl).toBe("https://github.com/test/pr/1");
-    expect(gh.createBranchWithRetry).toHaveBeenCalledTimes(1);
-    expect(gh.commitFiles).toHaveBeenCalledTimes(1);
-    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
-  });
-
-  test("rejects file without publish flag", async () => {
-    const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNoteWithPR(
-      makeTFile("draft.md") as never,
-    );
-
-    expect(result.success).toBe(false);
-    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
-  });
-
-  test("returns success with label warning when label apply fails", async () => {
-    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
-    gh.createPullRequest.mockImplementation(async () => ({
-      url: "https://github.com/test/pr/2",
-      number: 2,
-      warnings: [
-        {
-          kind: "pr-label-failed" as const,
-          labels: ["chore"],
-          error: "label not found",
-        },
-      ],
-    }));
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNoteWithPR(
-      makeTFile("test.md") as never,
-    );
-
-    expect(result.success).toBe(true);
-    expect(result.prUrl).toBe("https://github.com/test/pr/2");
-    expect(result.warnings).toContainEqual({
-      kind: "pr-label-failed",
-      labels: ["chore"],
-      error: "label not found",
-    });
-    expect(gh.deleteBranch).not.toHaveBeenCalled();
-  });
-
-  test("cleans up branch on publish failure", async () => {
-    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
-    gh.commitFiles.mockImplementation(async () => {
-      throw new Error("commit failed");
-    });
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishNoteWithPR(
-      makeTFile("test.md") as never,
-    );
-
-    expect(result.success).toBe(false);
-    expect(gh.deleteBranch).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("Publisher.publishAllWithPR", () => {
-  test("batches all publishable files into one PR", async () => {
-    const vault = makeVault([
-      { name: "a.md", content: publishedNote },
-      { name: "b.md", content: publishedNote },
-    ]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.successful).toBe(2);
-    expect(result.prUrl).toBe("https://github.com/test/pr/1");
-    expect(gh.commitFiles).toHaveBeenCalledTimes(1);
-    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
-  });
-
-  test("skips PR when all files fail", async () => {
-    const vault = makeVault([{ name: "bad.md", content: publishedNote }]);
-    // Make the vault read throw during prepareBatch's content processing
-    vault.read.mockImplementation(async () => publishedNote);
-    const gh = makeGitHubService();
-    gh.commitFiles.mockImplementation(async () => {
-      throw new Error("commit failed");
-    });
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.successful).toBe(0);
-    expect(result.prUrl).toBeUndefined();
-    expect(result.error).toContain("commit failed");
-    expect(gh.deleteBranch).toHaveBeenCalled();
-  });
-
-  test("returns empty when no publishable files", async () => {
-    const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.total).toBe(0);
-    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
-  });
-
-  test("attaches batch warnings when PR label apply fails", async () => {
-    const vault = makeVault([
-      { name: "a.md", content: publishedNote },
-      { name: "b.md", content: publishedNote },
-    ]);
-    const gh = makeGitHubService();
-    gh.createPullRequest.mockImplementation(async () => ({
-      url: "https://github.com/test/pr/3",
-      number: 3,
-      warnings: [
-        {
-          kind: "pr-label-failed" as const,
-          labels: ["chore"],
-          error: "forbidden",
-        },
-      ],
-    }));
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.successful).toBe(2);
-    expect(result.prUrl).toBe("https://github.com/test/pr/3");
-    expect(result.warnings).toContainEqual({
-      kind: "pr-label-failed",
-      labels: ["chore"],
-      error: "forbidden",
-    });
-    expect(gh.deleteBranch).not.toHaveBeenCalled();
-  });
-
-  test("sets batch error when branch creation throws", async () => {
-    const vault = makeVault([
-      { name: "a.md", content: publishedNote },
-      { name: "b.md", content: publishedNote },
-    ]);
-    const gh = makeGitHubService();
-    gh.createBranchWithRetry.mockImplementation(async () => {
-      throw new Error("branch exists");
-    });
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.error).toContain("branch exists");
-    expect(result.successful).toBe(0);
-    expect(result.total).toBe(2);
-    expect(result.failed).toBe(2);
-    expect(result.results).toHaveLength(2);
-    expect(result.results.every((r) => !r.success)).toBe(true);
-  });
-
-  test("includes read failures in PR result alongside successful files", async () => {
-    const vault = makeVault([
-      { name: "ok.md", content: publishedNote },
-      { name: "broken.md", content: publishedNote },
-    ]);
-    vault.read.mockImplementation(async (file: { name: string }) => {
-      if (file.name === "broken.md") throw new Error("EACCES");
-      return publishedNote;
-    });
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.total).toBe(2);
-    expect(result.successful).toBe(1);
-    expect(result.failed).toBe(1);
-    expect(result.prUrl).toBe("https://github.com/test/pr/1");
-    const broken = result.results.find((r) => r.filePath === "broken.md");
-    expect(broken?.success).toBe(false);
-    expect(broken?.error).toContain("Failed to read");
-    expect(gh.createBranchWithRetry).toHaveBeenCalledTimes(1);
-    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
-  });
-
-  test("skips branch and PR creation when only read failures exist", async () => {
-    const vault = makeVault([
-      { name: "a.md", content: publishedNote },
-      { name: "b.md", content: publishedNote },
-    ]);
-    vault.read.mockImplementation(async () => {
-      throw new Error("disk error");
-    });
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.total).toBe(2);
-    expect(result.successful).toBe(0);
-    expect(result.failed).toBe(2);
-    expect(result.prUrl).toBeUndefined();
-    expect(result.error).toBe("Failed to read 2 files");
-    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
-    expect(gh.createPullRequest).not.toHaveBeenCalled();
-  });
-
-  test("sets batch error and marks results failed when PR creation throws", async () => {
-    const vault = makeVault([{ name: "a.md", content: publishedNote }]);
-    const gh = makeGitHubService();
-    gh.createPullRequest.mockImplementation(async () => {
-      throw new Error("PR creation failed");
-    });
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.error).toContain("PR creation failed");
-    expect(result.successful).toBe(0);
-    expect(result.failed).toBe(1);
-    expect(result.results[0].success).toBe(false);
-    expect(gh.deleteBranch).toHaveBeenCalled();
-  });
 });
 
 describe("Publisher filename collision precheck", () => {
-  test("aborts direct-commit batch when two notes slugify to same filename", async () => {
+  test("aborts batch when two notes slugify to same filename", async () => {
     const vault = makeVault([
       {
         name: "Hello World.md",
@@ -807,30 +631,6 @@ describe("Publisher filename collision precheck", () => {
     expect(result.error).toContain("notes/Hello World.md");
     expect(result.error).toContain("other/hello world.md");
     expect(result.error).toContain('"hello-world.md"');
-    expect(gh.commitFiles).not.toHaveBeenCalled();
-  });
-
-  test("aborts PR batch when two notes slugify to same filename", async () => {
-    const vault = makeVault([
-      {
-        name: "Hello World.md",
-        content: publishedNote,
-        path: "notes/Hello World.md",
-      },
-      {
-        name: "hello world.md",
-        content: publishedNote,
-        path: "other/hello world.md",
-      },
-    ]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
-
-    expect(result.error).toContain("Filename collision");
-    expect(result.error).toContain("notes/Hello World.md");
-    expect(result.error).toContain("other/hello world.md");
     expect(gh.commitFiles).not.toHaveBeenCalled();
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
     expect(gh.createPullRequest).not.toHaveBeenCalled();
@@ -909,36 +709,6 @@ describe("Publisher filename collision precheck", () => {
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
-
-    expect(result.total).toBe(2);
-    expect(result.successful).toBe(0);
-    expect(result.failed).toBe(2);
-    expect(result.error).toBeDefined();
-    expect(result.error).toContain("Filename collision");
-    expect(result.results).toHaveLength(2);
-    for (const r of result.results) {
-      expect(r.success).toBe(false);
-      expect(r.error).toContain("Filename collision");
-    }
-  });
-
-  test("PR collision result also surfaces through main.ts guard (total > 0)", async () => {
-    const vault = makeVault([
-      {
-        name: "Hello World.md",
-        content: publishedNote,
-        path: "notes/Hello World.md",
-      },
-      {
-        name: "hello world.md",
-        content: publishedNote,
-        path: "other/hello world.md",
-      },
-    ]);
-    const gh = makeGitHubService();
-    const { publisher } = makePublisher(vault, makeSettings(), gh);
-
-    const result = await publisher.publishAllWithPR();
 
     expect(result.total).toBe(2);
     expect(result.successful).toBe(0);

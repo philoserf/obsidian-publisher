@@ -23,7 +23,6 @@ describe("parseSettings", () => {
       strippedFrontmatterFields: ["status", "lastmod"],
       baseBranch: "trunk",
       prLabels: ["chore", "publish"],
-      usePullRequests: false,
     });
     expect(result.githubToken).toBe("ghp_abc");
     expect(result.repoOwner).toBe("me");
@@ -34,7 +33,6 @@ describe("parseSettings", () => {
     expect(result.strippedFrontmatterFields).toEqual(["status", "lastmod"]);
     expect(result.baseBranch).toBe("trunk");
     expect(result.prLabels).toEqual(["chore", "publish"]);
-    expect(result.usePullRequests).toBe(false);
   });
 
   test("falls back when string field has wrong type", () => {
@@ -46,13 +44,6 @@ describe("parseSettings", () => {
     expect(result.githubToken).toBe(DEFAULT_SETTINGS.githubToken);
     expect(result.repoOwner).toBe(DEFAULT_SETTINGS.repoOwner);
     expect(result.repoName).toBe(DEFAULT_SETTINGS.repoName);
-  });
-
-  test("falls back when boolean field has wrong type", () => {
-    const result = parseSettings({
-      usePullRequests: 1,
-    });
-    expect(result.usePullRequests).toBe(DEFAULT_SETTINGS.usePullRequests);
   });
 
   test("falls back when prLabels is not an array", () => {

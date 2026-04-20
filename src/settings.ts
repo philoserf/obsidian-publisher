@@ -183,18 +183,6 @@ export class PublisherSettingTab extends PluginSettingTab {
       },
     });
 
-    new Setting(containerEl)
-      .setName("Use Pull Requests")
-      .setDesc(
-        "Create pull requests instead of committing directly to the base branch",
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(settings.usePullRequests).onChange((value) => {
-          settings.usePullRequests = value;
-          this.plugin.saveSettings();
-        }),
-      );
-
     this.addTextSetting(containerEl, {
       name: "Base Branch",
       desc: "Branch to create pull requests against (e.g., 'main', 'master')",

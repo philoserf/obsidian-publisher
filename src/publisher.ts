@@ -224,55 +224,10 @@ export class Publisher {
   }
 
   /**
-   * Publish a single note to GitHub (direct commit)
+   * Publish a single note to GitHub: creates a feature branch, commits the
+   * file to it, and opens a pull request against baseBranch.
    */
   async publishNote(file: TFile): Promise<PublishResult> {
-    return this.publishFileToTarget(file);
-  }
-
-  /**
-   * Publish all notes with status: publish (direct commit)
-   */
-  async publishAll(): Promise<BatchPublishResult> {
-    const { files, readFailures } = await this.getPublishableFiles();
-    const collisions = this.detectFilenameCollisions(files);
-    if (collisions.length > 0) {
-      const collisionError = this.filenameCollisionError(collisions);
-      const collisionFailures = this.synthesizeCollisionFailures(
-        files,
-        collisionError,
-      );
-      return buildBatchResult([...readFailures, ...collisionFailures], {
-        error: collisionError,
-      });
-    }
-    const { results: prepared, fileEntries } = await this.prepareBatch(files);
-    let commitError: string | undefined;
-
-    if (fileEntries.length > 0) {
-      try {
-        const successCount = prepared.filter((r) => r.success).length;
-        await this.githubService.commitFiles(
-          fileEntries,
-          `Publish ${successCount} note${successCount !== 1 ? "s" : ""} from Obsidian`,
-          this.baseBranch,
-        );
-      } catch (error) {
-        this.markResultsFailed(prepared, error);
-        commitError = errorMessage(error);
-      }
-    }
-
-    const error =
-      commitError ??
-      (prepared.length === 0 ? summarizeReadFailures(readFailures) : undefined);
-    return buildBatchResult([...readFailures, ...prepared], { error });
-  }
-
-  /**
-   * Publish a single note to GitHub with branch and PR creation
-   */
-  async publishNoteWithPR(file: TFile): Promise<PublishResult> {
     let content: string;
     try {
       content = await this.vault.read(file);
@@ -334,9 +289,9 @@ export class Publisher {
   }
 
   /**
-   * Publish all notes with status: publish to a single branch and PR
+   * Publish all notes with status: publish to a single branch and PR.
    */
-  async publishAllWithPR(): Promise<BatchPublishResult> {
+  async publishAll(): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
     if (files.length === 0) {
       return buildBatchResult(readFailures, {

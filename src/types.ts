@@ -22,8 +22,6 @@ export interface PublisherSettings {
   baseBranch: string;
   /** Labels to apply to pull requests */
   prLabels: string[];
-  /** Whether to use branch/PR workflow (vs direct commit) */
-  usePullRequests: boolean;
   /** Hugo shortcode name for Obsidian callouts (default: "callout") */
   calloutShortcodeName: string;
   /** Hugo shortcode name for mermaid diagrams (default: "mermaid") */
@@ -52,7 +50,6 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   ],
   baseBranch: "main",
   prLabels: ["chore"],
-  usePullRequests: true,
   calloutShortcodeName: "callout",
   mermaidShortcodeName: "mermaid",
 };
@@ -189,10 +186,6 @@ export function parseSettings(data: unknown): PublisherSettings {
     prLabels: isStringArray(d.prLabels)
       ? d.prLabels
       : DEFAULT_SETTINGS.prLabels,
-    usePullRequests:
-      typeof d.usePullRequests === "boolean"
-        ? d.usePullRequests
-        : DEFAULT_SETTINGS.usePullRequests,
     calloutShortcodeName:
       typeof d.calloutShortcodeName === "string" &&
       /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)
