@@ -224,6 +224,9 @@ export class GitHubService {
       });
     } catch (error) {
       if (error instanceof RequestError) {
+        throw error;
+      }
+      if (error instanceof Error) {
         throw new Error(`Failed to commit files: ${error.message}`);
       }
       throw error;

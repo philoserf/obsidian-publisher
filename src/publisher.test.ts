@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { Publisher } from "./publisher";
 import {
   DEFAULT_SETTINGS,
@@ -231,6 +231,27 @@ describe("Publisher.publishNote", () => {
 
     expect(result.success).toBe(false);
     expect(gh.deleteBranch).toHaveBeenCalledTimes(1);
+  });
+
+  test("logs a warning when branch cleanup itself fails", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubService();
+    gh.commitFiles.mockImplementation(async () => {
+      throw new Error("commit failed");
+    });
+    gh.deleteBranch.mockImplementation(async () => {
+      throw new Error("delete refused");
+    });
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("test.md") as never);
+
+    expect(result.success).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
+    const firstArg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(firstArg).toContain("Failed to clean up branch");
+    warnSpy.mockRestore();
   });
 
   test("accepts quoted status value", async () => {

@@ -127,6 +127,17 @@ describe("GitHubService.commitFiles", () => {
 
     expect(octokit.rest.git.createBlob).toHaveBeenCalledTimes(3);
   });
+
+  test("wraps generic Error with descriptive prefix", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.git.createCommit.mockImplementation(async () => {
+      throw new Error("network down");
+    });
+
+    await expect(
+      service.commitFiles([{ path: "a.md", content: "x" }], "msg", "main"),
+    ).rejects.toThrow("Failed to commit files: network down");
+  });
 });
 
 describe("GitHubService.createPullRequest", () => {
