@@ -317,13 +317,17 @@ export class ContentProcessor {
   }
 
   /**
-   * Slugify a heading to match Hugo's default goldmark anchor ID generation:
-   * lowercase, strip punctuation, spaces -> hyphens, collapse and trim hyphens.
+   * Slugify a heading to match Hugo's default goldmark anchor ID generation
+   * (autoIDType: "github"): NFC-normalize, lowercase, strip punctuation but
+   * preserve Unicode letters and digits, spaces -> hyphens, collapse and trim
+   * hyphens. NFC normalization first so decomposed diacritics (e.g. `é` as
+   * `e + U+0301`) survive the punctuation strip.
    */
   private slugifyHeading(heading: string): string {
     return heading
+      .normalize("NFC")
       .toLowerCase()
-      .replace(/[^\w\s-]/g, "")
+      .replace(/[^\p{L}\p{N}_\s-]/gu, "")
       .trim()
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-")
