@@ -6,6 +6,18 @@ import {
   type PublishWarning,
 } from "./types";
 
+/**
+ * Rethrow from an Octokit call site with a consistent narrowing:
+ * RequestError passes through (caller gets the status code); generic
+ * Error gets wrapped with a descriptive prefix; anything else rethrows
+ * as-is.
+ */
+function rethrowWithPrefix(error: unknown, prefix: string): never {
+  if (error instanceof RequestError) throw error;
+  if (error instanceof Error) throw new Error(`${prefix}: ${error.message}`);
+  throw error;
+}
+
 export class GitHubService {
   private octokit: Octokit;
   private settings: PublisherSettings;
@@ -98,15 +110,7 @@ export class GitHubService {
 
       return branchName;
     } catch (error) {
-      if (error instanceof RequestError) {
-        throw error;
-      }
-      if (error instanceof Error) {
-        throw new Error(
-          `Failed to create branch ${branchName}: ${error.message}`,
-        );
-      }
-      throw error;
+      rethrowWithPrefix(error, `Failed to create branch ${branchName}`);
     }
   }
 
@@ -223,13 +227,7 @@ export class GitHubService {
         sha: newCommit.data.sha,
       });
     } catch (error) {
-      if (error instanceof RequestError) {
-        throw error;
-      }
-      if (error instanceof Error) {
-        throw new Error(`Failed to commit files: ${error.message}`);
-      }
-      throw error;
+      rethrowWithPrefix(error, "Failed to commit files");
     }
   }
 
