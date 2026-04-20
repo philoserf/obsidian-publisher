@@ -180,7 +180,7 @@ export function parseSettings(data: unknown): PublisherSettings {
       : DEFAULT_SETTINGS.frontmatterTemplate,
     strippedFrontmatterFields: resolveStrippedFields(d),
     baseBranch:
-      typeof d.baseBranch === "string"
+      typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""
         ? d.baseBranch
         : DEFAULT_SETTINGS.baseBranch,
     prLabels: isStringArray(d.prLabels)

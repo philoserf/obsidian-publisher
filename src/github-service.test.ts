@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { RequestError } from "@octokit/request-error";
 import { GitHubService } from "./github-service";
 import type { PublisherSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
@@ -138,6 +139,18 @@ describe("GitHubService.commitFiles", () => {
       service.commitFiles([{ path: "a.md", content: "x" }], "msg", "main"),
     ).rejects.toThrow("Failed to commit files: network down");
   });
+
+  test("rethrows RequestError unchanged (preserves status)", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("conflict", 409, {} as never);
+    octokit.rest.git.createCommit.mockImplementation(async () => {
+      throw requestError;
+    });
+
+    await expect(
+      service.commitFiles([{ path: "a.md", content: "x" }], "msg", "main"),
+    ).rejects.toBe(requestError);
+  });
 });
 
 describe("GitHubService.createPullRequest", () => {
@@ -235,5 +248,17 @@ describe("GitHubService.createBranchWithRetry", () => {
     await expect(
       service.createBranchWithRetry("publish", "main", 2),
     ).rejects.toThrow("Failed to create branch");
+  });
+
+  test("rethrows RequestError unchanged so retry loop can act on status", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("unauthorized", 401, {} as never);
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw requestError;
+    });
+
+    await expect(
+      service.createBranchWithRetry("publish", "main", 1),
+    ).rejects.toBe(requestError);
   });
 });
