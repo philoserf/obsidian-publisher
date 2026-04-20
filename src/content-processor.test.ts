@@ -360,6 +360,51 @@ See [[Other#  Multi   Word!  ]].`,
     );
     expect(result.content).toContain("](/posts/other/#multi-word)");
   });
+
+  test("preserves non-ASCII Latin letters (é, ü) in heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other#Café au lait]] and [[Other#Über alles]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("](/posts/other/#café-au-lait)");
+    expect(result.content).toContain("](/posts/other/#über-alles)");
+  });
+
+  test("preserves CJK characters in heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other#日本語 notes]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("](/posts/other/#日本語-notes)");
+  });
+
+  test("NFC-normalizes decomposed diacritics in heading anchor", () => {
+    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    // "café" encoded as c + a + f + e + U+0301 (combining acute)
+    const decomposed = `Caf\u0065\u0301`;
+    const result = processor.process(
+      `---
+title: X
+date: 2026-01-01
+---
+See [[Other#${decomposed}]].`,
+      "x.md",
+      new Set(["other"]),
+    );
+    expect(result.content).toContain("](/posts/other/#café)");
+  });
 });
 
 describe("Image reference conversion", () => {
