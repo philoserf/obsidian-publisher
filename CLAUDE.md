@@ -28,7 +28,7 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 
 1. **User triggers publish** — `main.ts` command handler
 2. **Settings validation** — `publisher.ts` checks GitHub credentials
-3. **Branch/PR creation** — `github-service.ts` creates feature branch (if PR workflow enabled)
+3. **Branch creation** — `github-service.ts` creates a feature branch
 4. **Content processing** — `content-processor.ts` converts Obsidian syntax to Hugo markdown
 5. **File upload** — `github-service.ts` uploads markdown and images via GitHub API
 6. **PR creation** — `github-service.ts` creates pull request
