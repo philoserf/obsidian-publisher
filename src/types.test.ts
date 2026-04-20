@@ -56,6 +56,20 @@ describe("parseSettings", () => {
     expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
   });
 
+  test("falls back when prLabels contains only whitespace", () => {
+    expect(parseSettings({ prLabels: [""] }).prLabels).toEqual(
+      DEFAULT_SETTINGS.prLabels,
+    );
+    expect(parseSettings({ prLabels: ["  ", "\t"] }).prLabels).toEqual(
+      DEFAULT_SETTINGS.prLabels,
+    );
+  });
+
+  test("trims prLabels entries", () => {
+    const result = parseSettings({ prLabels: ["  chore ", "publish"] });
+    expect(result.prLabels).toEqual(["chore", "publish"]);
+  });
+
   test("falls back when baseBranch is empty or whitespace", () => {
     expect(parseSettings({ baseBranch: "" }).baseBranch).toBe(
       DEFAULT_SETTINGS.baseBranch,

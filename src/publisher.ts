@@ -35,8 +35,8 @@ function buildBatchResult(
     successful,
     failed: results.length - successful,
     results,
-    warnings: [],
     ...extras,
+    warnings: extras.warnings ?? [],
   };
 }
 
