@@ -418,6 +418,51 @@ describe("Image reference conversion", () => {
     expect(result.content).toContain("![hero.png](/assets/img/hero.png)");
   });
 
+  test("imageUrlPath: bare 'static' collapses to root", () => {
+    const cp2 = makeProcessor({ imageDir: "static" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/hero.png)");
+  });
+
+  test("imageUrlPath: preserves imageDir that starts with 'static' but isn't 'static/'", () => {
+    const cp2 = makeProcessor({ imageDir: "static-assets" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/static-assets/hero.png)");
+  });
+
+  test("imageUrlPath: preserves imageDir starting with 'staticfiles/'", () => {
+    const cp2 = makeProcessor({ imageDir: "staticfiles/img" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/staticfiles/img/hero.png)");
+  });
+
+  test("imageUrlPath: normalizes leading and trailing slashes", () => {
+    const cp2 = makeProcessor({ imageDir: "/static/images/" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/images/hero.png)");
+  });
+
+  test("imageUrlPath: empty imageDir collapses to root", () => {
+    const cp2 = makeProcessor({ imageDir: "" });
+    const result = cp2.process(
+      wrap("title: Test\nstatus: publish", "![[hero.png]]"),
+      "test.md",
+    );
+    expect(result.content).toContain("![hero.png](/hero.png)");
+  });
+
   test("strips width sizing from image reference", () => {
     const result = cp.process(
       wrap("title: Test\nstatus: publish", "![[photo.png|300]]"),
