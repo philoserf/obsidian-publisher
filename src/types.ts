@@ -109,8 +109,8 @@ export interface BatchPublishResult {
   prUrl?: string;
   /** Batch-level failure (e.g. commitFiles or PR creation threw) */
   error?: string;
-  /** Batch-level non-fatal conditions (e.g. PR label apply failed) */
-  warnings?: PublishWarning[];
+  /** Batch-level non-fatal conditions (e.g. PR label apply failed); always present, [] when none */
+  warnings: PublishWarning[];
 }
 
 /**
@@ -183,9 +183,10 @@ export function parseSettings(data: unknown): PublisherSettings {
       typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""
         ? d.baseBranch
         : DEFAULT_SETTINGS.baseBranch,
-    prLabels: isStringArray(d.prLabels)
-      ? d.prLabels
-      : DEFAULT_SETTINGS.prLabels,
+    prLabels:
+      isStringArray(d.prLabels) && d.prLabels.length > 0
+        ? d.prLabels
+        : DEFAULT_SETTINGS.prLabels,
     calloutShortcodeName:
       typeof d.calloutShortcodeName === "string" &&
       /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)

@@ -165,7 +165,7 @@ export default class ObsidianPublisher extends Plugin {
 
       notifyWarnings([
         ...result.results.flatMap((r) => r.warnings),
-        ...(result.warnings ?? []),
+        ...result.warnings,
       ]);
 
       if (result.failed > 0) {

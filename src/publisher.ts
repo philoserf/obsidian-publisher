@@ -15,7 +15,7 @@ import {
   type PublishWarning,
 } from "./types";
 
-export type ProgressCallback = (done: number, total: number) => void;
+type ProgressCallback = (done: number, total: number) => void;
 
 function failedResult(filePath: string, error: string): PublishResult {
   return { filePath, success: false, error, warnings: [] };
@@ -35,6 +35,7 @@ function buildBatchResult(
     successful,
     failed: results.length - successful,
     results,
+    warnings: [],
     ...extras,
   };
 }
@@ -74,7 +75,7 @@ export class Publisher {
   }
 
   private get prLabels(): string[] {
-    return this.settings.prLabels || ["chore"];
+    return this.settings.prLabels;
   }
 
   private markResultsFailed(
@@ -273,7 +274,7 @@ export class Publisher {
     return {
       ...single,
       prUrl: result.prUrl,
-      warnings: [...single.warnings, ...(result.warnings ?? [])],
+      warnings: [...single.warnings, ...result.warnings],
     };
   }
 

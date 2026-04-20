@@ -51,6 +51,11 @@ describe("parseSettings", () => {
     expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
   });
 
+  test("falls back when prLabels is an empty array", () => {
+    const result = parseSettings({ prLabels: [] });
+    expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
+  });
+
   test("falls back when baseBranch is empty or whitespace", () => {
     expect(parseSettings({ baseBranch: "" }).baseBranch).toBe(
       DEFAULT_SETTINGS.baseBranch,
