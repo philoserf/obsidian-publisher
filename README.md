@@ -36,6 +36,8 @@ Wikilinks and note embeds only resolve to URLs for notes in the **current publis
 
 Callout types pass through from Obsidian verbatim (no collapse to a fixed set). The destination Hugo site must define `callout` and `mermaid` shortcodes in `layouts/shortcodes/`. Reference implementations ship in `hugo-shortcodes/` — copy them into your theme. The shortcode names are configurable in the plugin settings (default `callout` and `mermaid`).
 
+Heading anchors (`[[Page#Heading]]`) assume the destination Hugo site uses the default `autoIDType: "github"`, which preserves Unicode letters. Sites configured with the opt-in `autoIDType: "github-ascii"` will see mismatched `#fragment` links — pages load, but in-page jumps to non-ASCII headings won't resolve.
+
 ## Security
 
 This plugin requires a GitHub Personal Access Token (PAT) to publish content.
