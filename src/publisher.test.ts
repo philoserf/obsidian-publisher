@@ -639,6 +639,41 @@ body`;
     expect(badResult?.error).toContain("date");
   });
 
+  test("reads shared image once across the batch", async () => {
+    const noteA = `---
+title: A
+status: publish
+date: 2026-01-01
+---
+See ![[photo.png]]`;
+    const noteB = `---
+title: B
+status: publish
+date: 2026-01-01
+---
+Also ![[photo.png]]`;
+    const imageData = new Uint8Array([1, 2, 3]).buffer;
+    const vault = makeVault([
+      { name: "a.md", content: noteA },
+      { name: "b.md", content: noteB },
+      { name: "photo.png", content: imageData as unknown as string },
+    ]);
+    const gh = makeGitHubService();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(2);
+    expect(vault.readBinary).toHaveBeenCalledTimes(1);
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string }>;
+    const imagePaths = entries.filter((e) =>
+      e.path.startsWith("static/images/"),
+    );
+    expect(imagePaths).toHaveLength(1);
+    expect(imagePaths[0].path).toBe("static/images/photo.png");
+  });
+
   test("surfaces read failures as per-file failed results", async () => {
     const vault = makeVault([
       { name: "ok.md", content: publishedNote },
