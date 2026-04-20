@@ -251,6 +251,12 @@ export class PublisherSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl).addTextArea((text) => {
+      // Track previously seen required fields so the Notice fires only when
+      // a required field first appears in the input, not on every keystroke
+      // that follows.
+      let lastBlocked = new Set<string>(
+        requiredFieldsIn(settings.strippedFrontmatterFields),
+      );
       text
         .setPlaceholder("status, lastmod, cssclasses")
         .setValue(settings.strippedFrontmatterFields.join(", "))
@@ -260,12 +266,14 @@ export class PublisherSettingTab extends PluginSettingTab {
             .map((f) => f.trim())
             .filter((f) => f.length > 0);
           const blocked = requiredFieldsIn(raw);
+          const newlyBlocked = blocked.filter((f) => !lastBlocked.has(f));
           settings.strippedFrontmatterFields = parseStrippedFieldsInput(value);
-          if (blocked.length > 0) {
+          if (newlyBlocked.length > 0) {
             new Notice(
-              `Cannot strip required frontmatter field${blocked.length > 1 ? "s" : ""}: ${blocked.join(", ")}. Required for publishing; ignored.`,
+              `Cannot strip required frontmatter field${newlyBlocked.length > 1 ? "s" : ""}: ${newlyBlocked.join(", ")}. Required for publishing; ignored.`,
             );
           }
+          lastBlocked = new Set(blocked);
           save();
         });
       text.inputEl.rows = 3;
