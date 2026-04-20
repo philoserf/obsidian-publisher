@@ -42,11 +42,28 @@ describe("splitFrontmatter", () => {
     expect(body).toBe("Hello world");
   });
 
-  test("returns empty frontmatter when YAML parse fails", () => {
+  test("surfaces error when YAML parse fails", () => {
     const input = "---\n: bad yaml :\n---\nbody";
-    const { frontmatter, body } = splitFrontmatter(input);
+    const { frontmatter, body, error } = splitFrontmatter(input);
     expect(frontmatter).toEqual({});
     expect(body).toBe("body");
+    expect(error).toMatch(/^Malformed frontmatter YAML: /);
+  });
+
+  test("no error when frontmatter block is absent", () => {
+    const { error } = splitFrontmatter("no frontmatter here");
+    expect(error).toBeUndefined();
+  });
+
+  test("parses nested mappings via real YAML", () => {
+    const input =
+      "---\ntitle: Test\nmeta:\n  author: Ada\n  tags:\n    - one\n    - two\n---\nbody";
+    const { frontmatter, error } = splitFrontmatter(input);
+    expect(error).toBeUndefined();
+    expect(frontmatter).toEqual({
+      title: "Test",
+      meta: { author: "Ada", tags: ["one", "two"] },
+    });
   });
 });
 

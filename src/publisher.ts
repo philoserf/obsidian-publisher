@@ -240,7 +240,10 @@ export class Publisher {
       return failedResult(file.path, "Failed to read file");
     }
 
-    const { frontmatter, body } = splitFrontmatter(content);
+    const { frontmatter, body, error: parseError } = splitFrontmatter(content);
+    if (parseError) {
+      return failedResult(file.path, parseError);
+    }
     if (!hasPublishFlag(frontmatter)) {
       return failedResult(
         file.path,
@@ -470,7 +473,18 @@ export class Publisher {
     for (const file of markdownFiles) {
       try {
         const content = await this.vault.read(file);
-        const { frontmatter, body } = splitFrontmatter(content);
+        const {
+          frontmatter,
+          body,
+          error: parseError,
+        } = splitFrontmatter(content);
+        // A malformed frontmatter block hides publish intent — surface it
+        // rather than silently skipping. We can't tell whether the user
+        // meant status: publish when the YAML doesn't parse.
+        if (parseError) {
+          readFailures.push(failedResult(file.path, parseError));
+          continue;
+        }
         if (hasPublishFlag(frontmatter)) {
           files.push({ file, frontmatter, body });
         }

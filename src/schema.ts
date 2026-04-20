@@ -11,6 +11,8 @@ const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 export function splitFrontmatter(content: string): {
   frontmatter: Frontmatter;
   body: string;
+  /** Set when the frontmatter block existed but YAML parsing failed; distinguishes malformed YAML from a missing block or validation failure. */
+  error?: string;
 } {
   const match = content.match(FRONTMATTER_REGEX);
   if (!match) return { frontmatter: {}, body: content };
@@ -22,8 +24,12 @@ export function splitFrontmatter(content: string): {
         : {};
     return { frontmatter, body: match[2] };
   } catch (error) {
-    console.error("Failed to parse frontmatter:", error);
-    return { frontmatter: {}, body: match[2] };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return {
+      frontmatter: {},
+      body: match[2],
+      error: `Malformed frontmatter YAML: ${message}`,
+    };
   }
 }
 
