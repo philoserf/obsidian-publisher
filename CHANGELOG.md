@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1
+
+### Changed
+
+- Internal refactor following code review (#218): renamed `assembleFrontmatter` → `assembleDocument` (it returns the full document, not just frontmatter), renamed `parseSimpleFrontmatter` → `parseKeyValueText` (parses textarea input, not note frontmatter), removed the one-line `sanitizeImageName` alias in favor of `sanitizeFilename`, and split `parseSettings` (plus its private helpers) out of `types.ts` into a new `settings-parse.ts` so `types.ts` is declaration-only. No user-visible behavior change.
+- Dev dependency patch bumps: `@biomejs/biome` 2.4.10 → 2.4.12, `@types/bun` 1.3.11 → 1.3.12, `@types/node` 25.5.2 → 25.6.0, `typescript` 6.0.2 → 6.0.3.
+
 ## 1.7.0
 
 ### Fixed

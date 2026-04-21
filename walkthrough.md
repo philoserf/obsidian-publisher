@@ -30,10 +30,11 @@ src/publisher.test.ts
 src/publisher.ts
 src/schema.test.ts
 src/schema.ts
+src/settings-parse.test.ts
+src/settings-parse.ts
 src/settings.test.ts
 src/settings.ts
 src/test-preload.ts
-src/types.test.ts
 src/types.ts
 ```
 
@@ -45,7 +46,8 @@ Module boundaries:
 - **`content-processor.ts`** — Obsidian-to-Hugo transforms: wikilinks, image embeds, callouts, mermaid, frontmatter shaping.
 - **`schema.ts`** — Frontmatter parsing, the `status: publish` gate, `title`/`date` validation.
 - **`settings.ts`** — Plugin settings UI and input sanitizers.
-- **`types.ts`** — Shared types (`PublisherSettings`, `PublishResult`, `BatchPublishResult`, `PublishWarning`, `ProcessedContent`) and `parseSettings` — the single load-time data validator.
+- **`types.ts`** — Shared types (`PublisherSettings`, `PublishResult`, `BatchPublishResult`, `PublishWarning`, `ProcessedContent`), `DEFAULT_SETTINGS`, and the `errorMessage` helper.
+- **`settings-parse.ts`** — `parseSettings`, the single load-time validator for persisted plugin data.
 
 Tests live next to source as `*.test.ts`. Bun's runner is configured via `bunfig.toml` to preload a mock for the `obsidian` module and Octokit:
 
@@ -124,12 +126,12 @@ export function batchNoticeText(result: BatchPublishResult): string {
 
 Error-first ordering matters: `result.error` wins over `total === 0`, so a batch-level abort (e.g., filename collision) surfaces the real cause instead of the misleading "No publishable notes found."
 
-## Types & Settings: types.ts
+## Types & Settings: types.ts + settings-parse.ts
 
-All shared types and `parseSettings` (the single load-time validator) live here. `PublisherSettings` defines the persisted config shape:
+`types.ts` holds the shared shapes; `settings-parse.ts` holds the load-time validator. Splitting them keeps `types.ts` declaration-only. `PublisherSettings` defines the persisted config shape:
 
 ```bash
-sed -n '6,29p' src/types.ts
+sed -n '4,27p' src/types.ts
 ```
 
 ```output
@@ -162,26 +164,10 @@ export interface PublisherSettings {
 `parseSettings` is the only entry path for persisted data. It type-checks each field, falling back to `DEFAULT_SETTINGS` on type mismatch; a single corrupted field does not wipe the user's config:
 
 ```bash
-sed -n '159,200p' src/types.ts
+sed -n '49,89p' src/settings-parse.ts
 ```
 
 ```output
-/**
- * Trim-and-filter persisted prLabels. Whitespace-only labels are dropped
- * (matching the settings UI input sanitizer); an empty result falls back
- * to DEFAULT_SETTINGS.prLabels, symmetric with baseBranch handling.
- */
-function resolvePrLabels(value: unknown): string[] {
-  if (!isStringArray(value)) return DEFAULT_SETTINGS.prLabels;
-  const trimmed = value.map((l) => l.trim()).filter((l) => l.length > 0);
-  return trimmed.length > 0 ? trimmed : DEFAULT_SETTINGS.prLabels;
-}
-
-/**
- * Validate persisted plugin data against the PublisherSettings shape.
- * Per-field fallback to DEFAULT_SETTINGS on type mismatch — a single
- * corrupted field shouldn't wipe the user's configuration.
- */
 export function parseSettings(data: unknown): PublisherSettings {
   const d = isPlainObject(data) ? data : {};
   return {
@@ -208,6 +194,20 @@ export function parseSettings(data: unknown): PublisherSettings {
     baseBranch:
       typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""
         ? d.baseBranch
+        : DEFAULT_SETTINGS.baseBranch,
+    prLabels: resolvePrLabels(d.prLabels),
+    calloutShortcodeName:
+      typeof d.calloutShortcodeName === "string" &&
+      /^[a-zA-Z0-9_-]+$/.test(d.calloutShortcodeName)
+        ? d.calloutShortcodeName
+        : DEFAULT_SETTINGS.calloutShortcodeName,
+    mermaidShortcodeName:
+      typeof d.mermaidShortcodeName === "string" &&
+      /^[a-zA-Z0-9_-]+$/.test(d.mermaidShortcodeName)
+        ? d.mermaidShortcodeName
+        : DEFAULT_SETTINGS.mermaidShortcodeName,
+  };
+}
 ```
 
 Two behaviors worth noting:
@@ -216,15 +216,10 @@ Two behaviors worth noting:
 - `strippedFrontmatterFields` is resolved via `resolveStrippedFields`, which filters required fields (`title`, `date`) so a misconfigured list can't strip them:
 
 ```bash
-sed -n '138,152p' src/types.ts
+sed -n '17,31p' src/settings-parse.ts
 ```
 
 ```output
-/**
- * Resolve strippedFrontmatterFields from persisted data. Accepts the
- * current field; falls back to the legacy removePublishFlag boolean for
- * migration; otherwise returns the default list.
- */
 function resolveStrippedFields(d: Record<string, unknown>): string[] {
   if (isStringArray(d.strippedFrontmatterFields)) {
     return filterRequiredFields(d.strippedFrontmatterFields);
@@ -235,6 +230,11 @@ function resolveStrippedFields(d: Record<string, unknown>): string[] {
   }
   return filterRequiredFields(defaults);
 }
+
+function filterRequiredFields(fields: string[]): string[] {
+  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+  return fields.filter((f) => !required.has(f));
+}
 ```
 
 `removePublishFlag` is the legacy boolean setting that `strippedFrontmatterFields` replaced in 1.4.0; the `false` branch preserves the migration for users who persisted it.
@@ -242,7 +242,7 @@ function resolveStrippedFields(d: Record<string, unknown>): string[] {
 `PublishResult` and `BatchPublishResult` are the return shapes callers consume:
 
 ```bash
-sed -n '75,114p' src/types.ts
+sed -n '73,117p' src/types.ts
 ```
 
 ```output
@@ -286,6 +286,11 @@ export interface BatchPublishResult {
   results: PublishResult[];
   /** URL to the pull request if created */
   prUrl?: string;
+  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
+  error?: string;
+  /** Batch-level non-fatal conditions (e.g. PR label apply failed); always present, [] when none */
+  warnings: PublishWarning[];
+}
 ```
 
 ## Frontmatter Gate: schema.ts
@@ -635,7 +640,7 @@ sed -n '37,67p' src/content-processor.ts
     processedBody = this.convertNoteEmbeds(processedBody, publishSet);
     processedBody = this.convertWikilinks(processedBody, publishSet);
 
-    const processedContent = this.assembleFrontmatter(
+    const processedContent = this.assembleDocument(
       processedFrontmatter,
       processedBody,
     );
@@ -1059,8 +1064,8 @@ src/github-service.test.ts:17
 src/main.test.ts:5
 src/publisher.test.ts:41
 src/schema.test.ts:24
+src/settings-parse.test.ts:26
 src/settings.test.ts:41
-src/types.test.ts:26
 ```
 
 ## Concerns
