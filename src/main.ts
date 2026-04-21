@@ -1,12 +1,12 @@
 import { Notice, Plugin, type TFile } from "obsidian";
 import { Publisher } from "./publisher";
 import { PublisherSettingTab } from "./settings";
+import { parseSettings } from "./settings-parse";
 import {
   type BatchPublishResult,
   errorMessage,
   type PublisherSettings,
   type PublishWarning,
-  parseSettings,
 } from "./types";
 
 type NamedImageWarning = Extract<PublishWarning, { name: string }>;

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SETTINGS, parseSettings } from "./types";
+import { parseSettings } from "./settings-parse";
+import { DEFAULT_SETTINGS } from "./types";
 
 describe("parseSettings", () => {
   test("returns defaults when input is not a populated plain object", () => {
