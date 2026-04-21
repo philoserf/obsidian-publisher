@@ -213,7 +213,7 @@ export class Publisher {
         continue;
       }
 
-      const sanitizedName = this.contentProcessor.sanitizeImageName(imageName);
+      const sanitizedName = this.contentProcessor.sanitizeFilename(imageName);
       const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
       const owner = targetPathOwners.get(imgPath);
       if (owner !== undefined && owner !== imageName) {
