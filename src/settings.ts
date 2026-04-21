@@ -76,11 +76,11 @@ export function parseFrontmatter(text: string): Record<string, unknown> {
       ? parsed
       : {};
   } catch {
-    return parseSimpleFrontmatter(trimmed);
+    return parseKeyValueText(trimmed);
   }
 }
 
-function parseSimpleFrontmatter(text: string): Record<string, string> {
+function parseKeyValueText(text: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const line of text.split("\n")) {
     const t = line.trim();

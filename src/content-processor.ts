@@ -52,7 +52,7 @@ export class ContentProcessor {
     processedBody = this.convertNoteEmbeds(processedBody, publishSet);
     processedBody = this.convertWikilinks(processedBody, publishSet);
 
-    const processedContent = this.assembleFrontmatter(
+    const processedContent = this.assembleDocument(
       processedFrontmatter,
       processedBody,
     );
@@ -93,9 +93,9 @@ export class ContentProcessor {
   }
 
   /**
-   * Reassemble frontmatter and body
+   * Reassemble the full document: frontmatter block plus body.
    */
-  private assembleFrontmatter(
+  private assembleDocument(
     frontmatter: Record<string, unknown>,
     body: string,
   ): string {
@@ -348,12 +348,5 @@ export class ContentProcessor {
     const name = this.sanitizeName(filename.slice(0, lastDotIndex));
     const extension = filename.slice(lastDotIndex);
     return name + extension;
-  }
-
-  /**
-   * Sanitize an image filename (preserves extension)
-   */
-  sanitizeImageName(imageName: string): string {
-    return this.sanitizeFilename(imageName);
   }
 }
