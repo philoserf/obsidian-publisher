@@ -9,6 +9,7 @@ async function build() {
     format: "cjs",
     external: ["obsidian", "electron"],
     minify: !isWatch,
+    sourcemap: isWatch ? "linked" : "none",
   });
 
   if (!result.success) {
@@ -31,6 +32,7 @@ if (isWatch) {
 
   watch("src", { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts")) return;
+    if (filename.includes(".test.")) return;
     if (timeout) clearTimeout(timeout);
     timeout = setTimeout(async () => {
       console.log(`\nRebuilding (${filename} changed)...`);
