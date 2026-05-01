@@ -45,3 +45,8 @@ This plugin requires a GitHub Personal Access Token (PAT) to publish content.
 - **Use a fine-grained token** scoped to your target repository with `contents:write` and `pull_requests:write` permissions. Avoid classic tokens with broad `repo` scope.
 - **Token storage:** The token is stored in Obsidian's plugin data file (`data.json`) as plaintext. This is an Obsidian platform constraint — there is no encrypted storage API. Anyone with file system access to your vault can read the token.
 - **Recommendations:** Use a token scoped to a single repository. On shared devices, be aware that the token is accessible on disk.
+
+## Alternatives
+
+- [Enveloppe](https://github.com/Enveloppe/obsidian-enveloppe) — publish Obsidian notes to GitHub with broader CMS support (Jekyll, Hugo, etc.).
+- [Digital Garden](https://github.com/oleeskild/obsidian-digital-garden) — publish notes to a static site with its own theme and hosting.

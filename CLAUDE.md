@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project Overview
 
 Obsidian Publisher is a plugin that publishes Obsidian notes to GitHub for Hugo processing, using the GitHub REST API (via Octokit) for cross-platform compatibility including iOS.
@@ -8,14 +10,16 @@ Obsidian Publisher is a plugin that publishes Obsidian notes to GitHub for Hugo 
 
 ```bash
 bun install          # Install dependencies
-bun run dev          # Watch mode with source maps
-bun run build        # Production build (runs typecheck + lint first)
+bun run dev          # Watch mode build with source maps
+bun run build        # Production build (runs check first)
 bun test             # Run all tests
-bun run test:watch   # Watch mode for tests
-bun run typecheck    # Type checking only
-bun run format       # Auto-fix formatting (Biome)
-bun run lint         # Lint (Biome)
-bun run check        # Format + lint combined
+bun run typecheck    # Type checking only (tsc --noEmit)
+bun run lint         # Biome check (lint + format verify)
+bun run lint:fix     # Biome check --write
+bun run format       # Biome format --write
+bun run check        # typecheck + biome check (run before committing)
+bun run audit        # bun audit (critical vulnerabilities)
+bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
 ```
 
 ## Architecture
@@ -67,7 +71,7 @@ Single-file bundle via Bun: entry `src/main.ts` to output `main.js`. Externals: 
 
 ### Version and Release
 
-`bun version patch` bumps version, auto-syncs `manifest.json`/`versions.json`, commits, and tags. Tag push triggers GitHub Actions release (`.github/workflows/release.yml`).
+`bun run version` (script: `version-bump.ts`) bumps the version, auto-syncs `manifest.json`/`versions.json`, commits, and tags. Tag push triggers GitHub Actions release (`.github/workflows/release.yml`).
 
 ## Code Style
 
