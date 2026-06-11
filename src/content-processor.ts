@@ -1,6 +1,10 @@
 import { stringifyYaml } from "obsidian";
 import { type Frontmatter, splitFrontmatter } from "./schema";
-import type { ProcessedContent, PublisherSettings } from "./types";
+import {
+  errorMessage,
+  type ProcessedContent,
+  type PublisherSettings,
+} from "./types";
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
 
@@ -107,8 +111,11 @@ export class ContentProcessor {
       const yaml = stringifyYaml(frontmatter);
       return `---\n${yaml}---\n${body}`;
     } catch (error) {
-      console.error("Failed to stringify frontmatter:", error);
-      return body;
+      // Publishing a body without its frontmatter block would corrupt
+      // the Hugo page while reporting success; fail the file instead.
+      throw new Error(
+        `Failed to serialize frontmatter: ${errorMessage(error)}`,
+      );
     }
   }
 

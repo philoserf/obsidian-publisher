@@ -726,6 +726,14 @@ body`,
     );
     expect(result.frontmatter.author).toBe("Mark");
   });
+
+  test("throws instead of silently dropping frontmatter when serialization fails", () => {
+    const cp = makeProcessor();
+    const unserializable = { title: "Test", bad: Symbol("nope") };
+    expect(() =>
+      cp.processFromSplit(unserializable, "body", "test.md"),
+    ).toThrow(/Failed to serialize frontmatter/);
+  });
 });
 
 describe("Filename sanitization", () => {
