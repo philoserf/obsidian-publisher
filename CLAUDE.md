@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Obsidian Publisher is a plugin that publishes Obsidian notes to GitHub for Hugo processing, using the GitHub REST API (via Octokit) for cross-platform compatibility including iOS.
 
+The current next step for this repo is tracked in the workspace backlog at `../NEXT.md` (the `obsidian-publisher` row). Read it when starting work; update it when that step ships.
+
 ## Development Commands
 
 ```bash
