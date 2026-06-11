@@ -261,4 +261,31 @@ describe("GitHubService.createBranchWithRetry", () => {
       service.createBranchWithRetry("publish", "main", 1),
     ).rejects.toBe(requestError);
   });
+
+  test("retries with suffix after a 422 collision", async () => {
+    const { service, octokit } = makeService();
+    let calls = 0;
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      calls++;
+      if (calls === 1) throw new RequestError("exists", 422, {} as never);
+      return {};
+    });
+
+    const name = await service.createBranchWithRetry("publish", "main");
+
+    expect(name).toMatch(/-1$/);
+    expect(calls).toBe(2);
+  });
+
+  test("rethrows retryable error when attempts are exhausted", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("rate limited", 429, {} as never);
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw requestError;
+    });
+
+    await expect(
+      service.createBranchWithRetry("publish", "main", 1),
+    ).rejects.toBe(requestError);
+  });
 });

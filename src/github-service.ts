@@ -18,6 +18,34 @@ function rethrowWithPrefix(error: unknown, prefix: string): never {
   throw error;
 }
 
+/** Per-request budget for GitHub API calls; a stalled connection on
+ * mobile must surface as an error rather than hang a publish forever. */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/** fetch with an abort timeout; rewraps the opaque DOMException so
+ * errorMessage() surfaces "timed out" instead of "signal is aborted". */
+async function fetchWithTimeout(
+  url: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      throw new Error(
+        `GitHub API request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    throw error;
+  }
+}
+
 export class GitHubService {
   private octokit: Octokit;
   private settings: PublisherSettings;
@@ -26,6 +54,7 @@ export class GitHubService {
     this.settings = settings;
     this.octokit = new Octokit({
       auth: settings.githubToken,
+      request: { fetch: fetchWithTimeout },
     });
   }
 
@@ -269,13 +298,17 @@ export class GitHubService {
         await this.createBranch(branchName, baseBranch);
         return branchName;
       } catch (error) {
-        // Check if error is 422 (branch already exists)
-        if (error instanceof RequestError && error.status === 422) {
-          // Branch already exists, try again with suffix
-          continue;
-        }
-        // Re-throw if it's a different error
-        throw error;
+        // 422: branch already exists (retry with suffix). 429/5xx:
+        // transient rate-limit or server error, worth another attempt.
+        const retryable =
+          error instanceof RequestError &&
+          (error.status === 422 || error.status === 429 || error.status >= 500);
+        if (!retryable || i === maxRetries - 1) throw error;
+
+        // Exponential backoff with jitter so retries are never instant
+        // and a rate-limited batch doesn't hammer in lockstep.
+        const delay = 2 ** i * 500 + Math.random() * 250;
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
 
