@@ -81,19 +81,33 @@ export type PublishWarning =
   | { kind: "pr-label-failed"; labels: string[]; error: string };
 
 /**
- * Publishing result for a single note
+ * Publishing result for a single note. A discriminated union so the
+ * compiler enforces that failures carry an error and successes never do.
+ * The `error?: undefined` / `prUrl?: undefined` members keep `.error` and
+ * `.prUrl` readable on the union without narrowing.
  */
-export interface PublishResult {
+export type PublishResult = PublishSuccess | PublishFailure;
+
+export interface PublishSuccess {
   /** Original file path */
   filePath: string;
-  /** Whether the publish was successful */
-  success: boolean;
-  /** Error message if failed */
-  error?: string;
+  success: true;
+  error?: undefined;
   /** Non-fatal conditions noticed during publish; always present, [] when none */
   warnings: PublishWarning[];
   /** URL to the pull request if created (single-file PR workflow only) */
   prUrl?: string;
+}
+
+export interface PublishFailure {
+  /** Original file path */
+  filePath: string;
+  success: false;
+  /** Error message */
+  error: string;
+  /** Non-fatal conditions noticed during publish; always present, [] when none */
+  warnings: PublishWarning[];
+  prUrl?: undefined;
 }
 
 /**

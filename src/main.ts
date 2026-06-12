@@ -146,9 +146,9 @@ export default class ObsidianPublisher extends Plugin {
     try {
       const result = await publisher.publishNote(file);
 
-      if (result.success && result.prUrl) {
+      if (result.success) {
         new Notice(`✓ Pull request created for ${file.basename}`);
-        console.log(`Pull Request: ${result.prUrl}`);
+        if (result.prUrl) console.log(`Pull Request: ${result.prUrl}`);
       } else {
         new Notice(`✗ Failed to publish: ${result.error}`);
       }

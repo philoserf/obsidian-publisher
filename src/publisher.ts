@@ -21,6 +21,29 @@ function failedResult(filePath: string, error: string): PublishResult {
   return { filePath, success: false, error, warnings: [] };
 }
 
+/**
+ * Return a copy of results with every successful entry converted to a
+ * failed one carrying the given error. Failures keep their original error.
+ */
+function markResultsFailed(
+  results: PublishResult[],
+  error: unknown,
+  prefix?: string,
+): PublishResult[] {
+  const message = errorMessage(error);
+  const formatted = prefix ? `${prefix}: ${message}` : message;
+  return results.map((r) =>
+    r.success
+      ? {
+          filePath: r.filePath,
+          success: false,
+          error: formatted,
+          warnings: r.warnings,
+        }
+      : r,
+  );
+}
+
 function buildBatchResult(
   results: PublishResult[],
   extras: {
@@ -76,21 +99,6 @@ export class Publisher {
 
   private get prLabels(): string[] {
     return this.settings.prLabels;
-  }
-
-  private markResultsFailed(
-    results: PublishResult[],
-    error: unknown,
-    prefix?: string,
-  ): void {
-    const message = errorMessage(error);
-    const formatted = prefix ? `${prefix}: ${message}` : message;
-    for (const r of results) {
-      if (r.success) {
-        r.success = false;
-        r.error = formatted;
-      }
-    }
   }
 
   private async cleanupBranch(branchName: string): Promise<void> {
@@ -342,23 +350,25 @@ export class Publisher {
   }
 
   /**
-   * Commit prepared files to the target branch. On failure, marks any
-   * successful per-file results as failed and returns the error message;
-   * returns undefined on success or when there is nothing to commit.
+   * Commit prepared files to the target branch. On failure, returns the
+   * results with every successful entry marked failed plus the error
+   * message; on success (or nothing to commit) returns them unchanged.
    */
   private async commitPreparedBatch(
     branchName: string,
     results: PublishResult[],
     fileEntries: Array<{ path: string; content: string | ArrayBuffer }>,
     message: string,
-  ): Promise<string | undefined> {
-    if (fileEntries.length === 0) return undefined;
+  ): Promise<{ results: PublishResult[]; error?: string }> {
+    if (fileEntries.length === 0) return { results };
     try {
       await this.githubService.commitFiles(fileEntries, message, branchName);
-      return undefined;
+      return { results };
     } catch (error) {
-      this.markResultsFailed(results, error, "Commit failed");
-      return errorMessage(error);
+      return {
+        results: markResultsFailed(results, error, "Commit failed"),
+        error: errorMessage(error),
+      };
     }
   }
 
@@ -404,19 +414,19 @@ export class Publisher {
       prepared = batch.prepared;
 
       const successCount = prepared.filter((r) => r.success).length;
-      const commitError = await this.commitPreparedBatch(
+      const committed = await this.commitPreparedBatch(
         branchName,
         prepared,
         batch.fileEntries,
         opts.commitMessage(successCount),
       );
 
-      const succeeded = prepared.filter((r) => r.success);
-      const results = [...opts.readFailures, ...prepared];
+      const succeeded = committed.results.filter((r) => r.success);
+      const results = [...opts.readFailures, ...committed.results];
 
       if (succeeded.length === 0) {
         await this.cleanupBranch(branchName);
-        return buildBatchResult(results, { error: commitError });
+        return buildBatchResult(results, { error: committed.error });
       }
 
       const pr = await this.githubService.createPullRequest(
@@ -433,14 +443,11 @@ export class Publisher {
     } catch (error) {
       await this.cleanupBranch(branchName);
       const message = errorMessage(error);
-      if (prepared.length === 0) {
-        return buildBatchResult(
-          [...opts.readFailures, ...opts.synthesizeFailures(message)],
-          { error: message },
-        );
-      }
-      this.markResultsFailed(prepared, error);
-      return buildBatchResult([...opts.readFailures, ...prepared], {
+      const failed =
+        prepared.length === 0
+          ? opts.synthesizeFailures(message)
+          : markResultsFailed(prepared, error);
+      return buildBatchResult([...opts.readFailures, ...failed], {
         error: message,
       });
     }
