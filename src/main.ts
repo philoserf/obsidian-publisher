@@ -1,4 +1,5 @@
 import { Notice, Plugin, type TFile } from "obsidian";
+import { formatBatchNotice, formatWarnings } from "./notices";
 import { Publisher } from "./publisher";
 import { PublisherSettingTab } from "./settings";
 import { parseSettings } from "./settings-parse";
@@ -9,67 +10,9 @@ import {
   type PublishWarning,
 } from "./types";
 
-type NamedImageWarning = Extract<PublishWarning, { name: string }>;
-
-function notifyImageWarnings(
-  warnings: PublishWarning[],
-  kind: NamedImageWarning["kind"],
-  format: (names: string[]) => string,
-): void {
-  const filtered = warnings.filter(
-    (w): w is NamedImageWarning => w.kind === kind,
-  );
-  if (filtered.length === 0) return;
-  const names = [...new Set(filtered.map((w) => w.name))];
-  new Notice(format(names));
-}
-
-export function batchNoticeText(result: BatchPublishResult): string {
-  if (result.error) return `✗ Failed to publish: ${result.error}`;
-  if (result.total === 0) return "No publishable notes found";
-  if (result.successful === 0) {
-    return "All files failed to process. No PR created.";
-  }
-  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`;
-}
-
 function notifyWarnings(warnings: PublishWarning[]): void {
-  notifyImageWarnings(
-    warnings,
-    "image-failed",
-    (names) => `Warning: ${names.length} image(s) failed: ${names.join(", ")}`,
-  );
-  notifyImageWarnings(
-    warnings,
-    "image-collision",
-    (names) =>
-      `Warning: ${names.length} image basename(s) collide, skipped: ${names.join(", ")}`,
-  );
-  const targetCollisions = warnings.filter(
-    (w): w is Extract<PublishWarning, { kind: "image-target-collision" }> =>
-      w.kind === "image-target-collision",
-  );
-  if (targetCollisions.length > 0) {
-    // One warning per (file, collision) pair can mean multiple warnings for
-    // the same targetPath when 3+ sources collide. Union sourceNames per
-    // target so every contributor reaches the user.
-    const byTarget = new Map<string, Set<string>>();
-    for (const w of targetCollisions) {
-      const names = byTarget.get(w.targetPath) ?? new Set<string>();
-      for (const n of w.sourceNames) names.add(n);
-      byTarget.set(w.targetPath, names);
-    }
-    const details = [...byTarget.entries()]
-      .map(([target, names]) => `${target} (${[...names].sort().join(", ")})`)
-      .join("; ");
-    new Notice(
-      `Warning: ${byTarget.size} image target(s) collide, overwrites skipped: ${details}`,
-    );
-  }
-  const labelFailures = warnings.filter((w) => w.kind === "pr-label-failed");
-  if (labelFailures.length > 0) {
-    const all = [...new Set(labelFailures.flatMap((w) => w.labels))];
-    new Notice(`Warning: failed to apply PR labels: ${all.join(", ")}`);
+  for (const message of formatWarnings(warnings)) {
+    new Notice(message);
   }
 }
 
@@ -177,7 +120,7 @@ export default class ObsidianPublisher extends Plugin {
     try {
       const result: BatchPublishResult = await publisher.publishAll();
 
-      new Notice(batchNoticeText(result));
+      new Notice(formatBatchNotice(result));
 
       if (!result.error && result.successful > 0 && result.prUrl) {
         new Notice(`✓ Pull request created: ${result.prUrl}`);
