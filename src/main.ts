@@ -19,10 +19,9 @@ function notifyWarnings(warnings: PublishWarning[]): void {
 export default class ObsidianPublisher extends Plugin {
   settings!: PublisherSettings;
   private settingTab?: PublisherSettingTab;
+  private publisher!: Publisher;
 
-  // Constructs a fresh Publisher on each access; assign to a local once per command.
-  // Reading `this.publisher` twice yields two distinct instances.
-  private get publisher(): Publisher {
+  private createPublisher(): Publisher {
     return new Publisher(this.app.vault, this.settings, (done, total) => {
       new Notice(`Prepared: ${done}/${total}`);
     });
@@ -30,6 +29,7 @@ export default class ObsidianPublisher extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    this.publisher = this.createPublisher();
 
     // Register settings tab
     this.settingTab = new PublisherSettingTab(this.app, this);
@@ -71,6 +71,9 @@ export default class ObsidianPublisher extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    // Publisher captures settings (and its GitHub client's token) at
+    // construction; rebuild so changes take effect without a reload.
+    this.publisher = this.createPublisher();
   }
 
   /**
