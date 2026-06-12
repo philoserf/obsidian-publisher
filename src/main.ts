@@ -17,7 +17,7 @@ function notifyWarnings(warnings: PublishWarning[]): void {
 }
 
 export default class ObsidianPublisher extends Plugin {
-  settings!: PublisherSettings;
+  declare settings: PublisherSettings;
   private settingTab?: PublisherSettingTab;
   private publisher!: Publisher;
 
