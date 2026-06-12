@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.0
+
+### Changed
+
+- `PublishResult` is a discriminated union; failures always carry an error, successes never do (#225)
+- `runPublishWorkflow` reads as phases: branch, commit+PR, failure handling (#227)
+- Rename `GitHubService` to `GitHubApiGateway`, `ContentProcessor` to `NoteTransformer` (#226)
+- Notice formatting extracted to `notices.ts` and tested (#229)
+- One `Publisher` instance per load, rebuilt on settings change (#230, #223)
+- Frontmatter validation lives solely in `prepareBatch` (#222)
+- Remove test-only `ContentProcessor.process()` (#228)
+- Update dependencies (obsidian 1.13 typings: `declare settings`)
+
 ## 1.7.1
 
 ### Changed

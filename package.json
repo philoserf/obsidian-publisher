@@ -1,6 +1,6 @@
 {
   "name": "obsidian-publisher",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Publish Obsidian notes to GitHub for Hugo processing",
   "main": "main.js",
   "author": "Mark Ayers",

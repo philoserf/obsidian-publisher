@@ -1,7 +1,7 @@
 {
   "id": "publisher",
   "name": "Publisher",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "minAppVersion": "1.0.0",
   "description": "Publish notes to GitHub for Hugo processing. Automatically converts wikilinks, images, and filenames to Hugo-compatible formats.",
   "author": "Mark Ayers",
