@@ -1,6 +1,6 @@
 import type { TFile, Vault } from "obsidian";
-import { ContentProcessor } from "./content-processor";
-import { GitHubService } from "./github-service";
+import { GitHubApiGateway } from "./github-api-gateway";
+import { NoteTransformer } from "./note-transformer";
 import {
   type Frontmatter,
   hasPublishFlag,
@@ -92,8 +92,8 @@ function summarizeReadFailures(
 export class Publisher {
   private vault: Vault;
   private settings: PublisherSettings;
-  private contentProcessor: ContentProcessor;
-  private githubService: GitHubService;
+  private noteTransformer: NoteTransformer;
+  private githubApiGateway: GitHubApiGateway;
   private onProgress?: ProgressCallback;
 
   constructor(
@@ -103,8 +103,8 @@ export class Publisher {
   ) {
     this.vault = vault;
     this.settings = settings;
-    this.contentProcessor = new ContentProcessor(settings);
-    this.githubService = new GitHubService(settings);
+    this.noteTransformer = new NoteTransformer(settings);
+    this.githubApiGateway = new GitHubApiGateway(settings);
     this.onProgress = onProgress;
   }
 
@@ -118,7 +118,7 @@ export class Publisher {
 
   private async cleanupBranch(branchName: string): Promise<void> {
     try {
-      await this.githubService.deleteBranch(branchName);
+      await this.githubApiGateway.deleteBranch(branchName);
     } catch (error) {
       // Best-effort; don't mask the original publish error.
       console.warn(
@@ -145,7 +145,7 @@ export class Publisher {
   private buildPublishSet(files: Array<{ file: TFile }>): Set<string> {
     const set = new Set<string>();
     for (const { file } of files) {
-      set.add(this.contentProcessor.sanitizeSlug(file.basename));
+      set.add(this.noteTransformer.sanitizeSlug(file.basename));
     }
     return set;
   }
@@ -161,7 +161,7 @@ export class Publisher {
   ): Array<{ filename: string; paths: string[] }> {
     const byFilename = new Map<string, string[]>();
     for (const { file } of files) {
-      const sanitizedFilename = this.contentProcessor.sanitizeFilename(
+      const sanitizedFilename = this.noteTransformer.sanitizeFilename(
         file.name,
       );
       const paths = byFilename.get(sanitizedFilename) ?? [];
@@ -236,7 +236,7 @@ export class Publisher {
         continue;
       }
 
-      const sanitizedName = this.contentProcessor.sanitizeFilename(imageName);
+      const sanitizedName = this.noteTransformer.sanitizeFilename(imageName);
       const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
       const owner = targetPathOwners.get(imgPath);
       if (owner !== undefined && owner !== imageName) {
@@ -377,7 +377,7 @@ export class Publisher {
   ): Promise<{ results: PublishResult[]; error?: string }> {
     if (fileEntries.length === 0) return { results };
     try {
-      await this.githubService.commitFiles(fileEntries, message, branchName);
+      await this.githubApiGateway.commitFiles(fileEntries, message, branchName);
       return { results };
     } catch (error) {
       return {
@@ -402,7 +402,7 @@ export class Publisher {
   ): Promise<BatchPublishResult> {
     let branchName: string;
     try {
-      branchName = await this.githubService.createBranchWithRetry(
+      branchName = await this.githubApiGateway.createBranchWithRetry(
         opts.branchPrefix,
         this.baseBranch,
       );
@@ -446,7 +446,7 @@ export class Publisher {
       return buildBatchResult(results, { error: committed.error });
     }
 
-    const pr = await this.githubService.createPullRequest(
+    const pr = await this.githubApiGateway.createPullRequest(
       branchName,
       this.baseBranch,
       opts.prTitle(succeeded),
@@ -578,7 +578,7 @@ export class Publisher {
         if (validationError) {
           results.push(failedResult(file.path, validationError));
         } else {
-          const processed = this.contentProcessor.processFromSplit(
+          const processed = this.noteTransformer.processFromSplit(
             frontmatter,
             body,
             file.name,

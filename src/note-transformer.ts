@@ -8,7 +8,7 @@ import {
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
 
-export class ContentProcessor {
+export class NoteTransformer {
   private settings: PublisherSettings;
 
   constructor(settings: PublisherSettings) {

@@ -84,7 +84,7 @@ function makeVault(
   };
 }
 
-function makeGitHubService() {
+function makeGitHubApiGateway() {
   return {
     commitFiles: mock(async () => {}),
     createBranchWithRetry: mock(async () => "publish/2026-01-01-000000"),
@@ -107,15 +107,18 @@ function makeGitHubService() {
 function makePublisher(
   vault: ReturnType<typeof makeVault>,
   settings: PublisherSettings,
-  githubService?: ReturnType<typeof makeGitHubService>,
+  githubApiGateway?: ReturnType<typeof makeGitHubApiGateway>,
 ) {
   const publisher = new Publisher(vault as never, settings);
-  if (githubService) {
-    // Replace the real GitHubService with our mock
-    (publisher as unknown as Record<string, unknown>).githubService =
-      githubService;
+  if (githubApiGateway) {
+    // Replace the real GitHubApiGateway with our mock
+    (publisher as unknown as Record<string, unknown>).githubApiGateway =
+      githubApiGateway;
   }
-  return { publisher, githubService: githubService ?? makeGitHubService() };
+  return {
+    publisher,
+    githubApiGateway: githubApiGateway ?? makeGitHubApiGateway(),
+  };
 }
 
 describe("Publisher.validateSettings", () => {
@@ -168,7 +171,7 @@ describe("Publisher.validateSettings", () => {
 describe("Publisher.publishNote", () => {
   test("creates branch, commits, and opens PR", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("test.md") as never);
@@ -182,7 +185,7 @@ describe("Publisher.publishNote", () => {
 
   test("rejects file without publish flag", async () => {
     const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("draft.md") as never);
@@ -194,7 +197,7 @@ describe("Publisher.publishNote", () => {
   test("surfaces malformed frontmatter YAML as parse error", async () => {
     const malformed = "---\n: bad yaml :\n---\nbody";
     const vault = makeVault([{ name: "broken.md", content: malformed }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("broken.md") as never);
@@ -206,7 +209,7 @@ describe("Publisher.publishNote", () => {
 
   test("returns success with label warning when label apply fails", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.createPullRequest.mockImplementation(async () => ({
       url: "https://github.com/test/pr/2",
       number: 2,
@@ -234,7 +237,7 @@ describe("Publisher.publishNote", () => {
 
   test("cleans up branch on publish failure", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.commitFiles.mockImplementation(async () => {
       throw new Error("commit failed");
     });
@@ -248,7 +251,7 @@ describe("Publisher.publishNote", () => {
 
   test("logs a warning when branch cleanup itself fails", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.commitFiles.mockImplementation(async () => {
       throw new Error("commit failed");
     });
@@ -278,7 +281,7 @@ date: 2026-01-01
 ---
 Hello`;
     const vault = makeVault([{ name: "quoted.md", content: quotedStatus }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("quoted.md") as never);
@@ -292,7 +295,7 @@ Hello`;
       { name: "post.md", content: noteWithImage },
       { name: "photo.png", content: imageData as unknown as string },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("post.md") as never);
@@ -306,7 +309,7 @@ Hello`;
 
   test("returns empty warnings on clean publish", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("test.md") as never);
@@ -316,7 +319,7 @@ Hello`;
 
   test("reports image-failed warning when image missing from vault", async () => {
     const vault = makeVault([{ name: "post.md", content: noteWithImage }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("post.md") as never);
@@ -336,7 +339,7 @@ Hello`;
     vault.readBinary.mockImplementation(async () => {
       throw new Error("disk read error");
     });
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("post.md") as never);
@@ -367,7 +370,7 @@ Hello`;
         path: "folder-a/photo.png",
       },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("post.md") as never);
@@ -407,7 +410,7 @@ First ![[photo.png]] and again ![[photo.png]]`;
         path: "b/photo.png",
       },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("post.md") as never);
@@ -423,7 +426,7 @@ describe("Publisher.publishAll", () => {
       { name: "a.md", content: publishedNote },
       { name: "b.md", content: publishedNote },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -438,7 +441,7 @@ describe("Publisher.publishAll", () => {
     const vault = makeVault([{ name: "bad.md", content: publishedNote }]);
     // Make the vault read throw during prepareBatch's content processing
     vault.read.mockImplementation(async () => publishedNote);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.commitFiles.mockImplementation(async () => {
       throw new Error("commit failed");
     });
@@ -454,7 +457,7 @@ describe("Publisher.publishAll", () => {
 
   test("returns empty when no publishable files", async () => {
     const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -468,7 +471,7 @@ describe("Publisher.publishAll", () => {
       { name: "a.md", content: publishedNote },
       { name: "b.md", content: publishedNote },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.createPullRequest.mockImplementation(async () => ({
       url: "https://github.com/test/pr/3",
       number: 3,
@@ -499,7 +502,7 @@ describe("Publisher.publishAll", () => {
       { name: "a.md", content: publishedNote },
       { name: "b.md", content: publishedNote },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.createBranchWithRetry.mockImplementation(async () => {
       throw new Error("branch exists");
     });
@@ -524,7 +527,7 @@ describe("Publisher.publishAll", () => {
       if (file.name === "broken.md") throw new Error("EACCES");
       return publishedNote;
     });
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -548,7 +551,7 @@ describe("Publisher.publishAll", () => {
     vault.read.mockImplementation(async () => {
       throw new Error("disk error");
     });
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -564,7 +567,7 @@ describe("Publisher.publishAll", () => {
 
   test("sets batch error and marks results failed when PR creation throws", async () => {
     const vault = makeVault([{ name: "a.md", content: publishedNote }]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     gh.createPullRequest.mockImplementation(async () => {
       throw new Error("PR creation failed");
     });
@@ -585,10 +588,10 @@ describe("Publisher.publishAll", () => {
       { name: "b.md", content: publishedNote },
       { name: "c.md", content: publishedNote },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const progress = mock((_done: number, _total: number) => {});
     const publisher = new Publisher(vault as never, makeSettings(), progress);
-    (publisher as unknown as Record<string, unknown>).githubService = gh;
+    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
 
     await publisher.publishAll();
 
@@ -603,7 +606,7 @@ describe("Publisher.publishAll", () => {
       { name: "good.md", content: publishedNote },
       { name: "broken.md", content: malformed },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -626,7 +629,7 @@ body`;
       { name: "good.md", content: publishedNote },
       { name: "bad.md", content: missingDate },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -658,7 +661,7 @@ Also ![[photo.png]]`;
       { name: "b.md", content: noteB },
       { name: "photo.png", content: imageData },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -695,7 +698,7 @@ Has ![[a.png]]`;
       { name: "A.png", content: imageA },
       { name: "a.png", content: imageB },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -728,7 +731,7 @@ Has ![[a.png]]`;
       if (file.name === "broken.md") throw new Error("EACCES");
       return publishedNote;
     });
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -758,7 +761,7 @@ describe("Publisher filename collision precheck", () => {
         path: "other/hello world.md",
       },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -777,7 +780,7 @@ describe("Publisher filename collision precheck", () => {
       { name: "alpha.md", content: publishedNote },
       { name: "beta.md", content: publishedNote },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -794,7 +797,7 @@ describe("Publisher filename collision precheck", () => {
       { name: "B.md", content: publishedNote, path: "notes/B.md" },
       { name: "b.md", content: publishedNote, path: "other/b.md" },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -815,7 +818,7 @@ describe("Publisher filename collision precheck", () => {
       { name: "hello.md", content: publishedNote, path: "two/hello.md" },
       { name: "HELLO.md", content: publishedNote, path: "three/HELLO.md" },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -841,7 +844,7 @@ describe("Publisher filename collision precheck", () => {
         path: "other/hello world.md",
       },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -886,7 +889,7 @@ See [[Not Published]] for details.`;
       { name: "source.md", content: sourceLinkingToTarget },
       { name: "target.md", content: targetPublished },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -906,7 +909,7 @@ See [[Not Published]] for details.`;
     const vault = makeVault([
       { name: "source.md", content: sourceLinkingToUnpublished },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishAll();
@@ -934,7 +937,7 @@ I am [[Source]] and I link to [[Other]].`;
       { name: "source.md", content: selfRef },
       { name: "other.md", content: targetPublished },
     ]);
-    const gh = makeGitHubService();
+    const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
     const result = await publisher.publishNote(makeTFile("source.md") as never);

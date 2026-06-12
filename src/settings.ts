@@ -8,7 +8,7 @@ import {
   Setting,
   stringifyYaml,
 } from "obsidian";
-import { GitHubService } from "./github-service";
+import { GitHubApiGateway } from "./github-api-gateway";
 import type ObsidianPublisher from "./main";
 import { REQUIRED_FRONTMATTER_FIELDS } from "./schema";
 import { errorMessage, type PublisherSettings } from "./types";
@@ -332,7 +332,7 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     try {
       new Notice("Testing GitHub connection...");
-      const github = new GitHubService(settings);
+      const github = new GitHubApiGateway(settings);
       await github.validateConnection();
       new Notice("✓ Connection successful! Repository is accessible.");
     } catch (error) {

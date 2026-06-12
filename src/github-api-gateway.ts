@@ -46,7 +46,7 @@ async function fetchWithTimeout(
   }
 }
 
-export class GitHubService {
+export class GitHubApiGateway {
   private octokit: Octokit;
   private settings: PublisherSettings;
 

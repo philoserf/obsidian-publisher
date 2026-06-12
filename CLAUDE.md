@@ -34,17 +34,17 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 
 1. **User triggers publish** — `main.ts` command handler
 2. **Settings validation** — `publisher.ts` checks GitHub credentials
-3. **Branch creation** — `github-service.ts` creates a feature branch
-4. **Content processing** — `content-processor.ts` converts Obsidian syntax to Hugo markdown
-5. **File upload** — `github-service.ts` uploads markdown and images via GitHub API
-6. **PR creation** — `github-service.ts` creates pull request
+3. **Branch creation** — `github-api-gateway.ts` creates a feature branch
+4. **Content processing** — `note-transformer.ts` converts Obsidian syntax to Hugo markdown
+5. **File upload** — `github-api-gateway.ts` uploads markdown and images via GitHub API
+6. **PR creation** — `github-api-gateway.ts` creates pull request
 
 ### Component Responsibilities
 
 - **`main.ts`** — Plugin entry point: registers commands, loads settings, routes to Publisher
 - **`publisher.ts`** — Orchestration: `publishNote()` (single) and `publishAll()` (batch), both branch+PR, frontmatter validation
-- **`github-service.ts`** — GitHub API wrapper using Octokit. All REST API calls must be iOS-compatible
-- **`content-processor.ts`** — Wikilink/image conversion, filename sanitization, frontmatter processing
+- **`github-api-gateway.ts`** — GitHub API wrapper using Octokit. All REST API calls must be iOS-compatible
+- **`note-transformer.ts`** — Wikilink/image conversion, filename sanitization, frontmatter processing
 - **`settings.ts`** — Plugin settings UI with GitHub connection test
 - **`types.ts`** — Type definitions: `PublisherSettings`, `PublishResult`, `BatchPublishResult`, `ProcessedContent`
 
@@ -61,7 +61,7 @@ Every publish (single note or batch) creates a timestamped branch (`publish/2026
 
 ### GitHub API Patterns
 
-Add new methods to `github-service.ts` using Octokit. Follow the try-catch error handling pattern with descriptive Error objects. Use `this.settings.repoOwner` and `this.settings.repoName`. Add optional `branch` parameter for feature branch support. Status code `404` means file doesn't exist; `422` means branch already exists.
+Add new methods to `github-api-gateway.ts` using Octokit. Follow the try-catch error handling pattern with descriptive Error objects. Use `this.settings.repoOwner` and `this.settings.repoName`. Add optional `branch` parameter for feature branch support. Status code `404` means file doesn't exist; `422` means branch already exists.
 
 ### Testing
 

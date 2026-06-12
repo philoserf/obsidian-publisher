@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { RequestError } from "@octokit/request-error";
-import { GitHubService } from "./github-service";
+import { GitHubApiGateway } from "./github-api-gateway";
 import type { PublisherSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
@@ -52,34 +52,34 @@ function makeOctokit(overrides: Record<string, unknown> = {}) {
 }
 
 function makeService(octokitOverrides: Record<string, unknown> = {}) {
-  const service = new GitHubService(makeSettings());
+  const service = new GitHubApiGateway(makeSettings());
   const octokit = makeOctokit(octokitOverrides);
   (service as unknown as Record<string, unknown>).octokit = octokit;
   return { service, octokit };
 }
 
-describe("GitHubService.getRepoUrl", () => {
+describe("GitHubApiGateway.getRepoUrl", () => {
   test("returns correct URL", () => {
-    const service = new GitHubService(makeSettings());
+    const service = new GitHubApiGateway(makeSettings());
     expect(service.getRepoUrl()).toBe("https://github.com/testowner/testrepo");
   });
 });
 
-describe("GitHubService.generateBranchName", () => {
+describe("GitHubApiGateway.generateBranchName", () => {
   test("generates branch name with prefix", () => {
-    const service = new GitHubService(makeSettings());
+    const service = new GitHubApiGateway(makeSettings());
     const name = service.generateBranchName("publish");
     expect(name).toMatch(/^publish\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
   });
 
   test("uses default prefix", () => {
-    const service = new GitHubService(makeSettings());
+    const service = new GitHubApiGateway(makeSettings());
     const name = service.generateBranchName();
     expect(name).toStartWith("publish/");
   });
 });
 
-describe("GitHubService.validateConnection", () => {
+describe("GitHubApiGateway.validateConnection", () => {
   test("succeeds when repo is accessible", async () => {
     const { service } = makeService();
     await expect(service.validateConnection()).resolves.toBeUndefined();
@@ -96,7 +96,7 @@ describe("GitHubService.validateConnection", () => {
   });
 });
 
-describe("GitHubService.commitFiles", () => {
+describe("GitHubApiGateway.commitFiles", () => {
   test("creates blobs, tree, commit, and updates ref", async () => {
     const { service, octokit } = makeService();
 
@@ -153,7 +153,7 @@ describe("GitHubService.commitFiles", () => {
   });
 });
 
-describe("GitHubService.createPullRequest", () => {
+describe("GitHubApiGateway.createPullRequest", () => {
   test("creates PR and adds labels", async () => {
     const { service, octokit } = makeService();
 
@@ -230,7 +230,7 @@ describe("GitHubService.createPullRequest", () => {
   });
 });
 
-describe("GitHubService.createBranchWithRetry", () => {
+describe("GitHubApiGateway.createBranchWithRetry", () => {
   test("creates branch on first attempt", async () => {
     const { service } = makeService();
 

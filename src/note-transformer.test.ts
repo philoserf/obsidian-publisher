@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { ContentProcessor } from "./content-processor";
+import { NoteTransformer } from "./note-transformer";
 import { splitFrontmatter } from "./schema";
 import type { ProcessedContent, PublisherSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
 function makeProcessor(
   overrides: Partial<PublisherSettings> = {},
-): ContentProcessor {
-  return new ContentProcessor({ ...DEFAULT_SETTINGS, ...overrides });
+): NoteTransformer {
+  return new NoteTransformer({ ...DEFAULT_SETTINGS, ...overrides });
 }
 
 // Tests write full document strings; production pre-splits via
 // getPublishableFiles. Mirror the production split here so both paths
 // exercise the same processFromSplit entry point.
 function process(
-  cp: ContentProcessor,
+  cp: NoteTransformer,
   content: string,
   originalFilename: string,
   publishSet: Set<string> = new Set(),
@@ -96,7 +96,7 @@ describe("Wikilink conversion", () => {
 
 describe("wikilink publish-set gating", () => {
   test("in-set link emits /posts/slug/ URL", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -111,7 +111,7 @@ See [[Other Note]] for details.`,
   });
 
   test("in-set link with display text", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -126,7 +126,7 @@ See [[Other Note|the other one]].`,
   });
 
   test("in-set link with heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -143,7 +143,7 @@ See [[Other Note#Some Heading]].`,
   });
 
   test("out-of-set link degrades to plain text", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -160,7 +160,7 @@ See [[Unpublished Note]] sometime.`,
   });
 
   test("out-of-set link with display uses display text", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -176,7 +176,7 @@ See [[Unpublished|my draft]].`,
   });
 
   test("note embed in-set uses link", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -191,7 +191,7 @@ date: 2026-01-01
   });
 
   test("note embed out-of-set degrades to plain text", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -208,7 +208,7 @@ date: 2026-01-01
   });
 
   test("when publishSet omitted, defaults to empty (all out-of-set)", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -223,7 +223,7 @@ See [[Other]].`,
   });
 
   test("URL prefix derives from contentDir (content/blog -> /blog/)", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "content/blog",
     });
@@ -241,7 +241,7 @@ See [[Other]].`,
   });
 
   test("URL prefix derives from contentDir (content -> /)", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "content",
     });
@@ -259,7 +259,7 @@ See [[Other]].`,
   });
 
   test("normalizes trailing slash in contentDir", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "content/posts/",
     });
@@ -278,7 +278,7 @@ date: 2026-01-01
   });
 
   test("normalizes leading slash in contentDir", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "/content/posts",
     });
@@ -297,7 +297,7 @@ date: 2026-01-01
   });
 
   test("accepts bare directory without content/ prefix", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "posts",
     });
@@ -315,7 +315,7 @@ date: 2026-01-01
   });
 
   test("preserves contentDir that starts with 'content' but isn't 'content/'", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "content-posts",
     });
@@ -333,7 +333,7 @@ date: 2026-01-01
   });
 
   test("preserves contentDir starting with 'contentful/'", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       contentDir: "contentful/posts",
     });
@@ -351,7 +351,7 @@ date: 2026-01-01
   });
 
   test("strips apostrophes from heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -368,7 +368,7 @@ See [[Other#What's next?]].`,
   });
 
   test("strips parentheses and commas from heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -385,7 +385,7 @@ See [[Other#Setup (advanced, v2)]].`,
   });
 
   test("collapses consecutive hyphens and trims edge hyphens in heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -400,7 +400,7 @@ See [[Other#  Multi   Word!  ]].`,
   });
 
   test("preserves non-ASCII Latin letters (é, ü) in heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -416,7 +416,7 @@ See [[Other#Café au lait]] and [[Other#Über alles]].`,
   });
 
   test("preserves CJK characters in heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -431,7 +431,7 @@ See [[Other#日本語 notes]].`,
   });
 
   test("NFC-normalizes decomposed diacritics in heading anchor", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     // "café" encoded as c + a + f + e + U+0301 (combining acute)
     const decomposed = `Caf\u0065\u0301`;
     const result = process(
@@ -596,7 +596,7 @@ describe("Image reference conversion", () => {
 });
 
 describe("image alt text", () => {
-  const processor = new ContentProcessor(DEFAULT_SETTINGS);
+  const processor = new NoteTransformer(DEFAULT_SETTINGS);
 
   test("bare embed uses filename as alt", () => {
     const result = process(
@@ -725,7 +725,7 @@ describe("Frontmatter processing", () => {
   });
 
   test("strips every field in strippedFrontmatterFields", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       strippedFrontmatterFields: ["status", "lastmod", "cssclasses"],
     });
@@ -748,7 +748,7 @@ body`,
   });
 
   test("does not strip fields absent from strippedFrontmatterFields", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       strippedFrontmatterFields: ["status"],
     });
@@ -1040,7 +1040,7 @@ describe("Callout conversion", () => {
   });
 
   test("emits configured callout shortcode name", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       calloutShortcodeName: "notice",
     });
@@ -1059,7 +1059,7 @@ date: 2026-01-01
   });
 
   test("transforms multiple callouts in a single document", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -1082,7 +1082,7 @@ date: 2026-01-01
   });
 
   test("escapes double quotes in callout title", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -1097,7 +1097,7 @@ date: 2026-01-01
   });
 
   test("escapes backslashes in callout title", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -1114,7 +1114,7 @@ date: 2026-01-01
   });
 
   test("lowercases the type but preserves it", () => {
-    const processor = new ContentProcessor(DEFAULT_SETTINGS);
+    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
       processor,
       `---
@@ -1185,7 +1185,7 @@ describe("Mermaid conversion", () => {
   });
 
   test("emits configured mermaid shortcode name", () => {
-    const processor = new ContentProcessor({
+    const processor = new NoteTransformer({
       ...DEFAULT_SETTINGS,
       mermaidShortcodeName: "diagram",
     });
