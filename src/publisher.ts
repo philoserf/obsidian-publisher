@@ -270,10 +270,8 @@ export class Publisher {
         "File does not have 'status: publish' in frontmatter",
       );
     }
-    const validationError = validateFrontmatter(frontmatter);
-    if (validationError) {
-      return failedResult(file.path, validationError);
-    }
+    // Frontmatter validation is prepareBatch's sole responsibility; the
+    // parse and publish-flag checks above gate entry into the workflow.
 
     const result = await this.runPublishWorkflow({
       branchPrefix: "publish",
