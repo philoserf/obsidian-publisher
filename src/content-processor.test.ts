@@ -1,12 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { ContentProcessor } from "./content-processor";
-import type { PublisherSettings } from "./types";
+import { splitFrontmatter } from "./schema";
+import type { ProcessedContent, PublisherSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
 function makeProcessor(
   overrides: Partial<PublisherSettings> = {},
 ): ContentProcessor {
   return new ContentProcessor({ ...DEFAULT_SETTINGS, ...overrides });
+}
+
+// Tests write full document strings; production pre-splits via
+// getPublishableFiles. Mirror the production split here so both paths
+// exercise the same processFromSplit entry point.
+function process(
+  cp: ContentProcessor,
+  content: string,
+  originalFilename: string,
+  publishSet: Set<string> = new Set(),
+): ProcessedContent {
+  const { frontmatter, body } = splitFrontmatter(content);
+  return cp.processFromSplit(frontmatter, body, originalFilename, publishSet);
 }
 
 function wrap(frontmatter: string, body: string): string {
@@ -17,7 +31,8 @@ describe("Wikilink conversion", () => {
   const cp = makeProcessor();
 
   test("converts simple wikilink to /posts/slug/ URL when in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "See [[Page Name]] here"),
       "test.md",
       new Set(["page-name"]),
@@ -26,7 +41,8 @@ describe("Wikilink conversion", () => {
   });
 
   test("converts wikilink with display text when in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "See [[Page|Custom Text]] here"),
       "test.md",
       new Set(["page"]),
@@ -35,7 +51,8 @@ describe("Wikilink conversion", () => {
   });
 
   test("sanitizes wikilink target when in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "[[My Cool Page]]"),
       "test.md",
       new Set(["my-cool-page"]),
@@ -44,7 +61,8 @@ describe("Wikilink conversion", () => {
   });
 
   test("handles multiple wikilinks when all in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "[[One]] and [[Two]]"),
       "test.md",
       new Set(["one", "two"]),
@@ -54,7 +72,8 @@ describe("Wikilink conversion", () => {
   });
 
   test("handles heading anchors when in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "[[Page#My Heading]]"),
       "test.md",
       new Set(["page"]),
@@ -65,7 +84,8 @@ describe("Wikilink conversion", () => {
   });
 
   test("handles heading anchors with display text when in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "[[Page#Section|see this]]"),
       "test.md",
       new Set(["page"]),
@@ -77,7 +97,8 @@ describe("Wikilink conversion", () => {
 describe("wikilink publish-set gating", () => {
   test("in-set link emits /posts/slug/ URL", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -91,7 +112,8 @@ See [[Other Note]] for details.`,
 
   test("in-set link with display text", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -105,7 +127,8 @@ See [[Other Note|the other one]].`,
 
   test("in-set link with heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -121,7 +144,8 @@ See [[Other Note#Some Heading]].`,
 
   test("out-of-set link degrades to plain text", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -137,7 +161,8 @@ See [[Unpublished Note]] sometime.`,
 
   test("out-of-set link with display uses display text", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -152,7 +177,8 @@ See [[Unpublished|my draft]].`,
 
   test("note embed in-set uses link", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -166,7 +192,8 @@ date: 2026-01-01
 
   test("note embed out-of-set degrades to plain text", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -182,7 +209,8 @@ date: 2026-01-01
 
   test("when publishSet omitted, defaults to empty (all out-of-set)", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -199,7 +227,8 @@ See [[Other]].`,
       ...DEFAULT_SETTINGS,
       contentDir: "content/blog",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -216,7 +245,8 @@ See [[Other]].`,
       ...DEFAULT_SETTINGS,
       contentDir: "content",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -233,7 +263,8 @@ See [[Other]].`,
       ...DEFAULT_SETTINGS,
       contentDir: "content/posts/",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -251,7 +282,8 @@ date: 2026-01-01
       ...DEFAULT_SETTINGS,
       contentDir: "/content/posts",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -269,7 +301,8 @@ date: 2026-01-01
       ...DEFAULT_SETTINGS,
       contentDir: "posts",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -286,7 +319,8 @@ date: 2026-01-01
       ...DEFAULT_SETTINGS,
       contentDir: "content-posts",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -303,7 +337,8 @@ date: 2026-01-01
       ...DEFAULT_SETTINGS,
       contentDir: "contentful/posts",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -317,7 +352,8 @@ date: 2026-01-01
 
   test("strips apostrophes from heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -333,7 +369,8 @@ See [[Other#What's next?]].`,
 
   test("strips parentheses and commas from heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -349,7 +386,8 @@ See [[Other#Setup (advanced, v2)]].`,
 
   test("collapses consecutive hyphens and trims edge hyphens in heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -363,7 +401,8 @@ See [[Other#  Multi   Word!  ]].`,
 
   test("preserves non-ASCII Latin letters (é, ü) in heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -378,7 +417,8 @@ See [[Other#Café au lait]] and [[Other#Über alles]].`,
 
   test("preserves CJK characters in heading anchor", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -394,7 +434,8 @@ See [[Other#日本語 notes]].`,
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
     // "café" encoded as c + a + f + e + U+0301 (combining acute)
     const decomposed = `Caf\u0065\u0301`;
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -411,7 +452,8 @@ describe("Image reference conversion", () => {
   const cp = makeProcessor();
 
   test("converts image reference", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "![[photo.png]]"),
       "test.md",
     );
@@ -419,7 +461,8 @@ describe("Image reference conversion", () => {
   });
 
   test("sanitizes image filename", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "![[My Photo.jpg]]"),
       "test.md",
     );
@@ -427,7 +470,8 @@ describe("Image reference conversion", () => {
   });
 
   test("extracts only image names, not note embeds", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "![[a.png]] text ![[b.jpg]] and ![[My Note]]",
@@ -438,7 +482,8 @@ describe("Image reference conversion", () => {
   });
 
   test("no images returns empty array", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "no images here"),
       "test.md",
     );
@@ -447,7 +492,8 @@ describe("Image reference conversion", () => {
 
   test("derives image URL path from imageDir setting", () => {
     const cp2 = makeProcessor({ imageDir: "static/media/photos" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -456,7 +502,8 @@ describe("Image reference conversion", () => {
 
   test("handles imageDir without static prefix", () => {
     const cp2 = makeProcessor({ imageDir: "assets/img" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -465,7 +512,8 @@ describe("Image reference conversion", () => {
 
   test("imageUrlPath: bare 'static' collapses to root", () => {
     const cp2 = makeProcessor({ imageDir: "static" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -474,7 +522,8 @@ describe("Image reference conversion", () => {
 
   test("imageUrlPath: preserves imageDir that starts with 'static' but isn't 'static/'", () => {
     const cp2 = makeProcessor({ imageDir: "static-assets" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -483,7 +532,8 @@ describe("Image reference conversion", () => {
 
   test("imageUrlPath: preserves imageDir starting with 'staticfiles/'", () => {
     const cp2 = makeProcessor({ imageDir: "staticfiles/img" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -492,7 +542,8 @@ describe("Image reference conversion", () => {
 
   test("imageUrlPath: normalizes leading and trailing slashes", () => {
     const cp2 = makeProcessor({ imageDir: "/static/images/" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -501,7 +552,8 @@ describe("Image reference conversion", () => {
 
   test("imageUrlPath: empty imageDir collapses to root", () => {
     const cp2 = makeProcessor({ imageDir: "" });
-    const result = cp2.process(
+    const result = process(
+      cp2,
       wrap("title: Test\nstatus: publish", "![[hero.png]]"),
       "test.md",
     );
@@ -509,7 +561,8 @@ describe("Image reference conversion", () => {
   });
 
   test("strips width sizing from image reference", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "![[photo.png|300]]"),
       "test.md",
     );
@@ -518,7 +571,8 @@ describe("Image reference conversion", () => {
   });
 
   test("strips dimension sizing from image reference", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "![[photo.png|300x200]]"),
       "test.md",
     );
@@ -527,7 +581,8 @@ describe("Image reference conversion", () => {
   });
 
   test("strips pipe suffix from image in mixed content", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "![[a.png|100]] and ![[b.jpg]] and ![[My Note]]",
@@ -544,7 +599,8 @@ describe("image alt text", () => {
   const processor = new ContentProcessor(DEFAULT_SETTINGS);
 
   test("bare embed uses filename as alt", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png]]",
       "x.md",
     );
@@ -552,7 +608,8 @@ describe("image alt text", () => {
   });
 
   test("pipe with alt text preserves alt", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|alt text]]",
       "x.md",
     );
@@ -560,7 +617,8 @@ describe("image alt text", () => {
   });
 
   test("pipe with bare size discards size, no alt", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|300]]",
       "x.md",
     );
@@ -568,7 +626,8 @@ describe("image alt text", () => {
   });
 
   test("pipe with WxH size discards size, no alt", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|300x200]]",
       "x.md",
     );
@@ -576,7 +635,8 @@ describe("image alt text", () => {
   });
 
   test("alt-then-size form keeps alt, drops size", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|alt|300]]",
       "x.md",
     );
@@ -584,7 +644,8 @@ describe("image alt text", () => {
   });
 
   test("trims incidental whitespace around bare size", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|300 ]]",
       "x.md",
     );
@@ -592,7 +653,8 @@ describe("image alt text", () => {
   });
 
   test("trims whitespace around WxH size", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|alt| 300x200 ]]",
       "x.md",
     );
@@ -600,7 +662,8 @@ describe("image alt text", () => {
   });
 
   test("empty alt falls back to filename", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|]]",
       "x.md",
     );
@@ -608,7 +671,8 @@ describe("image alt text", () => {
   });
 
   test("whitespace-only alt falls back to filename", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|   ]]",
       "x.md",
     );
@@ -616,7 +680,8 @@ describe("image alt text", () => {
   });
 
   test("trims leading and trailing whitespace from alt", () => {
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|  nice photo  ]]",
       "x.md",
     );
@@ -628,7 +693,8 @@ describe("Note embed conversion", () => {
   const cp = makeProcessor();
 
   test("converts note embed to /posts/slug/ link when in publish set", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "![[My Other Post]]"),
       "test.md",
       new Set(["my-other-post"]),
@@ -637,7 +703,8 @@ describe("Note embed conversion", () => {
   });
 
   test("does not treat image embeds as note embeds", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "![[photo.png]]"),
       "test.md",
     );
@@ -649,7 +716,8 @@ describe("Note embed conversion", () => {
 describe("Frontmatter processing", () => {
   test("preserves existing date", () => {
     const cp = makeProcessor();
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\ndate: 2026-01-01\nstatus: publish", "body"),
       "test.md",
     );
@@ -661,7 +729,8 @@ describe("Frontmatter processing", () => {
       ...DEFAULT_SETTINGS,
       strippedFrontmatterFields: ["status", "lastmod", "cssclasses"],
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -683,7 +752,8 @@ body`,
       ...DEFAULT_SETTINGS,
       strippedFrontmatterFields: ["status"],
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -697,7 +767,8 @@ body`,
 
   test("keeps status field when not in strippedFrontmatterFields", () => {
     const cp = makeProcessor({ strippedFrontmatterFields: [] });
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
@@ -708,7 +779,8 @@ body`,
     const cp = makeProcessor({
       frontmatterTemplate: { author: "Mark", tags: ["obsidian"] },
     });
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Existing\nauthor: Someone Else\nstatus: publish", "body"),
       "test.md",
     );
@@ -720,7 +792,8 @@ body`,
     const cp = makeProcessor({
       frontmatterTemplate: { author: "Mark" },
     });
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
@@ -756,7 +829,8 @@ describe("Comment stripping", () => {
   const cp = makeProcessor();
 
   test("strips inline comment", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "before %%secret%% after"),
       "test.md",
     );
@@ -765,7 +839,8 @@ describe("Comment stripping", () => {
   });
 
   test("strips multiline comment", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "before\n%%\nthis is\na secret\n%%\nafter",
@@ -778,7 +853,8 @@ describe("Comment stripping", () => {
   });
 
   test("strips multiple comments", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "%%one%% middle %%two%%"),
       "test.md",
     );
@@ -788,7 +864,8 @@ describe("Comment stripping", () => {
   });
 
   test("leaves single percent signs alone", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "100% complete"),
       "test.md",
     );
@@ -800,7 +877,8 @@ describe("Highlight conversion", () => {
   const cp = makeProcessor();
 
   test("converts highlight to mark tag", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "this is ==important== text"),
       "test.md",
     );
@@ -808,7 +886,8 @@ describe("Highlight conversion", () => {
   });
 
   test("converts multiple highlights on one line", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "==one== and ==two=="),
       "test.md",
     );
@@ -816,7 +895,8 @@ describe("Highlight conversion", () => {
   });
 
   test("leaves single equals signs alone", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "a = b"),
       "test.md",
     );
@@ -824,7 +904,8 @@ describe("Highlight conversion", () => {
   });
 
   test("leaves triple equals alone", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "a === b"),
       "test.md",
     );
@@ -836,7 +917,8 @@ describe("Callout conversion", () => {
   const cp = makeProcessor();
 
   test("converts basic callout with title", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "> [!note] Important\n> This is a note",
@@ -849,7 +931,8 @@ describe("Callout conversion", () => {
   });
 
   test("converts callout without title", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "> [!warning]\n> Be careful"),
       "test.md",
     );
@@ -859,7 +942,8 @@ describe("Callout conversion", () => {
   });
 
   test("converts multiline callout body", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "> [!tip] Hint\n> Line one\n> Line two\n> Line three",
@@ -902,7 +986,8 @@ describe("Callout conversion", () => {
       "cite",
     ];
     for (const type of types) {
-      const result = cp.process(
+      const result = process(
+        cp,
         wrap("title: Test\nstatus: publish", `> [!${type}]\n> content`),
         "test.md",
       );
@@ -911,13 +996,15 @@ describe("Callout conversion", () => {
   });
 
   test("strips foldable markers (+ and -)", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "> [!note]+ Title\n> Content"),
       "test.md",
     );
     expect(result.content).toContain('{{< callout note "Title" >}}');
 
-    const result2 = cp.process(
+    const result2 = process(
+      cp,
       wrap("title: Test\nstatus: publish", "> [!note]- Title\n> Content"),
       "test.md",
     );
@@ -925,7 +1012,8 @@ describe("Callout conversion", () => {
   });
 
   test("passes custom callout type through verbatim", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "> [!custom]\n> Content"),
       "test.md",
     );
@@ -933,7 +1021,8 @@ describe("Callout conversion", () => {
   });
 
   test("handles callout type case-insensitively", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "> [!WARNING]\n> Content"),
       "test.md",
     );
@@ -941,7 +1030,8 @@ describe("Callout conversion", () => {
   });
 
   test("leaves regular blockquotes untouched", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "> Just a regular quote"),
       "test.md",
     );
@@ -954,7 +1044,8 @@ describe("Callout conversion", () => {
       ...DEFAULT_SETTINGS,
       calloutShortcodeName: "notice",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -969,7 +1060,8 @@ date: 2026-01-01
 
   test("transforms multiple callouts in a single document", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -991,7 +1083,8 @@ date: 2026-01-01
 
   test("escapes double quotes in callout title", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -1005,7 +1098,8 @@ date: 2026-01-01
 
   test("escapes backslashes in callout title", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -1021,7 +1115,8 @@ date: 2026-01-01
 
   test("lowercases the type but preserves it", () => {
     const processor = new ContentProcessor(DEFAULT_SETTINGS);
-    const result = processor.process(
+    const result = process(
+      processor,
       `---
 title: X
 date: 2026-01-01
@@ -1038,7 +1133,8 @@ describe("Mermaid conversion", () => {
   const cp = makeProcessor();
 
   test("converts mermaid code block to shortcode", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "```mermaid\ngraph TD; A-->B\n```"),
       "test.md",
     );
@@ -1048,7 +1144,8 @@ describe("Mermaid conversion", () => {
   });
 
   test("converts multiline mermaid diagram", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "```mermaid\ngraph TD\n  A-->B\n  B-->C\n```",
@@ -1061,7 +1158,8 @@ describe("Mermaid conversion", () => {
   });
 
   test("leaves non-mermaid code blocks untouched", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap("title: Test\nstatus: publish", "```javascript\nconst x = 1;\n```"),
       "test.md",
     );
@@ -1070,7 +1168,8 @@ describe("Mermaid conversion", () => {
   });
 
   test("handles multiple mermaid blocks", () => {
-    const result = cp.process(
+    const result = process(
+      cp,
       wrap(
         "title: Test\nstatus: publish",
         "```mermaid\ngraph TD; A-->B\n```\n\ntext\n\n```mermaid\ngraph LR; X-->Y\n```",
@@ -1090,7 +1189,8 @@ describe("Mermaid conversion", () => {
       ...DEFAULT_SETTINGS,
       mermaidShortcodeName: "diagram",
     });
-    const result = processor.process(
+    const result = process(
+      processor,
       "---\ntitle: X\ndate: 2026-01-01\n---\n```mermaid\nflowchart TD\nA --> B\n```",
       "x.md",
     );
@@ -1106,7 +1206,7 @@ describe("Full process pipeline", () => {
       "title: My Post\nstatus: publish",
       "Hello [[World]]!\n\n![[screenshot.png]]\n",
     );
-    const result = cp.process(input, "My Post.md", new Set(["world"]));
+    const result = process(cp, input, "My Post.md", new Set(["world"]));
 
     expect(result.filename).toBe("my-post.md");
     expect(result.content).toContain("[World](/posts/world/)");

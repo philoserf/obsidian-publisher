@@ -1,5 +1,5 @@
 import { stringifyYaml } from "obsidian";
-import { type Frontmatter, splitFrontmatter } from "./schema";
+import type { Frontmatter } from "./schema";
 import {
   errorMessage,
   type ProcessedContent,
@@ -13,25 +13,6 @@ export class ContentProcessor {
 
   constructor(settings: PublisherSettings) {
     this.settings = settings;
-  }
-
-  /**
-   * Process a markdown file for Hugo publishing.
-   * `publishSet` contains slugs of notes being published in this run;
-   * wikilinks targeting slugs outside the set degrade to plain text.
-   */
-  process(
-    content: string,
-    originalFilename: string,
-    publishSet: Set<string> = new Set(),
-  ): ProcessedContent {
-    const { frontmatter, body } = splitFrontmatter(content);
-    return this.processFromSplit(
-      frontmatter,
-      body,
-      originalFilename,
-      publishSet,
-    );
   }
 
   /**
