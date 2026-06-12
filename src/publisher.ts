@@ -17,6 +17,21 @@ import {
 
 type ProgressCallback = (done: number, total: number) => void;
 
+type FileEntry = { path: string; content: string | ArrayBuffer };
+
+type WorkflowOpts = {
+  branchPrefix: string;
+  readFailures: PublishResult[];
+  prepare: () => Promise<{
+    prepared: PublishResult[];
+    fileEntries: FileEntry[];
+  }>;
+  synthesizeFailures: (message: string) => PublishResult[];
+  commitMessage: (successCount: number) => string;
+  prTitle: (succeeded: PublishResult[]) => string;
+  prBody: (succeeded: PublishResult[]) => string;
+};
+
 function failedResult(filePath: string, error: string): PublishResult {
   return { filePath, success: false, error, warnings: [] };
 }
@@ -382,18 +397,9 @@ export class Publisher {
    * PR title/body builders so single-note and batch paths share this
    * workflow while keeping their distinct PR shapes.
    */
-  private async runPublishWorkflow(opts: {
-    branchPrefix: string;
-    readFailures: PublishResult[];
-    prepare: () => Promise<{
-      prepared: PublishResult[];
-      fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
-    }>;
-    synthesizeFailures: (message: string) => PublishResult[];
-    commitMessage: (successCount: number) => string;
-    prTitle: (succeeded: PublishResult[]) => string;
-    prBody: (succeeded: PublishResult[]) => string;
-  }): Promise<BatchPublishResult> {
+  private async runPublishWorkflow(
+    opts: WorkflowOpts,
+  ): Promise<BatchPublishResult> {
     let branchName: string;
     try {
       branchName = await this.githubService.createBranchWithRetry(
@@ -401,56 +407,76 @@ export class Publisher {
         this.baseBranch,
       );
     } catch (error) {
-      const message = errorMessage(error);
-      return buildBatchResult(
-        [...opts.readFailures, ...opts.synthesizeFailures(message)],
-        { error: message },
-      );
+      return this.workflowFailure(opts, [], error);
     }
 
     let prepared: PublishResult[] = [];
     try {
       const batch = await opts.prepare();
       prepared = batch.prepared;
-
-      const successCount = prepared.filter((r) => r.success).length;
-      const committed = await this.commitPreparedBatch(
-        branchName,
-        prepared,
-        batch.fileEntries,
-        opts.commitMessage(successCount),
-      );
-
-      const succeeded = committed.results.filter((r) => r.success);
-      const results = [...opts.readFailures, ...committed.results];
-
-      if (succeeded.length === 0) {
-        await this.cleanupBranch(branchName);
-        return buildBatchResult(results, { error: committed.error });
-      }
-
-      const pr = await this.githubService.createPullRequest(
-        branchName,
-        this.baseBranch,
-        opts.prTitle(succeeded),
-        opts.prBody(succeeded),
-        this.prLabels,
-      );
-      return buildBatchResult(results, {
-        prUrl: pr.url,
-        warnings: pr.warnings,
-      });
+      return await this.commitAndOpenPr(branchName, batch, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
-      const message = errorMessage(error);
-      const failed =
-        prepared.length === 0
-          ? opts.synthesizeFailures(message)
-          : markResultsFailed(prepared, error);
-      return buildBatchResult([...opts.readFailures, ...failed], {
-        error: message,
-      });
+      return this.workflowFailure(opts, prepared, error);
     }
+  }
+
+  /**
+   * Commit the prepared entries and open the PR. When nothing succeeded,
+   * deletes the branch and returns without a PR.
+   */
+  private async commitAndOpenPr(
+    branchName: string,
+    batch: { prepared: PublishResult[]; fileEntries: FileEntry[] },
+    opts: WorkflowOpts,
+  ): Promise<BatchPublishResult> {
+    const successCount = batch.prepared.filter((r) => r.success).length;
+    const committed = await this.commitPreparedBatch(
+      branchName,
+      batch.prepared,
+      batch.fileEntries,
+      opts.commitMessage(successCount),
+    );
+
+    const succeeded = committed.results.filter((r) => r.success);
+    const results = [...opts.readFailures, ...committed.results];
+
+    if (succeeded.length === 0) {
+      await this.cleanupBranch(branchName);
+      return buildBatchResult(results, { error: committed.error });
+    }
+
+    const pr = await this.githubService.createPullRequest(
+      branchName,
+      this.baseBranch,
+      opts.prTitle(succeeded),
+      opts.prBody(succeeded),
+      this.prLabels,
+    );
+    return buildBatchResult(results, {
+      prUrl: pr.url,
+      warnings: pr.warnings,
+    });
+  }
+
+  /**
+   * Build the batch result for a workflow-level failure: synthesized
+   * per-file failures when nothing was prepared yet, otherwise the
+   * prepared results marked failed.
+   */
+  private workflowFailure(
+    opts: WorkflowOpts,
+    prepared: PublishResult[],
+    error: unknown,
+  ): BatchPublishResult {
+    const message = errorMessage(error);
+    const failed =
+      prepared.length === 0
+        ? opts.synthesizeFailures(message)
+        : markResultsFailed(prepared, error);
+    return buildBatchResult([...opts.readFailures, ...failed], {
+      error: message,
+    });
   }
 
   /**
