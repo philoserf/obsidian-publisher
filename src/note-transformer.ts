@@ -8,6 +8,101 @@ import {
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
 
+/** A span of the note body. Prose is rewritten by the transform chain;
+ * code is opaque to it. */
+type Segment = { kind: "prose" | "code"; text: string };
+
+/** Opening fence: optional indent, 3+ backticks or tildes, optional info
+ * string. Captured so the closing fence can be required to match the same
+ * character and be at least as long, per CommonMark. */
+const FENCE_OPEN = /^([ \t]*)(`{3,}|~{3,})([^\n]*)$/;
+
+/**
+ * Split a body into prose and code segments.
+ *
+ * Everything the transform chain does is unsafe inside code: `==` is the
+ * equality operator in most languages, and `stripComments`,
+ * `convertImageReferences`, `convertNoteEmbeds` and `convertWikilinks` all
+ * use character classes that admit newlines, so a match can begin inside a
+ * fence and end in prose — taking the closing fence with it.
+ *
+ * Fenced blocks are matched line-wise so an unterminated fence runs to the
+ * end of the note rather than swallowing a later delimiter. Inline spans
+ * are matched within prose lines only, and require the same backtick run
+ * length to open and close.
+ */
+export function splitCodeSegments(body: string): Segment[] {
+  const segments: Segment[] = [];
+  const lines = body.split("\n");
+
+  // Start offset of each line within `body`. Slicing by offset rather than
+  // rejoining lines is what makes the split lossless: concatenating every
+  // segment's text reproduces the input exactly, newlines included.
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+
+  let proseStart = 0;
+  const pushProse = (end: number) => {
+    if (end > proseStart) {
+      segments.push(...splitInlineCode(body.slice(proseStart, end)));
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const open = lines[i].match(FENCE_OPEN);
+    if (!open) continue;
+
+    pushProse(starts[i]);
+
+    const marker = open[2];
+    // CommonMark: the closing fence uses the same character, is at least as
+    // long, and carries nothing but whitespace.
+    const closer = new RegExp(
+      `^[ \\t]*\\${marker[0]}{${marker.length},}[ \\t]*$`,
+    );
+    let close = i + 1;
+    while (close < lines.length && !closer.test(lines[close])) close++;
+
+    // An unterminated fence runs to the end of the note rather than
+    // swallowing some later delimiter.
+    const lastLine = close < lines.length ? close : lines.length - 1;
+    const end =
+      lastLine < lines.length - 1 ? starts[lastLine + 1] : body.length;
+
+    segments.push({ kind: "code", text: body.slice(starts[i], end) });
+    proseStart = end;
+    i = lastLine;
+  }
+
+  pushProse(body.length);
+  return segments;
+}
+
+/** Split one prose run on inline code spans, requiring the opening and
+ * closing backtick runs to be the same length so ``a ` b`` works. */
+function splitInlineCode(text: string): Segment[] {
+  const segments: Segment[] = [];
+  const span = /(`+)(?!`)([\s\S]*?[^`]|)\1(?!`)/g;
+  let last = 0;
+  let m = span.exec(text);
+  while (m !== null) {
+    if (m.index > last) {
+      segments.push({ kind: "prose", text: text.slice(last, m.index) });
+    }
+    segments.push({ kind: "code", text: m[0] });
+    last = m.index + m[0].length;
+    m = span.exec(text);
+  }
+  if (last < text.length) {
+    segments.push({ kind: "prose", text: text.slice(last) });
+  }
+  return segments;
+}
+
 export class NoteTransformer {
   private settings: PublisherSettings;
 
@@ -26,16 +121,34 @@ export class NoteTransformer {
     publishSet: Set<string> = new Set(),
   ): ProcessedContent {
     const processedFrontmatter = this.processFrontmatter(frontmatter);
-    const images = this.extractImages(body);
 
-    let processedBody = body;
-    processedBody = this.stripComments(processedBody);
-    processedBody = this.convertHighlights(processedBody);
-    processedBody = this.convertCallouts(processedBody);
-    processedBody = this.convertMermaid(processedBody);
-    processedBody = this.convertImageReferences(processedBody);
-    processedBody = this.convertNoteEmbeds(processedBody, publishSet);
-    processedBody = this.convertWikilinks(processedBody, publishSet);
+    // Code is opaque to the transform chain. Mermaid is the exception: it
+    // owns ```mermaid fences, so it runs over code segments while every
+    // other transform sees prose only.
+    const segments = splitCodeSegments(body);
+    const prose = segments
+      .filter((seg) => seg.kind === "prose")
+      .map((seg) => this.stripComments(seg.text));
+
+    // Images are collected from comment-stripped prose, so a reference
+    // that only exists inside %% %% or inside a fence is never queued for
+    // upload. Must run before convertImageReferences, which rewrites the
+    // ![[...]] syntax out of existence.
+    const images = this.extractImages(prose.join("\n"));
+
+    let proseIndex = 0;
+    const processedBody = segments
+      .map((seg) => {
+        if (seg.kind === "code") return this.convertMermaid(seg.text);
+        let text = prose[proseIndex++];
+        text = this.convertHighlights(text);
+        text = this.convertCallouts(text);
+        text = this.convertImageReferences(text);
+        text = this.convertNoteEmbeds(text, publishSet);
+        text = this.convertWikilinks(text, publishSet);
+        return text;
+      })
+      .join("");
 
     const processedContent = this.assembleDocument(
       processedFrontmatter,
