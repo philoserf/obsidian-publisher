@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.9.0
+
+### Fixed
+
+- Frontmatter `aliases` are rewritten into the URLs those titles actually produced, so Hugo emits working redirect stubs. Previously an alias published verbatim, putting the stub at a path the site never served (`/posts/DNA as Remix Culture/`) while the real former URL stayed dead — 164 dead URLs across the site, repaired on the next publish (#286)
+- Code is now opaque to the transform chain. A `==x==`, `[[Page]]` or `%%comment%%` inside a fenced block or inline code span publishes verbatim instead of being rewritten, and a regex can no longer match from inside a fence into prose and carry the closing fence away with it. Mermaid remains the deliberate exception, since a mermaid diagram *is* a fenced block (#285)
+- A note whose frontmatter was the entire file no longer parses as having none — its publish flag was invisible and `publishAll` silently skipped it. Malformed frontmatter YAML is now reported rather than treated as absent, since a block that does not parse hides publish intent (#284)
+- The pull request URL is shown in the notice rather than only logged, and the batch progress notice updates in place and is dismissed in a `finally`. iOS has no console — which is the reason this plugin uses the REST API at all — so a logged-only URL was unreachable on the platform that motivated the design (#289)
+- `![[Note#Heading]]` resolves to `/posts/note/#heading`. The anchor was previously run into the note name, producing a slug that could never match the publish set, so **every** anchored embed degraded to plain text regardless of what was being published (#280)
+- Callouts convert in notes with CRLF line endings. JavaScript counts `\r` as a line terminator, so the pattern could not match a CRLF header at all and those callouts published as raw `> [!note]` blockquotes (#281)
+- A same-page `[[#Heading]]` emits `[Heading](#heading)` instead of publishing verbatim. It needs no publish-set lookup, since the target is the document itself (#282)
+- Filename extensions are lowercased with the name, so `photo.PNG` and `photo.png` no longer commit as distinct paths that then collide on any case-insensitive filesystem (#287)
+- `RequestError` passes through the gateway untouched so its status survives for the caller. Re-wrapping it into a plain `Error` had destroyed the status code and silently disabled retry throughout the gateway (#276, #242)
+- `fetchWithTimeout` composes the caller's abort signal instead of replacing it, and reports a caller-initiated abort as an abort rather than a timeout (#278)
+
+### Changed
+
+- **Slugs preserve non-ASCII letters.** Page slugs previously ran an ASCII-only rule while heading anchors preserved Unicode, so the two halves of one link disagreed — `[[Café#Café]]` pointed at `/posts/caf/#café`. Page slugs, committed filenames and heading anchors now share one rule: NFC-normalize, lowercase, keep Unicode letters and digits, whitespace to hyphens (#283)
+
+  Measured across all 2,760 vault notes, exactly one of 172 publishable notes changes slug:
+
+  ```
+  Rōnin, hedge knights, and landless European knights compared
+    was: /posts/rnin-hedge-knights-and-landless-european-knights-compared/
+    now: /posts/rōnin-hedge-knights-and-landless-european-knights-compared/
+  ```
+
+  **This is a file rename, and the plugin has no delete path.** The next publish adds the new file while the old one remains, so the site ends up with two copies of the post. Removing the superseded `content/posts/rnin-*.md` is a manual step in the site repository. Adding the old URL to the note's `aliases` before republishing preserves it as a redirect.
+
+- Batch commits send markdown inline as tree-entry content rather than one blob per file, and every idempotent call retries on transient failures. A 167-note batch went from roughly 172 API requests to 5. The retry predicate covers 429, 5xx, and 403 only when the response looks rate-limit shaped; 422 is deliberately excluded, because on branch creation it means the name is taken and is resolved by generating a different name rather than repeating the request (#277, #275)
+- Publish candidates are selected from Obsidian's `metadataCache` before reading, cutting a batch from roughly 2,790 vault reads to 179. Only one cache answer is trusted — "parsed, and no publish flag" — because the cache reports malformed frontmatter as simply missing (#290)
+- Settings parsing and the frontmatter schema simplified; the legacy `removePublishFlag` migration removed (#272)
+
+### Documentation
+
+- `THEORY.md` rewritten. The previous version warned against growing a `parseYaml` mock that is now the real `yaml` package and against caching a `publisher` getter that is now a plain field — advice pointing the wrong way. It now records operation-scoped link resolution, the single slug rule and the absent delete path, code opacity, the one-sided `metadataCache` predicate, and why 422 is not retryable, with an uncertainties section (#254)
+- `walkthrough.md` deleted. 18 of its 21 executable blocks went stale within one release cycle, and `showboat` re-executes code but never reads prose, so each release needed a manual commentary rewrite on top of regeneration (#255)
+- `README.md`, `TESTING.md` and `CLAUDE.md` reconciled with the code
+
 ## 1.8.0
 
 ### Changed
