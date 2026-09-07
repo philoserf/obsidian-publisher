@@ -91,11 +91,9 @@ function makeGitHubApiGateway() {
     createPullRequest: mock(
       async (): Promise<{
         url: string;
-        number: number;
         warnings: PublishWarning[];
       }> => ({
         url: "https://github.com/test/pr/1",
-        number: 1,
         warnings: [],
       }),
     ),

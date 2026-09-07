@@ -93,13 +93,6 @@ export class GitHubApiGateway {
   }
 
   /**
-   * Get the full repository URL
-   */
-  getRepoUrl(): string {
-    return `https://github.com/${this.settings.repoOwner}/${this.settings.repoName}`;
-  }
-
-  /**
    * Get the latest commit SHA for a branch
    */
   async getBranchSha(branch: string): Promise<string> {
@@ -155,7 +148,7 @@ export class GitHubApiGateway {
     title: string,
     body: string,
     labels?: string[],
-  ): Promise<{ url: string; number: number; warnings: PublishWarning[] }> {
+  ): Promise<{ url: string; warnings: PublishWarning[] }> {
     let response: Awaited<ReturnType<typeof this.octokit.rest.pulls.create>>;
     try {
       response = await this.octokit.rest.pulls.create({
@@ -193,7 +186,6 @@ export class GitHubApiGateway {
 
     return {
       url: response.data.html_url,
-      number: response.data.number,
       warnings,
     };
   }
