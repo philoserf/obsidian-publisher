@@ -234,7 +234,7 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h3", { text: "Frontmatter Field Stripping" });
     containerEl.createEl("p", {
-      text: "Comma-separated list of frontmatter fields to remove when publishing. Default: status, lastmod, cssclass, cssclasses, aliases, position, created, modified.",
+      text: "Comma-separated list of frontmatter fields to remove when publishing. Default: status, lastmod, cssclass, cssclasses, position, created, modified. Note: aliases is not stripped — Hugo uses it to emit redirects from a note's previous titles.",
       cls: "setting-item-description",
     });
 

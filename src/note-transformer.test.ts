@@ -1156,3 +1156,94 @@ describe("code is opaque to the transform chain", () => {
     ).toBe(body);
   });
 });
+
+// #279. Hugo emits its redirect stub at whatever path an alias names,
+// verbatim. These aliases are previous note titles, so the stub landed at
+// /posts/DNA as Remix Culture/ while the URL the post actually had was left
+// dead. Measured across philoserf/site: 166 aliases, all once-live files,
+// 164 since deleted.
+describe("alias urlization", () => {
+  const cp = makeProcessor();
+
+  const aliasesOf = (fm: string, publishSet = new Set<string>()) => {
+    const result = process(cp, fm, "x.md", publishSet);
+    return splitFrontmatter(result.content).frontmatter.aliases;
+  };
+
+  test("a previous title becomes the URL that title produced", () => {
+    expect(
+      aliasesOf(
+        wrap(
+          "title: X\ndate: 2026-01-01\naliases:\n  - DNA as Remix Culture",
+          "body",
+        ),
+      ),
+    ).toEqual(["/posts/dna-as-remix-culture/"]);
+  });
+
+  test("handles every alias in a list", () => {
+    expect(
+      aliasesOf(
+        wrap(
+          "title: X\ndate: 2026-01-01\naliases:\n  - Identity Goals vs. Action Goals\n  - AI vs Human Collaboration",
+          "body",
+        ),
+      ),
+    ).toEqual([
+      "/posts/identity-goals-vs-action-goals/",
+      "/posts/ai-vs-human-collaboration/",
+    ]);
+  });
+
+  // philoserf/site carries "- /antifa/" — an author-written path, not a
+  // title. Slugifying it would destroy it, since sanitizeSlug strips "/".
+  test("leaves an existing path alias untouched", () => {
+    expect(
+      aliasesOf(
+        wrap("title: X\ndate: 2026-01-01\naliases:\n  - /antifa/", "body"),
+      ),
+    ).toEqual(["/antifa/"]);
+  });
+
+  test("is idempotent — republishing does not re-slugify", () => {
+    expect(
+      aliasesOf(
+        wrap(
+          "title: X\ndate: 2026-01-01\naliases:\n  - /posts/dna-as-remix-culture/",
+          "body",
+        ),
+      ),
+    ).toEqual(["/posts/dna-as-remix-culture/"]);
+  });
+
+  test("follows contentDir, matching the URLs that dir produces", () => {
+    const blog = makeProcessor({ contentDir: "content/blog" });
+    const result = process(
+      blog,
+      wrap("title: X\ndate: 2026-01-01\naliases:\n  - Old Title", "body"),
+      "x.md",
+    );
+    expect(splitFrontmatter(result.content).frontmatter.aliases).toEqual([
+      "/blog/old-title/",
+    ]);
+  });
+
+  test("leaves a value that sanitizes to nothing alone", () => {
+    expect(
+      aliasesOf(
+        wrap('title: X\ndate: 2026-01-01\naliases:\n  - "!!!"', "body"),
+      ),
+    ).toEqual(["!!!"]);
+  });
+
+  test("notes without aliases are unaffected", () => {
+    const result = process(
+      cp,
+      wrap("title: X\ndate: 2026-01-01", "body"),
+      "x.md",
+    );
+    expect(splitFrontmatter(result.content).frontmatter).not.toHaveProperty(
+      "aliases",
+    );
+  });
+});
