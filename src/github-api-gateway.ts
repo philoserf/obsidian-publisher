@@ -45,6 +45,18 @@ export function isTransient(error: unknown): boolean {
   );
 }
 
+/** A git tree entry names its content one of two ways, never both:
+ * `content` for text GitHub should blob itself, or `sha` for a blob
+ * already uploaded. */
+type TreeEntry = {
+  path: string;
+  mode: "100644";
+  type: "blob";
+} & ({ content: string; sha?: never } | { sha: string; content?: never });
+
+/** Attempts, then backoff delays between them. */
+const COMMIT_MAX_ATTEMPTS = 3;
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /** fetch with an abort timeout; rewraps the opaque DOMException so
@@ -221,6 +233,25 @@ export class GitHubApiGateway {
   }
 
   /**
+   * Repeat an idempotent request while it keeps failing transiently.
+   * Every call this wraps is safe to repeat: blobs and trees are
+   * content-addressed, and updateRef with an unchanged SHA is a no-op.
+   */
+  private async withRetry<T>(operation: () => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let i = 0; i < COMMIT_MAX_ATTEMPTS; i++) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (!isTransient(error)) throw error;
+        lastError = error;
+        await this.sleep(2 ** i * 500 + Math.random() * 250);
+      }
+    }
+    throw lastError;
+  }
+
+  /**
    * Commit multiple files in a single atomic commit using the Git Trees API
    */
   async commitFiles(
@@ -229,24 +260,41 @@ export class GitHubApiGateway {
     branch: string,
   ): Promise<void> {
     try {
-      const branchSha = await this.getBranchSha(branch);
+      const branchSha = await this.withRetry(() => this.getBranchSha(branch));
 
-      const commitData = await this.octokit.rest.git.getCommit({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        commit_sha: branchSha,
-      });
-
-      const treeEntries = [];
-      for (const file of files) {
-        const base64 = this.toBase64(file.content);
-
-        const blob = await this.octokit.rest.git.createBlob({
+      const commitData = await this.withRetry(() =>
+        this.octokit.rest.git.getCommit({
           owner: this.settings.repoOwner,
           repo: this.settings.repoName,
-          content: base64,
-          encoding: "base64",
-        });
+          commit_sha: branchSha,
+        }),
+      );
+
+      // Text goes inline: GitHub writes the blob as part of createTree,
+      // so a 167-note batch is one request instead of 167. Binary has no
+      // encoding parameter on a tree entry, so images still need a
+      // base64 blob of their own.
+      const treeEntries: TreeEntry[] = [];
+      for (const file of files) {
+        if (typeof file.content === "string") {
+          treeEntries.push({
+            path: file.path,
+            mode: "100644" as const,
+            type: "blob" as const,
+            content: file.content,
+          });
+          continue;
+        }
+
+        const base64 = this.toBase64(file.content);
+        const blob = await this.withRetry(() =>
+          this.octokit.rest.git.createBlob({
+            owner: this.settings.repoOwner,
+            repo: this.settings.repoName,
+            content: base64,
+            encoding: "base64",
+          }),
+        );
 
         treeEntries.push({
           path: file.path,
@@ -256,27 +304,33 @@ export class GitHubApiGateway {
         });
       }
 
-      const newTree = await this.octokit.rest.git.createTree({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        base_tree: commitData.data.tree.sha,
-        tree: treeEntries,
-      });
+      const newTree = await this.withRetry(() =>
+        this.octokit.rest.git.createTree({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          base_tree: commitData.data.tree.sha,
+          tree: treeEntries,
+        }),
+      );
 
-      const newCommit = await this.octokit.rest.git.createCommit({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        message,
-        tree: newTree.data.sha,
-        parents: [branchSha],
-      });
+      const newCommit = await this.withRetry(() =>
+        this.octokit.rest.git.createCommit({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          message,
+          tree: newTree.data.sha,
+          parents: [branchSha],
+        }),
+      );
 
-      await this.octokit.rest.git.updateRef({
-        owner: this.settings.repoOwner,
-        repo: this.settings.repoName,
-        ref: `heads/${branch}`,
-        sha: newCommit.data.sha,
-      });
+      await this.withRetry(() =>
+        this.octokit.rest.git.updateRef({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          ref: `heads/${branch}`,
+          sha: newCommit.data.sha,
+        }),
+      );
     } catch (error) {
       rethrowWithPrefix(error, "Failed to commit files");
     }
