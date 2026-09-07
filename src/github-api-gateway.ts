@@ -46,12 +46,22 @@ async function fetchWithTimeout(
   }
 }
 
+/** Pause between retry attempts. Injectable so tests assert attempt
+ * counts without sleeping — same trade as the debounce stub in
+ * test-preload.ts ("Tests don't exercise timing"). */
+export type Sleep = (ms: number) => Promise<void>;
+
+const realSleep: Sleep = (ms) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 export class GitHubApiGateway {
   private octokit: Octokit;
   private settings: PublisherSettings;
+  private sleep: Sleep;
 
-  constructor(settings: PublisherSettings) {
+  constructor(settings: PublisherSettings, sleep: Sleep = realSleep) {
     this.settings = settings;
+    this.sleep = sleep;
     this.octokit = new Octokit({
       auth: settings.githubToken,
       request: { fetch: fetchWithTimeout },
@@ -299,8 +309,7 @@ export class GitHubApiGateway {
 
         // Exponential backoff with jitter so retries are never instant
         // and a rate-limited batch doesn't hammer in lockstep.
-        const delay = 2 ** i * 500 + Math.random() * 250;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await this.sleep(2 ** i * 500 + Math.random() * 250);
       }
     }
 

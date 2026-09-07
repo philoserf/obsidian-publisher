@@ -51,8 +51,10 @@ function makeOctokit(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Retry backoff is injected as a no-op: these tests assert how many
+// attempts happen, not how long the waits are.
 function makeService(octokitOverrides: Record<string, unknown> = {}) {
-  const service = new GitHubApiGateway(makeSettings());
+  const service = new GitHubApiGateway(makeSettings(), async () => {});
   const octokit = makeOctokit(octokitOverrides);
   (service as unknown as Record<string, unknown>).octokit = octokit;
   return { service, octokit };
@@ -223,11 +225,10 @@ describe("GitHubApiGateway.createPullRequest", () => {
 
 describe("GitHubApiGateway.createBranchWithRetry", () => {
   test("creates branch on first attempt", async () => {
-    const { service } = makeService();
-
+    const { service, octokit } = makeService();
     const name = await service.createBranchWithRetry("publish", "main");
-
     expect(name).toMatch(/^publish\//);
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(1);
   });
 
   test("throws when branch creation fails", async () => {
@@ -235,22 +236,35 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
     octokit.rest.git.createRef.mockImplementation(async () => {
       throw new Error("Server error");
     });
-
     await expect(
       service.createBranchWithRetry("publish", "main", 2),
     ).rejects.toThrow("Failed to create branch");
   });
 
-  test("rethrows RequestError unchanged so retry loop can act on status", async () => {
+  // A plain Error carries no status, so it is not retryable: one attempt.
+  test("does not retry an error without a status", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw new Error("Server error");
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main"),
+    ).rejects.toThrow();
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(1);
+  });
+
+  // 401 is permanent. Uses the default maxRetries so the predicate, not
+  // the loop bound, is what stops the retry.
+  test("does not retry a 401 and rethrows it unchanged", async () => {
     const { service, octokit } = makeService();
     const requestError = new RequestError("unauthorized", 401, {} as never);
     octokit.rest.git.createRef.mockImplementation(async () => {
       throw requestError;
     });
-
-    await expect(
-      service.createBranchWithRetry("publish", "main", 1),
-    ).rejects.toBe(requestError);
+    await expect(service.createBranchWithRetry("publish", "main")).rejects.toBe(
+      requestError,
+    );
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(1);
   });
 
   test("retries with suffix after a 422 collision", async () => {
@@ -261,22 +275,49 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
       if (calls === 1) throw new RequestError("exists", 422, {} as never);
       return {};
     });
-
     const name = await service.createBranchWithRetry("publish", "main");
-
     expect(name).toMatch(/-1$/);
-    expect(calls).toBe(2);
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(2);
   });
 
-  test("rethrows retryable error when attempts are exhausted", async () => {
+  test("retries a 429 until attempts are exhausted, then rethrows", async () => {
     const { service, octokit } = makeService();
     const requestError = new RequestError("rate limited", 429, {} as never);
     octokit.rest.git.createRef.mockImplementation(async () => {
       throw requestError;
     });
-
     await expect(
-      service.createBranchWithRetry("publish", "main", 1),
+      service.createBranchWithRetry("publish", "main", 3),
     ).rejects.toBe(requestError);
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
+  });
+
+  test("retries a 5xx until attempts are exhausted, then rethrows", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("bad gateway", 502, {} as never);
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw requestError;
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main", 3),
+    ).rejects.toBe(requestError);
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
+  });
+
+  // Documents #242. getBranchSha hand-rolls a catch that wraps
+  // RequestError into a plain Error, destroying .status, so a transient
+  // failure on the FIRST call of createBranch is treated as permanent.
+  // getRef is the call to count here: createRef is never reached.
+  // This assertion flips to 3 when #242 is fixed.
+  test("does NOT retry a 503 from getRef (#242 — status is destroyed)", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.git.getRef.mockImplementation(async () => {
+      throw new RequestError("service unavailable", 503, {} as never);
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main", 3),
+    ).rejects.toThrow();
+    expect(octokit.rest.git.getRef).toHaveBeenCalledTimes(1);
+    expect(octokit.rest.git.createRef).not.toHaveBeenCalled();
   });
 });
