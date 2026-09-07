@@ -543,6 +543,89 @@ describe("Note embed conversion", () => {
     expect(result.content).toContain("![photo.png]");
     expect(result.content).not.toContain("ref");
   });
+
+  // The anchor used to run into the name, so the slug was "myotherpostwhy"
+  // — never in the publish set, so every anchored embed silently degraded
+  // to plain text no matter what was being published.
+  test("embed with anchor resolves to slug plus heading fragment", () => {
+    const result = process(
+      cp,
+      wrap("title: Test\nstatus: publish", "![[My Other Post#Why It Works]]"),
+      "test.md",
+      new Set(["my-other-post"]),
+    );
+    expect(result.content).toContain(
+      "[My Other Post#Why It Works](/posts/my-other-post/#why-it-works)",
+    );
+  });
+
+  test("embed with anchor and display text", () => {
+    const result = process(
+      cp,
+      wrap("title: Test\nstatus: publish", "![[My Other Post#Why|the reason]]"),
+      "test.md",
+      new Set(["my-other-post"]),
+    );
+    expect(result.content).toContain("[the reason](/posts/my-other-post/#why)");
+  });
+
+  test("anchored embed outside the publish set degrades to display text", () => {
+    const result = process(
+      cp,
+      wrap("title: Test\nstatus: publish", "![[Absent Post#Why]]"),
+      "test.md",
+      new Set(),
+    );
+    expect(result.content).toContain("Absent Post#Why");
+    expect(result.content).not.toContain("](/posts/");
+  });
+});
+
+describe("same-page heading links", () => {
+  const cp = makeProcessor();
+  const FM = "title: X\ndate: 2026-01-01";
+
+  // No publish-set lookup: the target is this very document, so the link
+  // is valid whatever else is being published.
+  test("[[#Heading]] emits a bare fragment", () => {
+    const result = process(
+      cp,
+      wrap(FM, "Jump to [[#Why It Works]]."),
+      "x.md",
+      new Set(),
+    );
+    expect(result.content).toContain("[Why It Works](#why-it-works)");
+  });
+
+  test("[[#Heading|Display]] uses the display text", () => {
+    const result = process(
+      cp,
+      wrap(FM, "Jump [[#Why It Works|down]]."),
+      "x.md",
+    );
+    expect(result.content).toContain("[down](#why-it-works)");
+  });
+
+  test("empty wikilink is left verbatim", () => {
+    const result = process(cp, wrap(FM, "Not a link: [[]]"), "x.md");
+    expect(result.content).toContain("[[]]");
+  });
+
+  test("pipe with no page or heading is left verbatim", () => {
+    const result = process(cp, wrap(FM, "Not a link: [[|x]]"), "x.md");
+    expect(result.content).toContain("[[|x]]");
+  });
+
+  test("page links still require the publish set", () => {
+    const result = process(
+      cp,
+      wrap(FM, "See [[Absent#Why]]."),
+      "x.md",
+      new Set(),
+    );
+    expect(result.content).toContain("Absent#Why");
+    expect(result.content).not.toContain("](/posts/");
+  });
 });
 
 describe("Frontmatter processing", () => {
@@ -774,6 +857,44 @@ describe("Callout conversion", () => {
     expect(result.content).toContain(
       '{{< callout note "Important" >}}\nThis is a note\n{{< /callout >}}',
     );
+  });
+
+  // JS counts `\r` as a line terminator, so `.` never crosses it: with a
+  // bare `\n` in the pattern a CRLF note's callouts did not match at all
+  // and published as raw `> [!note]` blockquotes.
+  test("converts a CRLF callout with a title", () => {
+    const result = process(
+      cp,
+      `---\r\ntitle: Test\r\nstatus: publish\r\n---\r\n> [!note] Important\r\n> This is a note\r\n`,
+      "test.md",
+    );
+    expect(result.content).toContain('{{< callout note "Important" >}}');
+    expect(result.content).toContain("{{< /callout >}}");
+    expect(result.content).not.toContain("> [!note]");
+    // The title must not carry the carriage return into the shortcode.
+    expect(result.content).not.toContain('"Important\r"');
+  });
+
+  test("converts a CRLF callout without a title", () => {
+    const result = process(
+      cp,
+      `---\r\ntitle: Test\r\nstatus: publish\r\n---\r\n> [!warning]\r\n> Be careful\r\n`,
+      "test.md",
+    );
+    expect(result.content).toContain("{{< callout warning >}}");
+    expect(result.content).not.toContain("> [!warning]");
+  });
+
+  test("converts a multiline CRLF callout body", () => {
+    const result = process(
+      cp,
+      `---\r\ntitle: Test\r\nstatus: publish\r\n---\r\n> [!tip] T\r\n> one\r\n> two\r\n`,
+      "test.md",
+    );
+    expect(result.content).toContain("one");
+    expect(result.content).toContain("two");
+    expect(result.content).not.toContain("> one");
+    expect(result.content).not.toContain("> two");
   });
 
   test("converts callout without title", () => {
