@@ -304,20 +304,88 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
     expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
   });
 
-  // Documents #242. getBranchSha hand-rolls a catch that wraps
-  // RequestError into a plain Error, destroying .status, so a transient
-  // failure on the FIRST call of createBranch is treated as permanent.
-  // getRef is the call to count here: createRef is never reached.
-  // This assertion flips to 3 when #242 is fixed.
-  test("does NOT retry a 503 from getRef (#242 — status is destroyed)", async () => {
+  // #242: getBranchSha is the FIRST call inside createBranch, so a
+  // transient failure there used to be wrapped into a plain Error, lose
+  // its status, and fail on attempt one. Count getRef — createRef is
+  // never reached because createBranch fails before it.
+  test("retries a 503 from getRef (#242)", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("unavailable", 503, {} as never);
+    octokit.rest.git.getRef.mockImplementation(async () => {
+      throw requestError;
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main", 3),
+    ).rejects.toBe(requestError);
+    expect(octokit.rest.git.getRef).toHaveBeenCalledTimes(3);
+    expect(octokit.rest.git.createRef).not.toHaveBeenCalled();
+  });
+
+  // #242 also produced a stuttering message, because getBranchSha and
+  // createBranch each wrapped the same error. A RequestError now passes
+  // through both untouched.
+  test("does not double-wrap a RequestError from getRef", async () => {
     const { service, octokit } = makeService();
     octokit.rest.git.getRef.mockImplementation(async () => {
-      throw new RequestError("service unavailable", 503, {} as never);
+      throw new RequestError("Not Found", 404, {} as never);
+    });
+    const error = await service
+      .createBranchWithRetry("publish", "main", 1)
+      .catch((e: Error) => e);
+    expect(error.message).toBe("Not Found");
+    expect(error).toBeInstanceOf(RequestError);
+  });
+
+  // #233: GitHub signals secondary rate limiting with 403, but 403 also
+  // covers "token lacks scope". Only the rate-limit shape is retried.
+  test("retries a 403 that carries retry-after", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw new RequestError("slow down", 403, {
+        response: { headers: { "retry-after": "60" } },
+      } as never);
     });
     await expect(
       service.createBranchWithRetry("publish", "main", 3),
     ).rejects.toThrow();
-    expect(octokit.rest.git.getRef).toHaveBeenCalledTimes(1);
-    expect(octokit.rest.git.createRef).not.toHaveBeenCalled();
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
+  });
+
+  test("retries a 403 with x-ratelimit-remaining: 0", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw new RequestError("rate limited", 403, {
+        response: { headers: { "x-ratelimit-remaining": "0" } },
+      } as never);
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main", 3),
+    ).rejects.toThrow();
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
+  });
+
+  // A scope/permission 403 has no rate-limit headers: fail immediately
+  // rather than burning three attempts on a permanent error.
+  test("does not retry a 403 without rate-limit headers", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("Forbidden", 403, {} as never);
+    octokit.rest.git.createRef.mockImplementation(async () => {
+      throw requestError;
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main", 3),
+    ).rejects.toBe(requestError);
+    expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(1);
+  });
+
+  // A non-RequestError still gets the descriptive prefix.
+  test("prefixes a plain Error from getRef", async () => {
+    const { service, octokit } = makeService();
+    octokit.rest.git.getRef.mockImplementation(async () => {
+      throw new Error("socket hang up");
+    });
+    await expect(
+      service.createBranchWithRetry("publish", "main", 1),
+    ).rejects.toThrow("Failed to get SHA for branch main: socket hang up");
   });
 });

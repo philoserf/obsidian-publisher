@@ -49,11 +49,20 @@ mock.module("@octokit/rest", () => ({
 }));
 
 mock.module("@octokit/request-error", () => ({
+  // The real third argument requires `request`, which tests don't need;
+  // call sites pass `{} as never` unless they're exercising the
+  // header-gated 403 branch, which reads response.headers.
   RequestError: class RequestError extends Error {
     status: number;
-    constructor(message: string, statusCode: number) {
+    response?: { headers?: Record<string, string> };
+    constructor(
+      message: string,
+      statusCode: number,
+      options?: { response?: { headers?: Record<string, string> } },
+    ) {
       super(message);
       this.status = statusCode;
+      this.response = options?.response;
     }
   },
 }));
