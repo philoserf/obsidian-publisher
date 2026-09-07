@@ -19,14 +19,12 @@ type ProgressCallback = (done: number, total: number) => void;
 
 type FileEntry = { path: string; content: string | ArrayBuffer };
 
+type PublishableFile = { file: TFile; frontmatter: Frontmatter; body: string };
+
 type WorkflowOpts = {
   branchPrefix: string;
   readFailures: PublishResult[];
-  prepare: () => Promise<{
-    prepared: PublishResult[];
-    fileEntries: FileEntry[];
-  }>;
-  synthesizeFailures: (message: string) => PublishResult[];
+  files: PublishableFile[];
   commitMessage: (successCount: number) => string;
   prTitle: (succeeded: PublishResult[]) => string;
   prBody: (succeeded: PublishResult[]) => string;
@@ -34,6 +32,19 @@ type WorkflowOpts = {
 
 function failedResult(filePath: string, error: string): PublishResult {
   return { filePath, success: false, error, warnings: [] };
+}
+
+/**
+ * One failed result per file, so a batch's total count reflects attempted
+ * publishes. Without this a collision-only failure (no read failures)
+ * produces total=0, which main.ts's "No publishable notes found" guard
+ * swallows.
+ */
+function failedResults(
+  files: Array<{ file: TFile }>,
+  error: string,
+): PublishResult[] {
+  return files.map(({ file }) => failedResult(file.path, error));
 }
 
 /**
@@ -108,14 +119,6 @@ export class Publisher {
     this.onProgress = onProgress;
   }
 
-  private get baseBranch(): string {
-    return this.settings.baseBranch;
-  }
-
-  private get prLabels(): string[] {
-    return this.settings.prLabels;
-  }
-
   private async cleanupBranch(branchName: string): Promise<void> {
     try {
       await this.githubApiGateway.deleteBranch(branchName);
@@ -182,24 +185,6 @@ export class Publisher {
       (c) => `  ${c.paths.join(", ")} all publish as "${c.filename}"`,
     );
     return `Filename collision${collisions.length > 1 ? "s" : ""}:\n${lines.join("\n")}`;
-  }
-
-  /**
-   * Synthesize a failed PublishResult for each file so the batch's
-   * total count reflects attempted publishes. Without this, a
-   * collision-only failure (no read failures) produces total=0,
-   * which main.ts's "No publishable notes found" guard swallows.
-   */
-  private synthesizeCollisionFailures(
-    files: Array<{ file: TFile }>,
-    error: string,
-  ): PublishResult[] {
-    return files.map(({ file }) => ({
-      filePath: file.path,
-      success: false,
-      error,
-      warnings: [],
-    }));
   }
 
   private async resolveImages(
@@ -299,11 +284,7 @@ export class Publisher {
     const result = await this.runPublishWorkflow({
       branchPrefix: "publish",
       readFailures: [],
-      prepare: async () => {
-        const batch = await this.prepareBatch([{ file, frontmatter, body }]);
-        return { prepared: batch.results, fileEntries: batch.fileEntries };
-      },
-      synthesizeFailures: (message) => [failedResult(file.path, message)],
+      files: [{ file, frontmatter, body }],
       commitMessage: () => `Publish: ${file.basename}`,
       prTitle: () => `Publish: ${file.basename}`,
       prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
@@ -336,24 +317,16 @@ export class Publisher {
     const collisions = this.detectFilenameCollisions(files);
     if (collisions.length > 0) {
       const collisionError = this.filenameCollisionError(collisions);
-      const collisionFailures = this.synthesizeCollisionFailures(
-        files,
-        collisionError,
+      return buildBatchResult(
+        [...readFailures, ...failedResults(files, collisionError)],
+        { error: collisionError },
       );
-      return buildBatchResult([...readFailures, ...collisionFailures], {
-        error: collisionError,
-      });
     }
 
     return this.runPublishWorkflow({
       branchPrefix: "publish-batch",
       readFailures,
-      prepare: async () => {
-        const batch = await this.prepareBatch(files);
-        return { prepared: batch.results, fileEntries: batch.fileEntries };
-      },
-      synthesizeFailures: (message) =>
-        files.map(({ file }) => failedResult(file.path, message)),
+      files,
       commitMessage: (n) =>
         `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian`,
       prTitle: (succeeded) => `Batch Publish: ${succeeded.length} notes`,
@@ -372,7 +345,7 @@ export class Publisher {
   private async commitPreparedBatch(
     branchName: string,
     results: PublishResult[],
-    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>,
+    fileEntries: FileEntry[],
     message: string,
   ): Promise<{ results: PublishResult[]; error?: string }> {
     if (fileEntries.length === 0) return { results };
@@ -389,13 +362,13 @@ export class Publisher {
 
   /**
    * Shared branch + commit + PR orchestration. Creates a branch first,
-   * then calls the caller's `prepare` closure to produce the entries to
-   * commit. If branch creation fails, `synthesizeFailures` is used to
-   * build per-file failed results (so the user sees N failures, not just
-   * a bare error). On any other failure, the prepared results are marked
-   * failed. Callers supply the branch prefix plus the commit-message and
-   * PR title/body builders so single-note and batch paths share this
-   * workflow while keeping their distinct PR shapes.
+   * then prepares `opts.files` into the entries to commit. If branch
+   * creation fails, per-file failures are synthesized from that same
+   * list (so the user sees N failures, not just a bare error). On any
+   * other failure, the prepared results are marked failed. Callers
+   * supply the branch prefix plus the commit-message and PR title/body
+   * builders so single-note and batch paths share this workflow while
+   * keeping their distinct PR shapes.
    */
   private async runPublishWorkflow(
     opts: WorkflowOpts,
@@ -404,7 +377,7 @@ export class Publisher {
     try {
       branchName = await this.githubApiGateway.createBranchWithRetry(
         opts.branchPrefix,
-        this.baseBranch,
+        this.settings.baseBranch,
       );
     } catch (error) {
       return this.workflowFailure(opts, [], error);
@@ -412,8 +385,8 @@ export class Publisher {
 
     let prepared: PublishResult[] = [];
     try {
-      const batch = await opts.prepare();
-      prepared = batch.prepared;
+      const batch = await this.prepareBatch(opts.files);
+      prepared = batch.results;
       return await this.commitAndOpenPr(branchName, batch, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
@@ -427,13 +400,13 @@ export class Publisher {
    */
   private async commitAndOpenPr(
     branchName: string,
-    batch: { prepared: PublishResult[]; fileEntries: FileEntry[] },
+    batch: { results: PublishResult[]; fileEntries: FileEntry[] },
     opts: WorkflowOpts,
   ): Promise<BatchPublishResult> {
-    const successCount = batch.prepared.filter((r) => r.success).length;
+    const successCount = batch.results.filter((r) => r.success).length;
     const committed = await this.commitPreparedBatch(
       branchName,
-      batch.prepared,
+      batch.results,
       batch.fileEntries,
       opts.commitMessage(successCount),
     );
@@ -448,10 +421,10 @@ export class Publisher {
 
     const pr = await this.githubApiGateway.createPullRequest(
       branchName,
-      this.baseBranch,
+      this.settings.baseBranch,
       opts.prTitle(succeeded),
       opts.prBody(succeeded),
-      this.prLabels,
+      this.settings.prLabels,
     );
     return buildBatchResult(results, {
       prUrl: pr.url,
@@ -472,7 +445,7 @@ export class Publisher {
     const message = errorMessage(error);
     const failed =
       prepared.length === 0
-        ? opts.synthesizeFailures(message)
+        ? failedResults(opts.files, message)
         : markResultsFailed(prepared, error);
     return buildBatchResult([...opts.readFailures, ...failed], {
       error: message,
@@ -510,7 +483,7 @@ export class Publisher {
    * results — silent loss is the worse trade-off.
    */
   private async getPublishableFiles(): Promise<{
-    files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>;
+    files: PublishableFile[];
     readFailures: PublishResult[];
   }> {
     const markdownFiles = this.vault.getMarkdownFiles();
@@ -555,11 +528,9 @@ export class Publisher {
    * results. Returns per-file results and collected file entries for
    * commitFiles().
    */
-  private async prepareBatch(
-    files: Array<{ file: TFile; frontmatter: Frontmatter; body: string }>,
-  ): Promise<{
+  private async prepareBatch(files: PublishableFile[]): Promise<{
     results: PublishResult[];
-    fileEntries: Array<{ path: string; content: string | ArrayBuffer }>;
+    fileEntries: FileEntry[];
   }> {
     const results: PublishResult[] = [];
     const entryMap = new Map<string, string | ArrayBuffer>();
