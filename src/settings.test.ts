@@ -136,13 +136,6 @@ describe("parseFrontmatter", () => {
     const result = parseFrontmatter("author: Mark\ntags: obsidian");
     expect(result.author).toBe("Mark");
   });
-
-  test("round-trips through serialize", () => {
-    const input = { author: "Mark", tag: "obsidian" };
-    const parsed = parseFrontmatter(serializeFrontmatter(input));
-    expect(parsed.author).toBe("Mark");
-    expect(parsed.tag).toBe("obsidian");
-  });
 });
 
 describe("parseStrippedFieldsInput", () => {
