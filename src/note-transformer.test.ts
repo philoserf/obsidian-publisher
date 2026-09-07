@@ -27,83 +27,14 @@ function wrap(frontmatter: string, body: string): string {
   return `---\n${frontmatter}\n---\n${body}`;
 }
 
-describe("Wikilink conversion", () => {
-  const cp = makeProcessor();
-
-  test("converts simple wikilink to /posts/slug/ URL when in publish set", () => {
-    const result = process(
-      cp,
-      wrap("title: Test\nstatus: publish", "See [[Page Name]] here"),
-      "test.md",
-      new Set(["page-name"]),
-    );
-    expect(result.content).toContain("[Page Name](/posts/page-name/)");
-  });
-
-  test("converts wikilink with display text when in publish set", () => {
-    const result = process(
-      cp,
-      wrap("title: Test\nstatus: publish", "See [[Page|Custom Text]] here"),
-      "test.md",
-      new Set(["page"]),
-    );
-    expect(result.content).toContain("[Custom Text](/posts/page/)");
-  });
-
-  test("sanitizes wikilink target when in publish set", () => {
-    const result = process(
-      cp,
-      wrap("title: Test\nstatus: publish", "[[My Cool Page]]"),
-      "test.md",
-      new Set(["my-cool-page"]),
-    );
-    expect(result.content).toContain("[My Cool Page](/posts/my-cool-page/)");
-  });
-
-  test("handles multiple wikilinks when all in publish set", () => {
-    const result = process(
-      cp,
-      wrap("title: Test\nstatus: publish", "[[One]] and [[Two]]"),
-      "test.md",
-      new Set(["one", "two"]),
-    );
-    expect(result.content).toContain("[One](/posts/one/)");
-    expect(result.content).toContain("[Two](/posts/two/)");
-  });
-
-  test("handles heading anchors when in publish set", () => {
-    const result = process(
-      cp,
-      wrap("title: Test\nstatus: publish", "[[Page#My Heading]]"),
-      "test.md",
-      new Set(["page"]),
-    );
-    expect(result.content).toContain(
-      "[Page#My Heading](/posts/page/#my-heading)",
-    );
-  });
-
-  test("handles heading anchors with display text when in publish set", () => {
-    const result = process(
-      cp,
-      wrap("title: Test\nstatus: publish", "[[Page#Section|see this]]"),
-      "test.md",
-      new Set(["page"]),
-    );
-    expect(result.content).toContain("[see this](/posts/page/#section)");
-  });
-});
-
 describe("wikilink publish-set gating", () => {
+  const cp = makeProcessor();
+  const FM = "title: X\ndate: 2026-01-01";
+
   test("in-set link emits /posts/slug/ URL", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other Note]] for details.`,
+      cp,
+      wrap(FM, "See [[Other Note]] for details."),
       "x.md",
       new Set(["other-note"]),
     );
@@ -111,14 +42,9 @@ See [[Other Note]] for details.`,
   });
 
   test("in-set link with display text", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other Note|the other one]].`,
+      cp,
+      wrap(FM, "See [[Other Note|the other one]]."),
       "x.md",
       new Set(["other-note"]),
     );
@@ -126,14 +52,9 @@ See [[Other Note|the other one]].`,
   });
 
   test("in-set link with heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other Note#Some Heading]].`,
+      cp,
+      wrap(FM, "See [[Other Note#Some Heading]]."),
       "x.md",
       new Set(["other-note"]),
     );
@@ -142,15 +63,35 @@ See [[Other Note#Some Heading]].`,
     );
   });
 
-  test("out-of-set link degrades to plain text", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
+  // Anchor and display text combined — the only coverage of the
+  // `page#heading|display` parse order.
+  test("in-set link with both heading anchor and display text", () => {
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Unpublished Note]] sometime.`,
+      cp,
+      wrap(FM, "[[Page#Section|see this]]"),
+      "x.md",
+      new Set(["page"]),
+    );
+    expect(result.content).toContain("[see this](/posts/page/#section)");
+  });
+
+  // Two distinct targets, so slug resolution is exercised per link
+  // rather than once for a repeated target.
+  test("multiple in-set links each resolve to their own slug", () => {
+    const result = process(
+      cp,
+      wrap(FM, "[[One]] and [[Two]]"),
+      "x.md",
+      new Set(["one", "two"]),
+    );
+    expect(result.content).toContain("[One](/posts/one/)");
+    expect(result.content).toContain("[Two](/posts/two/)");
+  });
+
+  test("out-of-set link degrades to plain text", () => {
+    const result = process(
+      cp,
+      wrap(FM, "See [[Unpublished Note]] sometime."),
       "x.md",
       new Set([]),
     );
@@ -160,14 +101,9 @@ See [[Unpublished Note]] sometime.`,
   });
 
   test("out-of-set link with display uses display text", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Unpublished|my draft]].`,
+      cp,
+      wrap(FM, "See [[Unpublished|my draft]]."),
       "x.md",
       new Set([]),
     );
@@ -176,14 +112,9 @@ See [[Unpublished|my draft]].`,
   });
 
   test("note embed in-set uses link", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-![[Other Note]]`,
+      cp,
+      wrap(FM, "![[Other Note]]"),
       "x.md",
       new Set(["other-note"]),
     );
@@ -191,14 +122,9 @@ date: 2026-01-01
   });
 
   test("note embed out-of-set degrades to plain text", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-![[Unpublished]]`,
+      cp,
+      wrap(FM, "![[Unpublished]]"),
       "x.md",
       new Set([]),
     );
@@ -207,33 +133,17 @@ date: 2026-01-01
     expect(result.content).not.toContain("](");
   });
 
+  // No publishSet argument at all — pins the default parameter.
   test("when publishSet omitted, defaults to empty (all out-of-set)", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
-    const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other]].`,
-      "x.md",
-    );
+    const result = process(cp, wrap(FM, "See [[Other]]."), "x.md");
     expect(result.content).toContain("See Other");
     expect(result.content).not.toContain("[[");
   });
 
   test("URL prefix derives from contentDir (content/blog -> /blog/)", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "content/blog",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other]].`,
+      makeProcessor({ contentDir: "content/blog" }),
+      wrap(FM, "See [[Other]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -241,17 +151,9 @@ See [[Other]].`,
   });
 
   test("URL prefix derives from contentDir (content -> /)", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "content",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other]].`,
+      makeProcessor({ contentDir: "content" }),
+      wrap(FM, "See [[Other]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -259,17 +161,9 @@ See [[Other]].`,
   });
 
   test("normalizes trailing slash in contentDir", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "content/posts/",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-[[Other]]`,
+      makeProcessor({ contentDir: "content/posts/" }),
+      wrap(FM, "[[Other]]"),
       "x.md",
       new Set(["other"]),
     );
@@ -278,17 +172,9 @@ date: 2026-01-01
   });
 
   test("normalizes leading slash in contentDir", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "/content/posts",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-[[Other]]`,
+      makeProcessor({ contentDir: "/content/posts" }),
+      wrap(FM, "[[Other]]"),
       "x.md",
       new Set(["other"]),
     );
@@ -297,17 +183,9 @@ date: 2026-01-01
   });
 
   test("accepts bare directory without content/ prefix", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "posts",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-[[Other]]`,
+      makeProcessor({ contentDir: "posts" }),
+      wrap(FM, "[[Other]]"),
       "x.md",
       new Set(["other"]),
     );
@@ -315,17 +193,9 @@ date: 2026-01-01
   });
 
   test("preserves contentDir that starts with 'content' but isn't 'content/'", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "content-posts",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-[[Other]]`,
+      makeProcessor({ contentDir: "content-posts" }),
+      wrap(FM, "[[Other]]"),
       "x.md",
       new Set(["other"]),
     );
@@ -333,17 +203,9 @@ date: 2026-01-01
   });
 
   test("preserves contentDir starting with 'contentful/'", () => {
-    const processor = new NoteTransformer({
-      ...DEFAULT_SETTINGS,
-      contentDir: "contentful/posts",
-    });
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-[[Other]]`,
+      makeProcessor({ contentDir: "contentful/posts" }),
+      wrap(FM, "[[Other]]"),
       "x.md",
       new Set(["other"]),
     );
@@ -351,14 +213,9 @@ date: 2026-01-01
   });
 
   test("strips apostrophes from heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other#What's next?]].`,
+      cp,
+      wrap(FM, "See [[Other#What's next?]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -368,14 +225,9 @@ See [[Other#What's next?]].`,
   });
 
   test("strips parentheses and commas from heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other#Setup (advanced, v2)]].`,
+      cp,
+      wrap(FM, "See [[Other#Setup (advanced, v2)]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -385,14 +237,9 @@ See [[Other#Setup (advanced, v2)]].`,
   });
 
   test("collapses consecutive hyphens and trims edge hyphens in heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other#  Multi   Word!  ]].`,
+      cp,
+      wrap(FM, "See [[Other#  Multi   Word!  ]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -400,14 +247,9 @@ See [[Other#  Multi   Word!  ]].`,
   });
 
   test("preserves non-ASCII Latin letters (é, ü) in heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other#Café au lait]] and [[Other#Über alles]].`,
+      cp,
+      wrap(FM, "See [[Other#Café au lait]] and [[Other#Über alles]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -416,14 +258,9 @@ See [[Other#Café au lait]] and [[Other#Über alles]].`,
   });
 
   test("preserves CJK characters in heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other#日本語 notes]].`,
+      cp,
+      wrap(FM, "See [[Other#日本語 notes]]."),
       "x.md",
       new Set(["other"]),
     );
@@ -431,16 +268,11 @@ See [[Other#日本語 notes]].`,
   });
 
   test("NFC-normalizes decomposed diacritics in heading anchor", () => {
-    const processor = new NoteTransformer(DEFAULT_SETTINGS);
     // "café" encoded as c + a + f + e + U+0301 (combining acute)
     const decomposed = `Caf\u0065\u0301`;
     const result = process(
-      processor,
-      `---
-title: X
-date: 2026-01-01
----
-See [[Other#${decomposed}]].`,
+      cp,
+      wrap(FM, `See [[Other#${decomposed}]].`),
       "x.md",
       new Set(["other"]),
     );
