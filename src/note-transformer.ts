@@ -178,13 +178,6 @@ export class NoteTransformer {
   }
 
   /**
-   * Strip Obsidian sizing suffix (|300 or |300x200) from an embed name
-   */
-  private stripImageSize(name: string): string {
-    return name.split("|")[0];
-  }
-
-  /**
    * Parse Obsidian's `|alt|size` or `|alt` or `|size` embed suffix.
    * Returns the display alt (or undefined if only a bare size was given).
    */
@@ -212,7 +205,7 @@ export class NoteTransformer {
 
     let match = embedRegex.exec(content);
     while (match !== null) {
-      const name = this.stripImageSize(match[1]);
+      const name = this.parseImageSuffix(match[1]).name;
       if (IMAGE_EXTENSIONS.test(name)) {
         images.push(name);
       }
@@ -249,7 +242,7 @@ export class NoteTransformer {
   private convertNoteEmbeds(content: string, publishSet: Set<string>): string {
     const urlPath = this.postsUrlPath();
     return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const nameForCheck = this.stripImageSize(raw);
+      const nameForCheck = this.parseImageSuffix(raw).name;
       if (IMAGE_EXTENSIONS.test(nameForCheck)) {
         return _match; // leave for convertImageReferences (already processed)
       }
