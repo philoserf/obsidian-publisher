@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { NoteTransformer } from "./note-transformer";
+import { NoteTransformer, splitCodeSegments } from "./note-transformer";
 import { splitFrontmatter } from "./schema";
 import type { ProcessedContent, PublisherSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
@@ -1048,5 +1048,111 @@ describe("Full process pipeline", () => {
     expect(result.images).toEqual(["screenshot.png"]);
     expect(result.frontmatter.title).toBe("My Post");
     expect("status" in result.frontmatter).toBe(false);
+  });
+});
+
+// #243 / #244. Every transform used to run over the whole body, so a code
+// sample containing ==, [[ or %% was silently rewritten — and because
+// stripComments, convertImageReferences, convertNoteEmbeds and
+// convertWikilinks all match across newlines, a match could begin inside a
+// fence and end in prose, taking the closing fence with it.
+describe("code is opaque to the transform chain", () => {
+  const cp = makeProcessor();
+  const FM = "title: X\ndate: 2026-01-01";
+
+  test("a fenced block survives every transform verbatim", () => {
+    const fence = [
+      "```js",
+      "if (a == b && c == d) return;",
+      "const link = '[[Some Page]]';",
+      "const img = '![[photo.png]]';",
+      "// %%not a comment%%",
+      "```",
+    ].join("\n");
+    const result = process(
+      cp,
+      wrap(FM, `Intro.\n\n${fence}\n\nOutro.`),
+      "x.md",
+      new Set(["some-page"]),
+    );
+    expect(result.content).toContain(fence);
+    expect(result.content).not.toContain("<mark>");
+  });
+
+  test("an image referenced only inside a fence is not uploaded", () => {
+    const result = process(cp, wrap(FM, "```\n![[secret.png]]\n```"), "x.md");
+    expect(result.images).toEqual([]);
+  });
+
+  // #244 proper: stripComments removes the reference, so resolveImages must
+  // never see it — otherwise a deliberately disabled image is committed, and
+  // a missing one raises a spurious image-failed warning.
+  test("an image referenced only inside a %% comment is not uploaded", () => {
+    const result = process(
+      cp,
+      wrap(FM, "Visible.\n\n%%\n![[secret.png]]\n%%\n"),
+      "x.md",
+    );
+    expect(result.images).toEqual([]);
+    expect(result.content).not.toContain("secret.png");
+  });
+
+  test("an image referenced in prose is still uploaded", () => {
+    const result = process(cp, wrap(FM, "See ![[photo.png]]"), "x.md");
+    expect(result.images).toEqual(["photo.png"]);
+  });
+
+  test("inline code spans are protected too", () => {
+    const result = process(
+      cp,
+      wrap(FM, "Use `a == b` not `a = b`, and `[[literal]]` stays."),
+      "x.md",
+      new Set(["literal"]),
+    );
+    expect(result.content).toContain("`a == b`");
+    expect(result.content).toContain("`[[literal]]`");
+    expect(result.content).not.toContain("<mark>");
+  });
+
+  test("prose around a fence is still transformed", () => {
+    const result = process(
+      cp,
+      wrap(FM, "==hi== before\n\n```\n==raw==\n```\n\n==bye== after"),
+      "x.md",
+    );
+    expect(result.content).toContain("<mark>hi</mark>");
+    expect(result.content).toContain("<mark>bye</mark>");
+    expect(result.content).toContain("==raw==");
+  });
+
+  // %% is Mermaid's own comment syntax. stripComments ran before
+  // convertMermaid over the whole body, so it paired a mermaid comment with
+  // the next %% anywhere and deleted the diagram between them.
+  test("a mermaid diagram keeps its %% comments", () => {
+    const result = process(
+      cp,
+      wrap(FM, "```mermaid\n%% layout note\ngraph TD\nA-->B\n```"),
+      "x.md",
+    );
+    expect(result.content).toContain("graph TD");
+    expect(result.content).toContain("A-->B");
+    expect(result.content).toContain("{{< mermaid >}}");
+  });
+
+  test("an unterminated fence does not swallow later content", () => {
+    const segments = splitCodeSegments("prose\n```\nnever closed");
+    expect(segments.map((seg) => seg.text).join("")).toBe(
+      "prose\n```\nnever closed",
+    );
+    expect(segments[0].kind).toBe("prose");
+  });
+
+  test("splitting is lossless", () => {
+    const body = "a\n\n```js\nx == y\n```\n\nb `inline` c\n~~~\ntilde\n~~~\n";
+    expect(
+      splitCodeSegments(body)
+        .map((seg) => seg.text)
+        .join(""),
+    ).toBe(body);
   });
 });
