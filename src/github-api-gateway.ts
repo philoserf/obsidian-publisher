@@ -20,6 +20,31 @@ function rethrowWithPrefix(error: unknown, prefix: string): never {
 
 /** Per-request budget for GitHub API calls; a stalled connection on
  * mobile must surface as an error rather than hang a publish forever. */
+/**
+ * Is this failure worth retrying the same request for?
+ *
+ * 429 and 5xx are transient by definition. 403 is ambiguous: GitHub uses
+ * it for secondary rate limiting AND for "token lacks scope", so it only
+ * counts when the response looks rate-limit shaped — otherwise a genuine
+ * permission error would burn every attempt before surfacing.
+ *
+ * 422 is deliberately absent. On branch creation it means "ref already
+ * exists", which is resolved by trying a DIFFERENT name (see
+ * createBranchWithRetry) rather than repeating this one; elsewhere it is
+ * a hard validation error, and updateRef is non-forced so a 422 there is
+ * a non-fast-forward that retrying cannot fix.
+ */
+export function isTransient(error: unknown): boolean {
+  if (!(error instanceof RequestError)) return false;
+  if (error.status === 429 || error.status >= 500) return true;
+  if (error.status !== 403) return false;
+  const headers = error.response?.headers ?? {};
+  return (
+    headers["retry-after"] !== undefined ||
+    headers["x-ratelimit-remaining"] === "0"
+  );
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /** fetch with an abort timeout; rewraps the opaque DOMException so
@@ -78,6 +103,9 @@ export class GitHubApiGateway {
         repo: this.settings.repoName,
       });
     } catch (error) {
+      // Deliberately not rethrowWithPrefix: that passes RequestError
+      // through untouched, and this message is user-facing guidance in
+      // the settings connection test. A bare "Not Found" helps nobody.
       if (error instanceof Error) {
         throw new Error(
           `Failed to access repository: ${error.message}. Check your token and repository settings.`,
@@ -114,12 +142,7 @@ export class GitHubApiGateway {
       });
       return response.data.object.sha;
     } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Failed to get SHA for branch ${branch}: ${error.message}`,
-        );
-      }
-      throw error;
+      rethrowWithPrefix(error, `Failed to get SHA for branch ${branch}`);
     }
   }
 
@@ -170,10 +193,7 @@ export class GitHubApiGateway {
         body,
       });
     } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Failed to create pull request: ${error.message}`);
-      }
-      throw error;
+      rethrowWithPrefix(error, "Failed to create pull request");
     }
 
     const warnings: PublishWarning[] = [];
@@ -292,6 +312,8 @@ export class GitHubApiGateway {
     baseBranch = "main",
     maxRetries = 3,
   ): Promise<string> {
+    let lastError: unknown;
+
     for (let i = 0; i < maxRetries; i++) {
       const suffix = i > 0 ? `-${i}` : "";
       const branchName = this.generateBranchName(basePrefix) + suffix;
@@ -300,19 +322,19 @@ export class GitHubApiGateway {
         await this.createBranch(branchName, baseBranch);
         return branchName;
       } catch (error) {
-        // 422: branch already exists (retry with suffix). 429/5xx:
-        // transient rate-limit or server error, worth another attempt.
-        const retryable =
-          error instanceof RequestError &&
-          (error.status === 422 || error.status === 429 || error.status >= 500);
-        if (!retryable || i === maxRetries - 1) throw error;
+        // 422 means the name is taken, so the next attempt uses a
+        // different one; isTransient covers the failures worth repeating
+        // the same request for.
+        const collision = error instanceof RequestError && error.status === 422;
+        if (!collision && !isTransient(error)) throw error;
 
+        lastError = error;
         // Exponential backoff with jitter so retries are never instant
         // and a rate-limited batch doesn't hammer in lockstep.
         await this.sleep(2 ** i * 500 + Math.random() * 250);
       }
     }
 
-    throw new Error(`Failed to create branch after ${maxRetries} attempts`);
+    throw lastError;
   }
 }
