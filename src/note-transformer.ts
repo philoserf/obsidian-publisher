@@ -160,7 +160,6 @@ export class NoteTransformer {
       content: processedContent,
       filename: sanitizedFilename,
       images,
-      frontmatter: processedFrontmatter,
     };
   }
 
@@ -471,7 +470,11 @@ export class NoteTransformer {
     }
 
     const name = this.sanitizeName(filename.slice(0, lastDotIndex));
-    const extension = filename.slice(lastDotIndex);
+    // Lowercased with the name: leaving it alone made photo.PNG and
+    // photo.png distinct target paths, so Publisher.resolveImages saw no
+    // collision and committed both — which then collide on checkout on any
+    // case-insensitive filesystem.
+    const extension = filename.slice(lastDotIndex).toLowerCase();
     return name + extension;
   }
 }

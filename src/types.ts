@@ -63,8 +63,6 @@ export interface ProcessedContent {
   filename: string;
   /** List of image references found in the content */
   images: string[];
-  /** Processed frontmatter */
-  frontmatter: Record<string, unknown>;
 }
 
 /**
