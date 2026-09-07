@@ -1,4 +1,4 @@
-import type { TFile, Vault } from "obsidian";
+import type { MetadataCache, TFile, Vault } from "obsidian";
 import { GitHubApiGateway } from "./github-api-gateway";
 import { NoteTransformer } from "./note-transformer";
 import {
@@ -106,17 +106,37 @@ export class Publisher {
   private noteTransformer: NoteTransformer;
   private githubApiGateway: GitHubApiGateway;
   private onProgress?: ProgressCallback;
+  private metadataCache?: MetadataCache;
 
   constructor(
     vault: Vault,
     settings: PublisherSettings,
     onProgress?: ProgressCallback,
+    metadataCache?: MetadataCache,
   ) {
     this.vault = vault;
     this.settings = settings;
     this.noteTransformer = new NoteTransformer(settings);
     this.githubApiGateway = new GitHubApiGateway(settings);
     this.onProgress = onProgress;
+    this.metadataCache = metadataCache;
+  }
+
+  /**
+   * Can this file be ruled out without reading it?
+   *
+   * Only one answer is safe to trust: the cache parsed the frontmatter and
+   * it carries no publish flag. Everything else — a cold cache, or parsed
+   * frontmatter that came back absent — has to be read, because
+   * metadataCache reports MALFORMED frontmatter as simply missing, and a
+   * malformed block hides publish intent. Skipping those would silently
+   * reintroduce #129.
+   */
+  private isDefinitelyNotPublishable(file: TFile): boolean {
+    if (!this.metadataCache) return false;
+    const cache = this.metadataCache.getFileCache(file);
+    if (!cache?.frontmatter) return false;
+    return !hasPublishFlag(cache.frontmatter as Frontmatter);
   }
 
   private async cleanupBranch(branchName: string): Promise<void> {
@@ -498,6 +518,10 @@ export class Publisher {
     const readFailures: PublishResult[] = [];
 
     for (const file of markdownFiles) {
+      // Cheap rejection first: a vault of thousands of notes should not be
+      // read end to end to find the handful marked for publish.
+      if (this.isDefinitelyNotPublishable(file)) continue;
+
       try {
         const content = await this.vault.read(file);
         const {
