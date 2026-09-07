@@ -187,7 +187,38 @@ export class NoteTransformer {
       }
     }
 
+    if ("aliases" in processed) {
+      processed.aliases = this.urlizeAliases(processed.aliases);
+    }
+
     return processed;
+  }
+
+  /**
+   * Turn alias values into the URLs the posts actually had.
+   *
+   * Hugo emits a redirect stub at whatever path an alias names, verbatim.
+   * Aliases here are previous note titles, so an alias of "DNA as Remix
+   * Culture" produced a stub at /posts/DNA as Remix Culture/ while the URL
+   * the post really used — /posts/dna-as-remix-culture/ — was left dead.
+   *
+   * sanitizeSlug and postsUrlPath are reused deliberately: they are what
+   * generated those URLs in the first place, so reusing them is what makes
+   * the redirect land. Values that already name a path are left alone.
+   */
+  private urlizeAliases(value: unknown): unknown {
+    const urlize = (entry: unknown): unknown => {
+      if (typeof entry !== "string") return entry;
+      const trimmed = entry.trim();
+      // Already a path (e.g. "/antifa/") — the author means it literally.
+      // Checked before slugifying, since sanitizeSlug strips "/".
+      if (trimmed.startsWith("/")) return entry;
+      const slug = this.sanitizeSlug(trimmed);
+      if (!slug || slug === "untitled") return entry;
+      return `${this.postsUrlPath()}${slug}/`;
+    };
+
+    return Array.isArray(value) ? value.map(urlize) : urlize(value);
   }
 
   /**

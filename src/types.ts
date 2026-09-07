@@ -36,12 +36,13 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   contentDir: "content/posts",
   imageDir: "static/images",
   frontmatterTemplate: {},
+  // "aliases" is deliberately absent: Hugo reads it as the redirect list,
+  // so stripping it would discard every redirect the publisher emits.
   strippedFrontmatterFields: [
     "status",
     "lastmod",
     "cssclass",
     "cssclasses",
-    "aliases",
     "position",
     "created",
     "modified",
