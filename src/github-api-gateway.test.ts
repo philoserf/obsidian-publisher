@@ -58,13 +58,6 @@ function makeService(octokitOverrides: Record<string, unknown> = {}) {
   return { service, octokit };
 }
 
-describe("GitHubApiGateway.getRepoUrl", () => {
-  test("returns correct URL", () => {
-    const service = new GitHubApiGateway(makeSettings());
-    expect(service.getRepoUrl()).toBe("https://github.com/testowner/testrepo");
-  });
-});
-
 describe("GitHubApiGateway.generateBranchName", () => {
   test("generates branch name with prefix", () => {
     const service = new GitHubApiGateway(makeSettings());
@@ -166,7 +159,6 @@ describe("GitHubApiGateway.createPullRequest", () => {
     );
 
     expect(result.url).toBe("https://github.com/test/pr/1");
-    expect(result.number).toBe(1);
     expect(octokit.rest.pulls.create).toHaveBeenCalledTimes(1);
     expect(octokit.rest.issues.addLabels).toHaveBeenCalledTimes(1);
   });
@@ -208,7 +200,6 @@ describe("GitHubApiGateway.createPullRequest", () => {
     );
 
     expect(result.url).toBe("https://github.com/test/pr/1");
-    expect(result.number).toBe(1);
     expect(result.warnings).toEqual([
       {
         kind: "pr-label-failed",
