@@ -73,7 +73,7 @@ Single-file bundle via Bun: entry `src/main.ts` to output `main.js`. Externals: 
 
 ### Version and Release
 
-`bun run version` (script: `version-bump.ts`) bumps the version, auto-syncs `manifest.json`/`versions.json`, commits, and tags. Tag push triggers GitHub Actions release (`.github/workflows/release.yml`).
+Use the `obsidian-release-gate` then `obsidian-release-ship` skills — do not tag by hand.
 
 ## Code Style
 
