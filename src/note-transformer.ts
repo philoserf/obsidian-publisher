@@ -295,8 +295,13 @@ export class NoteTransformer {
    */
   private convertCallouts(content: string): string {
     const name = this.settings.calloutShortcodeName;
+    // `\r?\n` in both places, matching FRONTMATTER_REGEX. JS counts `\r`
+    // as a line terminator, so `.` never crosses it: with a bare `\n` the
+    // header alternative could not match a CRLF note at all, and the body
+    // repeat stopped after its first line. Callouts in a CRLF note
+    // published as raw `> [!note]` blockquotes.
     return content.replace(
-      /^> \[!([\w-]+)\][-+]?(?: (.+))?\n((?:^> .*(?:\n|$))*)/gm,
+      /^> \[!([\w-]+)\][-+]?(?: (.+))?\r?\n((?:^> .*(?:\r?\n|$))*)/gm,
       (_match, type: string, title: string | undefined, body: string) => {
         const calloutType = type.toLowerCase();
         const cleanBody = body.replace(/^> ?/gm, "").trim();
@@ -361,13 +366,23 @@ export class NoteTransformer {
   /**
    * Convert Obsidian wikilinks to markdown links when the target slug is
    * in the publish set; otherwise degrade to plain display text.
-   * Handles: [[Page]], [[Page|Display]], [[Page#Heading]], [[Page#Heading|Display]]
+   * Handles: [[Page]], [[Page|Display]], [[Page#Heading]], [[Page#Heading|Display]],
+   * and the same-page forms [[#Heading]], [[#Heading|Display]].
    */
   private convertWikilinks(content: string, publishSet: Set<string>): string {
     const urlPath = this.postsUrlPath();
     return content.replace(
-      /\[\[([^\]|#]+)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
-      (_match, page, _hashGroup, heading, _pipeGroup, displayText) => {
+      /\[\[([^\]|#]*)(#([^\]|]+))?(\|([^\]]+))?\]\]/g,
+      (match, page, _hashGroup, heading, _pipeGroup, displayText) => {
+        // The page part is optional so [[#Heading]] matches, but an empty
+        // page with no heading is not a link at all ([[]], [[|x]]) — leave
+        // it verbatim rather than emitting a link to nowhere.
+        if (!page) {
+          if (!heading) return match;
+          // A same-page anchor is always valid: it needs no publish-set
+          // lookup, because the target is this very document.
+          return `[${displayText || heading}](#${this.slugifyHeading(heading)})`;
+        }
         const display = displayText || (heading ? `${page}#${heading}` : page);
         const slug = this.sanitizeSlug(page);
         if (!publishSet.has(slug)) return display;
@@ -389,12 +404,21 @@ export class NoteTransformer {
       if (IMAGE_EXTENSIONS.test(nameForCheck)) {
         return _match; // leave for convertImageReferences (already processed)
       }
-      // For note embeds, pipe is display text: ![[Note|Display]]
-      const [name, displayText] = raw.split("|");
-      const display = displayText ?? name;
+      // For note embeds, pipe is display text: ![[Note|Display]]. The
+      // target may still carry an anchor (![[Note#Heading]]), which has to
+      // come off before the slug lookup — sanitizeSlug drops the `#` and
+      // runs the heading into the name, so "Note#Heading" slugified to
+      // "noteheading", never matched the publish set, and every anchored
+      // embed degraded to plain text.
+      const [target, displayText] = raw.split("|");
+      const hash = target.indexOf("#");
+      const name = hash === -1 ? target : target.slice(0, hash);
+      const heading = hash === -1 ? "" : target.slice(hash + 1);
+      const display = displayText ?? target;
       const slug = this.sanitizeSlug(name);
       if (!publishSet.has(slug)) return display;
-      return `[${display}](${urlPath}${slug}/)`;
+      const fragment = heading ? `#${this.slugifyHeading(heading)}` : "";
+      return `[${display}](${urlPath}${slug}/${fragment})`;
     });
   }
 
