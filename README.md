@@ -18,25 +18,43 @@ If you want something similar, the code is MIT-licensed — fork it and adapt. D
 
 The plugin converts Obsidian-specific syntax to Hugo-compatible markdown during publish:
 
-| Obsidian                 | Hugo                                                 |
-| ------------------------ | ---------------------------------------------------- |
-| `[[Page Name]]`          | `[Page Name](/posts/page-name/)` (if in publish set) |
-| `[[Page Name#Heading]]`  | `[Page Name#Heading](/posts/page-name/#heading)`     |
-| `[[Page\|Display]]`      | `[Display](/posts/page-name/)`                       |
-| `![[image.png]]`         | `![image.png](/images/image.png)`                    |
-| `![[image.png\|alt]]`    | `![alt](/images/image.png)`                          |
-| `![[image.png\|300]]`    | `![image.png](/images/image.png)` (sizing stripped)  |
-| `![[Note Name]]` (embed) | `[Note Name](/posts/note-name/)` (if in publish set) |
-| `%%comment%%`            | Removed                                              |
-| `==highlight==`          | `<mark>highlight</mark>`                             |
-| `> [!note] Title`        | `{{< callout note "Title" >}} … {{< /callout >}}`    |
-| ` ```mermaid `           | `{{< mermaid >}} … {{< /mermaid >}}`                 |
+| Obsidian                   | Hugo                                                 |
+| -------------------------- | ---------------------------------------------------- |
+| `[[Page Name]]`            | `[Page Name](/posts/page-name/)` (if in publish set) |
+| `[[Page Name#Heading]]`    | `[Page Name#Heading](/posts/page-name/#heading)`     |
+| `[[Page\|Display]]`        | `[Display](/posts/page-name/)`                       |
+| `[[#Heading]]`             | `[Heading](#heading)` (same page, always resolves)   |
+| `![[image.png]]`           | `![image.png](/images/image.png)`                    |
+| `![[image.png\|alt]]`      | `![alt](/images/image.png)`                          |
+| `![[image.png\|300]]`      | `![image.png](/images/image.png)` (sizing stripped)  |
+| `![[image.png\|alt\|300]]` | `![alt](/images/image.png)`                          |
+| `![[Note Name]]` (embed)   | `[Note Name](/posts/note-name/)` (if in publish set) |
+| `![[Note#Heading]]`        | `[Note#Heading](/posts/note/#heading)`               |
+| `%%comment%%`              | Removed                                              |
+| `==highlight==`            | `<mark>highlight</mark>`                             |
+| `> [!note] Title`          | `{{< callout note "Title" >}} … {{< /callout >}}`    |
+| ` ```mermaid `             | `{{< mermaid >}} … {{< /mermaid >}}`                 |
 
-Wikilinks and note embeds only resolve to URLs for notes in the **current publish set** (the notes being published in this operation). Out-of-set references degrade to plain text — so you can't publish a link to a note that isn't also being published.
+Wikilinks and note embeds only resolve to URLs for notes in the **current publish set** (the notes being published in this operation). Out-of-set references degrade to plain text — so you can't publish a link to a note that isn't also being published. The one exception is a same-page anchor (`[[#Heading]]`): its target is the document itself, so it always resolves.
+
+**Code is left alone.** Everything inside a fenced code block or an inline code span is exempt from every transformation in the table — a `==x==` or `[[Page]]` in a code sample publishes verbatim rather than being rewritten. Mermaid is the deliberate exception: it is the one transformation that acts _on_ a fenced block.
+
+**Aliases become redirects.** A note's `aliases` frontmatter is rewritten into the URLs those titles produced (`DNA as Remix Culture` → `/posts/dna-as-remix-culture/`), so Hugo emits a working redirect stub instead of one at a path the site never served. Values that already start with `/` pass through untouched, which is how you pin an exact old URL.
+
+### Settings worth knowing
+
+- **Stripped frontmatter fields.** Removed from published notes; defaults to `status`, `lastmod`, `cssclass`, `cssclasses`, `position`, `created`, `modified`. `aliases` is deliberately _not_ in that list — stripping it would suppress the redirects above.
+- **Frontmatter template.** Fields injected into every published note, without overriding what the note already sets.
+- **Shortcode names.** `callout` and `mermaid` by default; change them to match your theme.
+- **`contentDir` / `imageDir`.** Destination paths in the site repo; the URL prefix in the table above is derived from `contentDir`.
 
 Callout types pass through from Obsidian verbatim (no collapse to a fixed set). The destination Hugo site must define `callout` and `mermaid` shortcodes in `layouts/shortcodes/`. Reference implementations ship in `hugo-shortcodes/` — copy them into your theme. The shortcode names are configurable in the plugin settings (default `callout` and `mermaid`).
 
 Heading anchors (`[[Page#Heading]]`) assume the destination Hugo site uses the default `autoIDType: "github"`, which preserves Unicode letters. Sites configured with the opt-in `autoIDType: "github-ascii"` will see mismatched `#fragment` links — pages load, but in-page jumps to non-ASCII headings won't resolve.
+
+Page slugs, committed filenames, and heading anchors all share one rule: NFC-normalize, lowercase, keep Unicode letters and digits, and turn whitespace into hyphens. So a note titled `Rōnin…` publishes at `/posts/rōnin-…/`, matching what Hugo generates by default. Sites that set `removePathAccents: true` will see mismatched links, for the same reason as `github-ascii` above.
+
+Because the destination filename follows that same rule, **renaming a note renames its published file** — and the plugin has no delete path, so the previous file stays in the site repo until you remove it by hand. Add the old URL to the note's `aliases` before republishing if you want it to keep resolving.
 
 ## Security
 

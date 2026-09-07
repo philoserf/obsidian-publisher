@@ -1,115 +1,119 @@
 # Theory
 
-A working account of this codebase, addressed to the next maintainer. Read it once; refer back to the invariants when you touch anything.
+What you need to hold in mind to change this plugin without damaging it. Not an API reference — the code and its comments cover that. This is the reasoning the code cannot state about itself.
 
-## What this system is for
+## What the system is for
 
-This is a one-person publishing pipeline. It takes notes written in an Obsidian vault and puts them into the author's Hugo blog repository — via GitHub's REST API — through a pull request that a human will review before it ships.
+One person writes notes in one Obsidian vault. Some of those notes are also public essays on one Hugo site. The plugin is the bridge, and its whole job is to answer a question the vault cannot answer for itself: _given this pile of notes, which ones are the site, and what does the site's copy of each one look like?_
 
-The domain has three worlds, and the plugin lives at their junction:
+That framing matters more than it sounds. This is not a general Obsidian-to-static-site exporter, and reading it as one will lead you to "fix" things that are deliberate. The vault is the source of truth and it is messy — thousands of notes, most of them private, some half-finished, a few with broken YAML. The site is a git repository with a fixed shape. Between them sits a translation with no undo: once a publish opens a pull request, the only way back is another commit.
 
-- The **vault**: Obsidian-flavored markdown with wikilinks, note embeds, callouts, comments, highlights, and frontmatter. The vault's addressing scheme is filenames and basenames. Links are by human-readable page name, not URL.
-- The **repo**: a Hugo site whose content lives under a directory (`content/posts`) and whose static assets (`static/images`) are served from the site root. Addressing is by path-and-slug URLs. The site's build tools expect specific shortcode calls (`{{< callout ... >}}`, `{{< mermaid >}}`).
-- The **review gate**: GitHub pull requests. Nothing reaches the site without appearing on a feature branch with a PR the author will merge by hand.
+The domain vocabulary is small and worth learning precisely:
 
-The plugin is the translator and the gatekeeper. It reshapes a vault note into Hugo-shaped markdown, decides which notes are eligible, and pushes the result through the review gate — never directly, never skipping review. The shape of the destination and the insistence on PR review are not implementation details; they are the whole point. Everything else in the code is scaffolding around those two commitments.
+A **publishable file** is a note whose frontmatter carries `status: publish`. That sentinel is the entire access-control model. There is no allow-list, no folder convention, no export flag — one string in one field, checked by `hasPublishFlag`, and a note either has it or does not exist as far as the site is concerned.
 
-The iOS constraint (the author wants to publish from a phone) is the reason nothing ever shells out to `git`; all write operations go through Octokit's Git Data API. That is why `GitHubService.commitFiles` constructs blobs, trees, and commits by hand — it is the only way to make an atomic multi-file commit without a working copy.
+A **slug** is what a note's title becomes in a URL and in a filename. The **publish set** is the collection of slugs going out in _this particular publish operation_. A **result** is per-note and carries either success or an error, never both, plus **warnings** — conditions the user should know about that did not prevent the publish.
 
-## Vocabulary and core entities
+## The organizing ideas
 
-- **Note**: a vault markdown file with frontmatter and body. It becomes a candidate for publication by carrying `status: publish`. This is the "publish sentinel"; before 1.4.0 it was `status: published`, and the rename was a breaking change made precisely because the right word is _intent_, not _state_.
-- **Publish set**: the set of slugs being published in one operation. This is the load-bearing abstraction introduced in 1.5.0. Wikilinks and note embeds resolve to URLs only when the target slug is in the set; otherwise they degrade to plain text. A batch publish seeds the set from every file being published; a single-note publish seeds it with the note's own slug (so `[[Self]]` self-references resolve). This moves cross-reference correctness out of Hugo's build and into the publish step, eliminating the old `{{< ref >}}` dance.
-- **Slug / sanitized filename**: the canonical form a vault name takes when it lands in the repo — lowercase, hyphenated, with non-`[a-z0-9\-_]` stripped. `sanitizeName` is the shared core; `sanitizeSlug`, `sanitizeFilename`, and `sanitizeImageName` are thin wrappers that differ only in whether they preserve an extension.
-- **PublishResult / BatchPublishResult**: the contract between `Publisher` and `main.ts`. Every attempted publish produces a `PublishResult`; the batch wraps a list of them with `total`, `successful`, `failed`, an optional top-level `error`, an optional `prUrl`, and optional batch-level `warnings`. This shape drives the user-visible notices. It is not a debugging artifact — it is the summary that replaces the author's ability to watch a terminal.
-- **PublishWarning**: a tagged union of non-fatal conditions (`image-failed`, `image-collision`, `pr-label-failed`). Warnings exist because some things go wrong _after_ the PR has been created, and throwing away a PR over a failed label would cost the user more than the information they were trying to attach. The tags are part of the contract: `main.ts` groups and phrases notices by kind, and tests assert on the shape.
-- **Frontmatter schema**: `schema.ts` owns the YAML split (`splitFrontmatter`), the publish gate (`hasPublishFlag`), and validation (`validateFrontmatter`). `title` and `date` are required; nothing else is. The regex handles CRLF endings (that was a bug in 1.4.1).
+### The iOS constraint is upstream of the architecture
 
-## Organizing ideas
+The author writes on a phone. Obsidian on iOS has no shell, no git binary, and no console. Every structural oddity here descends from that.
 
-### The PR is the commit point
+It is why the GitHub seam is Octokit REST rather than a git wrapper: not a preference, a hard platform limit. It is why `main.js` is a committed bundle rather than a build artifact — the plugin is installed by copying files, and there is no build step on a phone. And it is why `Notice` is treated as a real output channel rather than a nicety. Look at `PR_NOTICE_DURATION_MS`: the pull request URL gets ten seconds instead of the default five because on the one platform that motivated this whole design, a `console.log` of that URL is unreachable. Per-file failure detail _does_ go to the console, which is an accepted degradation — the summary reaches everyone, the detail reaches desktop only.
 
-Every publish creates a branch, commits files to it, and opens a PR — always, no escape hatch since 1.6.0. The code reflects this with two symmetric invariants:
+If you find yourself reaching for a child process, a filesystem path outside the vault, or a native module, stop. That is the constraint talking.
 
-1. If something fails before the PR is created, the branch is cleaned up (`cleanupBranch`) so the repo is not littered with orphaned refs.
-2. If the PR has been created, nothing after that point may throw. Label-apply failure is explicitly caught and converted to a `pr-label-failed` warning. This is a direct fix for a 1.4.1 bug in which label failure triggered branch cleanup and auto-closed the freshly-made PR.
+### Link resolution is scoped to the operation, not the site
 
-Together these shape `runPublishWorkflow`, the orchestrator extracted in 1.6.0 that both single-note and batch paths now share. The parameterization (branch prefix, commit message, PR title/body builders, and a `synthesizeFailures` closure) is not a generalization for unknown future callers; it exists because the single and batch paths genuinely have the same shape with different message text, and the previous duplication had drifted.
+This is the least obvious idea in the codebase and the one most likely to be broken by a well-meaning change.
 
-### Results are always populated
+`[[Some Note]]` becomes a link only if `some-note` is in the publish set — the set built from the files in _this run_. Otherwise it degrades to bare display text. `buildPublishSet` computes it, `processFromSplit` takes it as a parameter, and `convertWikilinks` and `convertNoteEmbeds` consult it.
 
-`main.ts`'s user-facing notice classifier (`batchNoticeText`) has a `total === 0` branch that says "No publishable notes found." That is benign when a vault actually has no publishable notes, but it will silently swallow a batch-level failure if the batch returns with `error` set and an empty `results[]`. Every code path that aborts the batch — filename collision detected, branch creation throws, read failures make up the whole set — must synthesize per-file `PublishResult` entries so `total` reflects attempted work. `synthesizeCollisionFailures`, `synthesizeFailures` in the workflow orchestrator, and the read-failure fallback exist for exactly this reason. Any new abort path you add must do the same, or it will vanish from the UI.
+The consequence is that publishing is not monotonic. Publish note A by itself and a link to note B flattens to plain text; publish A and B together and the same link resolves. The same source note produces different output depending on what it travelled with. A sibling project would almost certainly resolve links against the whole site — query what is already published, or emit the link optimistically and let the build fail. This one does neither, because it has no model of the site's current state and deliberately refuses to acquire one. Every operation is self-contained.
 
-### The publish set is the resolver
+The single exception is a same-page anchor, `[[#Heading]]`. Its target is the document itself, so it needs no lookup and always resolves. If you add another link form, the first question to answer is which side of that line it falls on.
 
-Link resolution is not a property of the vault or a property of the site — it is a property of a publish operation. The publish set determines which `[[Page]]` wikilinks become `[Page](/posts/page/)` and which decay to plain text. `ContentProcessor.process` takes the set as an argument; the `Publisher` builds it from the files it is about to commit. This has one surprising consequence worth internalizing: you cannot publish a single note containing a link to an unpublished note and expect the link to resolve, even if the target has been published in a previous run. The link will degrade. That is a feature, not a bug — it guarantees every link the site emits points to a slug you intended to commit in the same operation.
+### One slug rule, three consumers, and no delete path
 
-### Schema is central, content-processor is a pipeline
+`slugify` is the single rule: NFC-normalize, lowercase, keep Unicode letters, digits, underscore, whitespace and hyphen, whitespace to hyphens, collapse and trim. Three things consume it — the page slug in a URL, the committed filename, and the heading anchor. `sanitizeName` wraps it with the `untitled` fallback that a filename needs and an anchor does not.
 
-`schema.ts` is the one place that knows what YAML is, what `status: publish` means, and what a valid frontmatter looks like. `content-processor.ts` is a straight pipeline of string transforms that runs in a specific order (`processFromSplit`). The order is load-bearing:
+They were not always unified, and the bug that resulted is instructive: page slugs ran an ASCII-only variant while anchors preserved Unicode, so `[[Café#Café]]` emitted `/posts/caf/#café` — the two halves of one link disagreed with each other. Keeping them unified is now an invariant with a test, and it is load-bearing beyond aesthetics: `buildPublishSet` slugifies while `detectFilenameCollisions` sanitizes filenames, so if the two ever diverge a link resolves against a name that was never committed.
 
-- Comments stripped first, so a commented-out wikilink does not produce a phantom publish-set membership check.
-- Callouts and mermaid before wikilinks and images, so the syntax inside a callout body is processed once.
-- Image references before note embeds, with both sharing the `![[...]]` syntax disambiguated by file extension. `convertImageReferences` handles anything matching `IMAGE_EXTENSIONS`; `convertNoteEmbeds` handles the rest.
+The rule also has to agree with something outside this repository. It matches Hugo's default goldmark anchor generation (`autoIDType: "github"`) and Hugo's default URL handling (`removePathAccents: false`). A site that opts into `github-ascii` or turns accents off will see links that load pages but do not jump, or do not load at all. Nothing checks this. It is a contract held in a comment.
 
-Do not rearrange this pipeline casually. The separation of "this transform owns image embeds, that transform owns note embeds" is maintained by the extension regex, and if you add a new transform that walks `![[...]]`, you must pick one side of that line.
+**The invariant that costs the most if forgotten:** there is no delete path. The gateway can create branches, trees, commits and pull requests, and it can delete a _branch_ — it cannot delete a _file_. So the destination filename changing, for any reason, is a rename that leaves the old file live on the site. Renaming a note does it. Changing `slugify` does it to every affected note at once. Neither the plugin nor the site notices; you get two copies of the same post and discover it later. If you touch the slug rule, the blast radius is not "some URLs change" — it is "some posts now exist twice," and cleanup is manual.
 
-### Settings are defended at both boundaries
+### Code is opaque, and mermaid is the exception that proves it
 
-`parseSettings` (persistence load) and the settings UI (user input) both filter out illegal values. This is not paranoia; it is the consequence of two real attack surfaces: a user hand-editing `data.json`, and a user typing into a settings field. `strippedFrontmatterFields` cannot include required fields at either boundary, because stripping `date` would produce notes that pass vault validation but fail at publish. Shortcode names validate against a character class. `parseSettings` accepts the legacy `removePublishFlag` boolean and migrates it; don't delete this migration until you are certain no installed vault still has the old key — and since the author's vault is the only known install, _certain_ is cheap to verify.
+`splitCodeSegments` divides the body into prose and code before any transform runs, and only prose goes through the chain. This is not tidiness. Every transform is actively unsafe inside code: `==` is an equality operator in most languages and would become `<mark>`, and several of the regexes use character classes that admit newlines, so a match could begin inside a fence and end in prose, carrying the closing fence away with it.
 
-### Error narrowing at the GitHub boundary
+The splitter is lossless by construction — it slices the original string by precomputed line offsets rather than rejoining split lines, so concatenating every segment reproduces the input byte for byte. That property has its own test, because an earlier version silently dropped newlines at segment boundaries and the entire existing suite still passed.
 
-`rethrowWithPrefix` exists because `Octokit.RequestError` carries a status code, and that status code is load-bearing. `createBranchWithRetry` specifically checks for `422` (branch already exists) and adds a suffix to retry. If `createBranch` or `commitFiles` wrapped every error as a plain `Error`, the 422 detection would break. So the rule at the GitHub seam is: `RequestError` passes through untouched, generic `Error` gets a descriptive prefix, anything else rethrows as-is. Maintain this discipline in any new Octokit wrapper.
+Mermaid inverts the rule: it is the one transform that runs over _code_ segments, because a mermaid diagram **is** a fenced block. When you add a transform, decide explicitly which side it belongs on. There is no default.
 
-## Seams
+### Failure has two kinds, and the difference is intent
 
-### Obsidian ↔ plugin
+A note without `status: publish` is not a failure in `publishAll` — it is silently skipped, because a vault scan makes no claim about any particular note. The same note _is_ a failure in `publishNote`, because the user pointed at it and pressed publish. Same condition, opposite handling, and the difference is whether intent was expressed.
 
-Obsidian provides the vault (file I/O), YAML parsing (`parseYaml` / `stringifyYaml`), UI primitives (`Notice`, `Setting`, `Plugin`), and a `debounce`. The plugin consumes these and mocks them for tests in `src/test-preload.ts` with a small hand-rolled YAML parser good enough to round-trip the test fixtures. The mock is thin on purpose; do not grow it into a real YAML library. If a test exposes a gap in the mock, fix the test fixture first.
+Read and parse failures break that symmetry deliberately. When a file cannot be read, or its frontmatter is malformed YAML, the batch reports it rather than skipping it — because a malformed block _hides_ publish intent. We cannot tell whether the author meant `status: publish` when the YAML does not parse, and silently dropping a note the author meant to publish is the worse of the two errors. `splitFrontmatter` returns a distinct `error` field precisely so callers can tell "malformed" from "absent."
 
-One concrete quirk: `main.ts` defines `publisher` as a getter that constructs a fresh `Publisher` on every access. The comment is explicit about this — reading `this.publisher` twice yields two distinct instances. The callers each capture it into a local variable for the duration of one command. This pattern exists so settings changes propagate without needing an explicit invalidation step; don't "fix" it by caching.
+Warnings are a third category and never fail anything. The clearest case is a pull request whose labels could not be applied: the PR exists, it is the artifact the user wanted, and throwing would orphan it. So label failure becomes a warning attached to a successful result.
 
-### Plugin ↔ GitHub
+### Counts are a user-facing contract
 
-`GitHubService` is the single Octokit-aware class. It constructs the client from `settings.githubToken`, exposes `commitFiles` (blobs + tree + commit + ref update, done by hand for iOS), `createBranchWithRetry`, `createPullRequest`, `deleteBranch`, and `validateConnection`. The seam is deliberately narrow: no other file imports `@octokit/*`. If you need a new GitHub operation, add a method here and preserve the `rethrowWithPrefix` error-narrowing pattern.
+`buildBatchResult` derives `total` from the number of results, and `failedResults` exists solely to produce one failed result per attempted file. That looks like padding until you read the notice tree: `formatBatchNotice` branches on `total === 0` and prints "No publishable notes found." A batch that failed wholesale before preparing anything — a filename collision, say — would otherwise report zero total and be announced to the user as _nothing to do_. The counts are not statistics; they are the input to what the user is told.
 
-### Plugin ↔ Hugo
+The same logic drives `markResultsFailed`. If the commit throws after preparation succeeded, every prepared success is rewritten as a failure. The user is not told "twelve notes prepared successfully" about a commit that never landed.
 
-This boundary is the thinnest in the system, and the most interesting conceptually. The plugin does not know Hugo exists at runtime — it only knows the _shape_ the Hugo site expects: `content/`-rooted content paths, `static/`-rooted images, and shortcode calls whose names are configurable. `hugo-shortcodes/` ships reference templates the user copies into their theme. Those files are not built or distributed by the plugin; they are a compact contract between the plugin's emitted markdown and the theme's rendering. If you change what the plugin emits (e.g., callout syntax), you must update the reference shortcodes to match, and vice versa.
+### Retry is licensed by idempotency, and 422 is not a retry
 
-The `imageUrlPath` and `postsUrlPath` helpers encode the Hugo convention (that `static/` serves at root and `content/` is the content root) as URL-shape transformations. Both use boundary regexes so `static-assets` and `staticfiles/img` are not mis-stripped to `-assets` or `files/img`. The comments document this; preserve it if you touch them.
+`withRetry` wraps every call inside `commitFiles`, and it is safe only because of a property of the Git data API: blobs and trees are content-addressed, and `updateRef` is non-forced, so repeating any of them is a no-op rather than a duplicate.
 
-### Settings persistence
+`isTransient` decides what is worth repeating: 429 and 5xx unconditionally, and 403 only when the response looks rate-limit shaped — a `retry-after` header, or `x-ratelimit-remaining: 0`. A bare 403 is usually a missing token scope, and retrying it just burns attempts before surfacing a permission error.
 
-Settings live in Obsidian's plugin data (`data.json`), as plaintext, including the GitHub token. This is an Obsidian platform constraint with no encrypted-storage API. The README says so; the onus is on the user. Do not invent encryption — just document carefully.
+422 is deliberately excluded, and this is the distinction to keep straight. On branch creation, 422 means the name is already taken, which `createBranchWithRetry` resolves by generating a _different_ name — a different request, not the same one again. Elsewhere it is a hard validation error. Two retry mechanisms live in the same file for two different reasons; conflating them is easy and wrong.
 
-## What this system accommodates, and what it does not
+Holding all of this together is `rethrowWithPrefix`, which passes `RequestError` through untouched so its status survives and wraps only generic errors. This looks like a minor stylistic rule and is not: when `getBranchSha` once re-wrapped `RequestError` into a plain `Error`, it destroyed the status code and silently disabled retry throughout the gateway. Any new call site that wraps a `RequestError` reintroduces that.
 
-Changes that fit the theory and are easy:
+## The seams
 
-- **New body transforms** (another Obsidian-specific syntax): add a method to `ContentProcessor`, slot it into the `processFromSplit` pipeline in the right position, cover it with tests. Pipeline order is documented above.
-- **New frontmatter behavior**: extend `schema.ts`. Keep parsing, gating, and validation together.
-- **New settings**: extend the `PublisherSettings` type, add the field to `DEFAULT_SETTINGS`, defend it in `parseSettings`, and wire a UI setting in `settings.ts`. Remember both boundaries.
-- **New non-fatal conditions**: add a new `PublishWarning` variant, plumb it through to `main.ts`'s `notifyWarnings`, update tests.
+**Obsidian** is reached through `vault` (read, readBinary, getMarkdownFiles, getFiles), `metadataCache`, and `Notice`. The tests mock this wholesale, so nothing here verifies that Obsidian dispatches a command or renders a notice — only that the right APIs are called with the right arguments.
 
-Changes that resist, and why:
+`metadataCache` is the newest and subtlest part of this seam. It exists to avoid reading thousands of notes to find a hundred, and `isDefinitelyNotPublishable` is deliberately one-sided: the _only_ answer it trusts is "the cache parsed frontmatter and there is no publish flag." A cold cache and parsed-but-absent frontmatter both fall through to a real read, because `metadataCache` reports malformed frontmatter as simply missing — and a malformed block is exactly the case that must not be skipped. Widening this predicate to trust more answers is the single easiest way to silently stop publishing notes. Note also that it arrives as an optional fourth constructor parameter, appended rather than woven in; that shape is honest about it being a late performance addition, and it means every test that predates it still constructs a `Publisher` that reads everything.
 
-- **Direct-commit publishing**: gone since 1.6.0, and its removal is the expression of an invariant, not the removal of a feature. Reintroducing it would have to re-open the question of what it means for a publish to "ship without review," which is the project's core commitment.
-- **Cross-run wikilink resolution**: the publish set is a per-operation abstraction. Making it per-vault or per-site would push cross-reference correctness back out of the plugin and into the site build, undoing the 1.5.0 simplification. Workable, but a rethink.
-- **Batch-wide image handling** (open issue #154): the current design resolves images per-file; collisions across files are detected but not unified. Fixing this properly requires deciding whether batch publishing has a single shared image namespace, which the code does not currently model.
-- **Progress reporting beyond per-file preparation**: `ProgressCallback` fires in `prepareBatch` only. Reporting "uploading blob 3 of 7" during commit would require a second progress axis in `GitHubService`. Not hard, but a new concept.
+**GitHub** is `GitHubApiGateway`, and it is the only Octokit-aware module. Keep it that way; the iOS constraint lives here.
 
-A maintainer who does not understand the publish-set idea will likely break wikilink tests; one who does not understand the "PR-is-the-commit-point" invariant will reintroduce the orphaned-PR bug; one who does not understand the `total`-populated invariant will make batch errors silently disappear. Those three are the load-bearing places.
+**Hugo** is the seam with no code. The plugin emits shortcodes (`callout`, `mermaid`) that the destination theme must define, writes to paths the site must use (`content/posts`, `static/images`), assumes an anchor-generation algorithm, and rewrites `aliases` into redirect URLs. None of this is verified by anything. `hugo-shortcodes/` ships reference templates and that is the whole enforcement mechanism. This is the thinnest part of the theory and the place where a silent breakage is most likely to originate.
 
-## Uncertainties and tensions
+The alias behavior deserves specific attention because it hides in a settings default. `aliases` is _deliberately absent_ from `DEFAULT_SETTINGS.strippedFrontmatterFields`, with a comment saying why: Hugo reads that field as its redirect list, so stripping it would discard every redirect the publisher emits. `urlizeAliases` then converts each alias from a bare title into the URL that title actually produced, reusing `sanitizeSlug` and `postsUrlPath` — the same functions that generated the original URLs, which is the entire reason the redirect lands. A value already starting with `/` passes through untouched, checked _before_ slugification because `sanitizeSlug` would strip the slash. That escape hatch is how you pin an exact historical URL, and it is what makes a slug-rule change survivable.
 
-- The plugin has a single known user (the author). Many of the "defensive" behaviors (per-field settings fallback, YAML migration from `removePublishFlag`) are inferred from the CHANGELOG to be battle-scarred, but some may be aspirational hedges against a population of users that does not exist. I cannot tell from code alone which is which.
-- The `hugo-shortcodes/` directory is part of the plugin's distribution (it's in the repo and mentioned in the README) but is not bundled into `main.js` or shipped by the Obsidian release workflow. The user copies files by hand. This is a coherent choice — the plugin is for one person and the theme is for one site — but the boundary is informal, and if the author ever wants "one-button setup," this is where friction lives.
-- `BatchPublishResult` is used for single-note publishing too (`publishNote` calls `runPublishWorkflow` and unwraps `results[0]`). This is efficient but leaks batch vocabulary into the single-note path; a reader seeing `BatchPublishResult` in the single-note return value is right to be briefly confused.
-- `BatchPublishResult.warnings` is optional where `PublishResult.warnings` is required. Open issue #205 proposes making it non-optional; the inconsistency is real but low-cost.
-- The test mock for `parseYaml` is a flat line-per-key parser that cannot handle nested YAML (open issue #129). Tests that want nested frontmatter would need richer fixtures; the current suite side-steps this by using flat frontmatter everywhere. This constrains test expressiveness more than runtime behavior.
-- The `1.4.1` fix for CRLF frontmatter and the `1.6.0` fix for Unicode heading anchors both suggest places where the regex-heavy approach to text transformation has missed an edge case at the cost of a bug-then-fix cycle. The transforms are still regex-based, and more such bugs likely remain. Consider this when adding transforms: prefer explicit boundary handling and normalize inputs before matching.
-- The filename-collision precheck and the `total`-populated invariant together suggest the `BatchPublishResult` shape is _almost but not quite_ self-describing: `error` + empty `results` has been possible and has been a bug. A more principled fix would make the invariant type-level (e.g., require `results.length >= 1` when `error` is set). I can infer the intent but not whether the author considered and rejected this.
+## What the system accommodates, and what it does not
 
-When in doubt, re-read the CHANGELOG. It is not a changelog so much as an archaeology of the theory being built.
+Adding a transform is easy and the shape is obvious: a method on `NoteTransformer`, slotted into `processFromSplit` on the prose side (or the code side, if it owns a fence), plus tests. Adding a settings field is easy: `PublisherSettings`, `DEFAULT_SETTINGS`, a validated branch in `parseSettings`, a control in `settings.ts`. Adding a warning kind means a variant in `PublishWarning` and a branch in `formatWarnings` — and note that `notices.ts` is pure and separately tested precisely so the notice tree can be reasoned about without a plugin instance.
+
+What would require rethinking something fundamental:
+
+**Publishing incrementally, or deleting.** Both need a model of what the site currently contains, and the system deliberately has none. Every operation reads the vault and writes forward. Adding "unpublish" is not a new gateway method; it is a new relationship between the plugin and the site's state, and it collides with the publish-set idea directly — link resolution would have to consult the site rather than the operation.
+
+**Publishing a subset with working links.** Follows from the same place. Today the answer is "publish everything together," which is why the batch path is the one that gets used.
+
+**Any second user.** Settings validation, error messages, and the whole notice tree assume the person reading them wrote the code. `README.md` says this outright.
+
+A maintainer who understands the theory looks first at the publish set when links misbehave, at `slugify` when URLs move, at `isDefinitelyNotPublishable` when notes go missing, and at `rethrowWithPrefix` when retries stop working. A maintainer who does not is most likely to cause damage by widening the metadata-cache predicate, by "simplifying" the two retry mechanisms into one, or by adjusting the slug rule without realizing it renames live files.
+
+## Uncertainties
+
+Everything below is inferred from code and history. Treat it as flagged, not settled.
+
+**`prepareBatch` has a narrow window where a failed note can still be committed.** The note's content is written into `entryMap` _before_ `resolveImages` runs. If `resolveImages` threw, the outer catch would record a failed result while the note's entry remained in the map and went out with the commit. In practice `resolveImages` catches per-image and is unlikely to throw at all, so this may be unreachable — but the ordering is a latent inconsistency, not a deliberate design, and I would move the `entryMap.set` after image resolution if I were touching that function anyway.
+
+**The prose/code reassembly is more fragile than it looks.** `processFromSplit` filters segments into a `prose` array, then walks all segments again with a `proseIndex++` counter to pair them back up. It is correct only because `filter` preserves order and the second pass visits segments in the same order. Nothing enforces that coupling, and a future refactor that reorders or memoizes either pass would misalign prose with its slot silently.
+
+**Seam discipline is inconsistent, and I read it as history rather than intent.** `GitHubApiGateway` takes an injectable `Sleep` so retry timing is testable, but `Publisher` constructs its own gateway with no injection point — so `publisher.test.ts` reaches in and overwrites a private field. Two different answers to the same testability question, in adjacent files. I believe the `Sleep` seam was added when retry arrived and the gateway seam simply never was, but I am inferring.
+
+**Image target collisions are only visible within one batch.** `targetPathOwners` is created per `prepareBatch` call, so two images that sanitize to the same target path are caught when published together and silently overwrite each other when published in separate operations. This is consistent with the "each operation is self-contained" idea, so it may be deliberate — but the warning's existence implies someone considered the overwrite worth reporting, and the cross-operation case is not.
+
+**Error-message handling has one documented inconsistency.** `errorMessage` flattens any non-`Error` throw to `"Unknown error"`, and `resolveImages` deliberately uses `String(error)` instead so a thrown non-Error keeps its value in the debug log. The comment says this is on purpose. I believe it, but it means there are two conventions in the codebase and only one of them is the default.
+
+**The Hugo contract may already have drifted.** The plugin assumes `autoIDType: "github"` and `removePathAccents: false`. Both are Hugo defaults and both were verified against the destination site's config at the time of writing, but nothing in this repository would notice if the site changed them. If anchors or accented URLs start failing, check the site's `hugo.yaml` before debugging the transformer.
