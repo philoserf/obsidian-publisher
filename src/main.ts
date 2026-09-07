@@ -29,13 +29,20 @@ export default class ObsidianPublisher extends Plugin {
   private progress?: Notice;
 
   private createPublisher(): Publisher {
-    return new Publisher(this.app.vault, this.settings, (done, total) => {
+    const onProgress = (done: number, total: number) => {
       const message = `Prepared: ${done}/${total}`;
       // Duration 0 keeps it up until we dismiss it; a per-file toast would
       // otherwise bury the summary, the PR URL and every warning.
       if (this.progress) this.progress.setMessage(message);
       else this.progress = new Notice(message, 0);
-    });
+    };
+
+    return new Publisher(
+      this.app.vault,
+      this.settings,
+      onProgress,
+      this.app.metadataCache,
+    );
   }
 
   /** Dismiss the progress notice. Called from a finally, not from the

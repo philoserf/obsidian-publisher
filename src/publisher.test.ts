@@ -1040,3 +1040,113 @@ describe("Publisher workflow arguments", () => {
     expect(prCall[4]).toEqual(["content", "auto"]);
   });
 });
+
+// #247. publishAll used to call vault.read() on every markdown file in the
+// vault to test one frontmatter field — 2,790 reads to find 167 publishable
+// notes in the author's vault. metadataCache answers the question without
+// I/O, but it reports MALFORMED frontmatter as simply absent, so only one
+// cache answer is safe to trust: parsed, and no publish flag.
+describe("Publisher candidate selection", () => {
+  const makeCache = (byName: Record<string, unknown>) => ({
+    getFileCache: mock((file: { name: string }) =>
+      file.name in byName ? byName[file.name] : null,
+    ),
+  });
+
+  test("skips reading files the cache rules out", async () => {
+    const vault = makeVault([
+      { name: "yes.md", content: publishedNote },
+      { name: "no1.md", content: unpublishedNote },
+      { name: "no2.md", content: unpublishedNote },
+      { name: "no3.md", content: unpublishedNote },
+    ]);
+    const cache = makeCache({
+      "yes.md": { frontmatter: { status: "publish" } },
+      "no1.md": { frontmatter: { title: "x" } },
+      "no2.md": { frontmatter: { title: "x" } },
+      "no3.md": { frontmatter: { title: "x" } },
+    });
+    const gh = makeGitHubApiGateway();
+    const publisher = new Publisher(
+      vault as never,
+      makeSettings(),
+      undefined,
+      cache as never,
+    );
+    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
+
+    const result = await publisher.publishAll();
+
+    expect(result.successful).toBe(1);
+    // One read, not four: the three ruled out never touched the disk.
+    expect(vault.read).toHaveBeenCalledTimes(1);
+  });
+
+  // The #129 guarantee. A malformed block hides publish intent, and the
+  // cache cannot tell malformed from absent — so anything without parsed
+  // frontmatter must still be read.
+  test("still reads files whose cache reports no frontmatter", async () => {
+    const malformed = "---\n: bad yaml :\n---\nbody";
+    const vault = makeVault([
+      { name: "broken.md", content: malformed },
+      { name: "plain.md", content: unpublishedNote },
+    ]);
+    const cache = makeCache({
+      "broken.md": {},
+      "plain.md": { frontmatter: { title: "x" } },
+    });
+    const gh = makeGitHubApiGateway();
+    const publisher = new Publisher(
+      vault as never,
+      makeSettings(),
+      undefined,
+      cache as never,
+    );
+    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
+
+    const result = await publisher.publishAll();
+
+    expect(vault.read).toHaveBeenCalledTimes(1);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].success).toBe(false);
+    expect(result.results[0].error).toContain("Malformed frontmatter");
+  });
+
+  // Obsidian populates metadataCache asynchronously. A publish fired before
+  // it settles must not silently skip notes — that is the failure mode this
+  // milestone exists to remove, not introduce.
+  test("reads every file when the cache is cold", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: unpublishedNote },
+    ]);
+    const cache = makeCache({});
+    const gh = makeGitHubApiGateway();
+    const publisher = new Publisher(
+      vault as never,
+      makeSettings(),
+      undefined,
+      cache as never,
+    );
+    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
+
+    const result = await publisher.publishAll();
+
+    expect(vault.read).toHaveBeenCalledTimes(2);
+    expect(result.successful).toBe(1);
+  });
+
+  test("reads every file when no cache is supplied at all", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: unpublishedNote },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(vault.read).toHaveBeenCalledTimes(2);
+    expect(result.successful).toBe(1);
+  });
+});
