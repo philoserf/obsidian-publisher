@@ -92,7 +92,7 @@ describe("GitHubApiGateway.validateConnection", () => {
 });
 
 describe("GitHubApiGateway.commitFiles", () => {
-  test("creates blobs, tree, commit, and updates ref", async () => {
+  test("builds tree, commit, and updates ref", async () => {
     const { service, octokit } = makeService();
 
     await service.commitFiles(
@@ -102,13 +102,15 @@ describe("GitHubApiGateway.commitFiles", () => {
     );
 
     expect(octokit.rest.git.getRef).toHaveBeenCalledTimes(1);
-    expect(octokit.rest.git.createBlob).toHaveBeenCalledTimes(1);
     expect(octokit.rest.git.createTree).toHaveBeenCalledTimes(1);
     expect(octokit.rest.git.createCommit).toHaveBeenCalledTimes(1);
     expect(octokit.rest.git.updateRef).toHaveBeenCalledTimes(1);
   });
 
-  test("creates one blob per file", async () => {
+  // #232: text is written by createTree itself, so a text-only batch
+  // costs a fixed 5 requests instead of N+5. This is what keeps a
+  // 167-note publish from tripping GitHub's secondary rate limits.
+  test("sends text inline and makes no blob calls", async () => {
     const { service, octokit } = makeService();
 
     await service.commitFiles(
@@ -121,7 +123,76 @@ describe("GitHubApiGateway.commitFiles", () => {
       "main",
     );
 
-    expect(octokit.rest.git.createBlob).toHaveBeenCalledTimes(3);
+    expect(octokit.rest.git.createBlob).not.toHaveBeenCalled();
+
+    const treeCall = octokit.rest.git.createTree.mock.calls[0] as unknown[];
+    const { tree } = treeCall[0] as {
+      tree: Array<{ path: string; content?: string; sha?: string }>;
+    };
+    expect(tree).toEqual([
+      { path: "a.md", mode: "100644", type: "blob", content: "one" },
+      { path: "b.md", mode: "100644", type: "blob", content: "two" },
+      { path: "c.md", mode: "100644", type: "blob", content: "three" },
+    ]);
+  });
+
+  // Binary has no encoding parameter on a tree entry, so images still
+  // need a base64 blob and are referenced by sha.
+  test("uploads binary as a blob and references it by sha", async () => {
+    const { service, octokit } = makeService();
+    const image = new Uint8Array([1, 2, 3]).buffer;
+
+    await service.commitFiles(
+      [
+        { path: "content/post.md", content: "text" },
+        { path: "static/images/photo.png", content: image },
+      ],
+      "mixed",
+      "main",
+    );
+
+    expect(octokit.rest.git.createBlob).toHaveBeenCalledTimes(1);
+    const blobCall = octokit.rest.git.createBlob.mock.calls[0] as unknown[];
+    expect((blobCall[0] as { encoding: string }).encoding).toBe("base64");
+
+    const treeCall = octokit.rest.git.createTree.mock.calls[0] as unknown[];
+    const { tree } = treeCall[0] as {
+      tree: Array<{ path: string; content?: string; sha?: string }>;
+    };
+    expect(tree[0].content).toBe("text");
+    expect(tree[0].sha).toBeUndefined();
+    expect(tree[1].sha).toBe("blob-sha");
+    expect(tree[1].content).toBeUndefined();
+  });
+
+  // Every call in commitFiles is idempotent, so a transient failure is
+  // repeated rather than failing the whole batch (#232).
+  test("retries a transient failure on createTree", async () => {
+    const { service, octokit } = makeService();
+    let calls = 0;
+    octokit.rest.git.createTree.mockImplementation(async () => {
+      calls++;
+      if (calls === 1) throw new RequestError("busy", 503, {} as never);
+      return { data: { sha: "new-tree-sha" } };
+    });
+
+    await service.commitFiles([{ path: "a.md", content: "x" }], "msg", "main");
+
+    expect(octokit.rest.git.createTree).toHaveBeenCalledTimes(2);
+    expect(octokit.rest.git.createCommit).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not retry a non-transient failure", async () => {
+    const { service, octokit } = makeService();
+    const requestError = new RequestError("bad request", 400, {} as never);
+    octokit.rest.git.createTree.mockImplementation(async () => {
+      throw requestError;
+    });
+
+    await expect(
+      service.commitFiles([{ path: "a.md", content: "x" }], "msg", "main"),
+    ).rejects.toBe(requestError);
+    expect(octokit.rest.git.createTree).toHaveBeenCalledTimes(1);
   });
 
   test("wraps generic Error with descriptive prefix", async () => {
