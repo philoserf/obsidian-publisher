@@ -10,6 +10,9 @@ import {
   type PublishWarning,
 } from "./types";
 
+/** A GitHub PR URL takes longer than the default ~5s to read on a phone. */
+const PR_NOTICE_DURATION_MS = 10_000;
+
 function notifyWarnings(warnings: PublishWarning[]): void {
   for (const message of formatWarnings(warnings)) {
     new Notice(message);
@@ -21,10 +24,26 @@ export default class ObsidianPublisher extends Plugin {
   private settingTab?: PublisherSettingTab;
   private publisher!: Publisher;
 
+  /** The batch progress notice, held so it can be updated in place rather
+   * than stacking one toast per file. Cleared by endProgress(). */
+  private progress?: Notice;
+
   private createPublisher(): Publisher {
     return new Publisher(this.app.vault, this.settings, (done, total) => {
-      new Notice(`Prepared: ${done}/${total}`);
+      const message = `Prepared: ${done}/${total}`;
+      // Duration 0 keeps it up until we dismiss it; a per-file toast would
+      // otherwise bury the summary, the PR URL and every warning.
+      if (this.progress) this.progress.setMessage(message);
+      else this.progress = new Notice(message, 0);
     });
+  }
+
+  /** Dismiss the progress notice. Called from a finally, not from the
+   * progress tick: if preparation throws part-way the tick never reaches
+   * done === total, and a duration-0 notice would stay up forever. */
+  private endProgress(): void {
+    this.progress?.hide();
+    this.progress = undefined;
   }
 
   async onload() {
@@ -93,7 +112,15 @@ export default class ObsidianPublisher extends Plugin {
       const result = await publisher.publishNote(file);
 
       if (result.success) {
-        new Notice(`✓ Pull request created for ${file.basename}`);
+        // The URL has to be in the notice: iOS has no console, and iOS is
+        // why this plugin uses the REST API instead of git. Longer duration
+        // because a GitHub URL takes a moment to read on a phone.
+        new Notice(
+          result.prUrl
+            ? `✓ Pull request created: ${result.prUrl}`
+            : `✓ Pull request created for ${file.basename}`,
+          PR_NOTICE_DURATION_MS,
+        );
         if (result.prUrl) console.log(`Pull Request: ${result.prUrl}`);
       } else {
         new Notice(`✗ Failed to publish: ${result.error}`);
@@ -120,13 +147,28 @@ export default class ObsidianPublisher extends Plugin {
 
     new Notice("Scanning vault for publishable notes...");
 
+    let result: BatchPublishResult;
     try {
-      const result: BatchPublishResult = await publisher.publishAll();
+      result = await publisher.publishAll();
+    } catch (error) {
+      const message = errorMessage(error);
+      new Notice(`✗ Error: ${message}`);
+      console.error("Batch publish error:", error);
+      return;
+    } finally {
+      // Runs whether publishAll resolved or threw, so a failure part-way
+      // through preparation cannot strand the duration-0 progress notice.
+      this.endProgress();
+    }
 
+    try {
       new Notice(formatBatchNotice(result));
 
       if (!result.error && result.successful > 0 && result.prUrl) {
-        new Notice(`✓ Pull request created: ${result.prUrl}`);
+        new Notice(
+          `✓ Pull request created: ${result.prUrl}`,
+          PR_NOTICE_DURATION_MS,
+        );
         console.log(`Pull Request: ${result.prUrl}`);
       }
 
