@@ -56,8 +56,8 @@ Every publish (single note or batch) creates a timestamped branch (`publish/2026
 
 - **Wikilinks:** `[[Page Name]]` to `[Page Name](page-name.md)` | `[[Page|Custom]]` to `[Custom](page-name.md)`
 - **Images:** `![[image.png]]` to `![image.png](/images/image.png)`
-- **Filename sanitization:** Lowercase, spaces to hyphens, remove special chars (keep alphanumeric/hyphens/underscores/dots), collapse consecutive hyphens, trim edges. Empty becomes `untitled`
-- **Frontmatter:** Removes `status` field (if configured), merges template fields, ensures `date` field exists
+- **Filename sanitization:** Lowercase (including the extension), spaces to hyphens, remove special chars — only alphanumerics, hyphens and underscores survive, so dots and non-ASCII letters are stripped (`Report Q3.2026` becomes `report-q32026`) — collapse consecutive hyphens, trim edges. Empty becomes `untitled`. Heading anchors use a different, Unicode-preserving rule (`slugifyHeading`)
+- **Frontmatter:** Removes configured `strippedFrontmatterFields`, merges template fields without overriding existing ones, and urlizes `aliases` into post URLs so Hugo emits real redirects. `title` and `date` are **required** — a note missing either fails to publish; neither is synthesized
 
 ### GitHub API Patterns
 

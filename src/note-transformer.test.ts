@@ -553,7 +553,9 @@ describe("Frontmatter processing", () => {
       wrap("title: Test\ndate: 2026-01-01\nstatus: publish", "body"),
       "test.md",
     );
-    expect(result.frontmatter.date).toBe("2026-01-01");
+    expect(splitFrontmatter(result.content).frontmatter.date).toBe(
+      "2026-01-01",
+    );
   });
 
   test("strips every field in strippedFrontmatterFields", () => {
@@ -573,10 +575,16 @@ cssclasses: [foo, bar]
 body`,
       "x.md",
     );
-    expect(result.frontmatter).not.toHaveProperty("status");
-    expect(result.frontmatter).not.toHaveProperty("lastmod");
-    expect(result.frontmatter).not.toHaveProperty("cssclasses");
-    expect(result.frontmatter.title).toBe("X");
+    expect(splitFrontmatter(result.content).frontmatter).not.toHaveProperty(
+      "status",
+    );
+    expect(splitFrontmatter(result.content).frontmatter).not.toHaveProperty(
+      "lastmod",
+    );
+    expect(splitFrontmatter(result.content).frontmatter).not.toHaveProperty(
+      "cssclasses",
+    );
+    expect(splitFrontmatter(result.content).frontmatter.title).toBe("X");
   });
 
   test("does not strip fields absent from strippedFrontmatterFields", () => {
@@ -594,7 +602,9 @@ lastmod: 2026-01-02
 body`,
       "x.md",
     );
-    expect(result.frontmatter.lastmod).toBe("2026-01-02");
+    expect(splitFrontmatter(result.content).frontmatter.lastmod).toBe(
+      "2026-01-02",
+    );
   });
 
   test("keeps status field when not in strippedFrontmatterFields", () => {
@@ -604,7 +614,7 @@ body`,
       wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
-    expect(result.frontmatter.status).toBe("publish");
+    expect(splitFrontmatter(result.content).frontmatter.status).toBe("publish");
   });
 
   test("merges template fields without overriding existing", () => {
@@ -616,8 +626,12 @@ body`,
       wrap("title: Existing\nauthor: Someone Else\nstatus: publish", "body"),
       "test.md",
     );
-    expect(result.frontmatter.author).toBe("Someone Else");
-    expect(result.frontmatter.tags).toEqual(["obsidian"]);
+    expect(splitFrontmatter(result.content).frontmatter.author).toBe(
+      "Someone Else",
+    );
+    expect(splitFrontmatter(result.content).frontmatter.tags).toEqual([
+      "obsidian",
+    ]);
   });
 
   test("adds template fields when not present", () => {
@@ -629,7 +643,7 @@ body`,
       wrap("title: Test\nstatus: publish", "body"),
       "test.md",
     );
-    expect(result.frontmatter.author).toBe("Mark");
+    expect(splitFrontmatter(result.content).frontmatter.author).toBe("Mark");
   });
 
   test("throws instead of silently dropping frontmatter when serialization fails", () => {
@@ -1046,8 +1060,10 @@ describe("Full process pipeline", () => {
       "![screenshot.png](/images/screenshot.png)",
     );
     expect(result.images).toEqual(["screenshot.png"]);
-    expect(result.frontmatter.title).toBe("My Post");
-    expect("status" in result.frontmatter).toBe(false);
+    expect(splitFrontmatter(result.content).frontmatter.title).toBe("My Post");
+    expect("status" in splitFrontmatter(result.content).frontmatter).toBe(
+      false,
+    );
   });
 });
 
