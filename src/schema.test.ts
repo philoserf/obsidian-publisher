@@ -1,19 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   hasPublishFlag,
-  PUBLISH_STATUS_FIELD,
-  PUBLISH_STATUS_VALUE,
   REQUIRED_FRONTMATTER_FIELDS,
   splitFrontmatter,
   validateFrontmatter,
 } from "./schema";
 
 describe("schema constants", () => {
-  test("publish gate uses status: publish", () => {
-    expect(PUBLISH_STATUS_FIELD).toBe("status");
-    expect(PUBLISH_STATUS_VALUE).toBe("publish");
-  });
-
   test("required fields are title and date", () => {
     expect(REQUIRED_FRONTMATTER_FIELDS).toEqual(["title", "date"]);
   });

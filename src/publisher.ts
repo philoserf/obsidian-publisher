@@ -246,6 +246,9 @@ export class Publisher {
         targetPathOwners.set(imgPath, imageName);
         entries.push({ path: imgPath, content: imageContent });
       } catch (error) {
+        // Deliberately not errorMessage(): this is a debug log, and
+        // String(error) keeps a non-Error throw's value instead of
+        // flattening it to "Unknown error".
         console.error(
           `Failed to read image ${imageName}: ${error instanceof Error ? error.message : String(error)}`,
         );

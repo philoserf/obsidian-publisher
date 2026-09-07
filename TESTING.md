@@ -22,7 +22,7 @@ This is not a replacement for tests — it's the path for catching integration-l
 
 - **Pure transforms.** `NoteTransformer` methods: wikilink conversion, image conversion, callout/mermaid shortcode emission, comment/highlight handling, filename and slug sanitization. Inputs are strings, outputs are strings — the test shape matches the code shape.
 - **Schema and validation.** `splitFrontmatter`, `hasPublishFlag`, `validateFrontmatter`. Every required-field and CRLF-line-ending fixture from past bugs is pinned.
-- **Settings persistence.** `parseSettings` against every corruption shape we've seen or can imagine: wrong type, missing key, empty/whitespace, legacy-key migration.
+- **Settings persistence.** `parseSettings` against every corruption shape we've seen or can imagine: wrong type, missing key, empty/whitespace, and that fallbacks copy rather than alias `DEFAULT_SETTINGS`.
 - **Publisher orchestration.** `publisher.test.ts` constructs a real `Publisher` with a mocked `GitHubApiGateway` and a fake vault; it asserts on the shape of `PublishResult` / `BatchPublishResult`, on branch-cleanup behavior, on the `total === 0` guard, on progress-callback invocation, and on every warning variant. This is the highest-value layer in the suite — it pins the orchestration invariants documented in `THEORY.md`.
 - **GitHub seam error narrowing.** `github-service.test.ts` pins that `RequestError` passes through untouched and generic `Error` gets a descriptive prefix. The 422/404 status-code checks in `createBranchWithRetry` depend on this discipline.
 - **User-visible notice classification.** `main.test.ts` tests `batchNoticeText` as a pure function — which branch of the notice tree a given `BatchPublishResult` falls into.
