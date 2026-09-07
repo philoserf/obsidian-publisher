@@ -132,10 +132,9 @@ describe("publish-current-note command", () => {
     publish.mockRestore();
   });
 
-  // Pins the #248 defect: the PR URL goes only to console.log, which is
-  // unreachable on iOS — the platform the REST-API architecture exists for.
-  // This assertion flips when #248 lands.
-  test("does NOT put the PR URL in the notice (#248)", async () => {
+  // #248: the PR URL used to go only to console.log, unreachable on iOS —
+  // the platform the REST-API architecture exists for.
+  test("puts the PR URL in the notice, with a readable duration (#248)", async () => {
     const plugin = makePlugin();
     await plugin.onload();
     const validate = spyOn(
@@ -148,7 +147,29 @@ describe("publish-current-note command", () => {
 
     await runCurrent(plugin, { basename: "note", path: "note.md" });
 
-    expect(shown().join("\n")).not.toContain("https://github.com/test/pr/1");
+    const notice = NoticeMock.shown.find((n) => n.message.includes("http"));
+    expect(notice?.message).toBe(
+      "✓ Pull request created: https://github.com/test/pr/1",
+    );
+    expect(notice?.duration).toBe(10_000);
+    validate.mockRestore();
+    publish.mockRestore();
+  });
+
+  test("falls back to the basename when there is no PR URL", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const publish = spyOn(Publisher.prototype, "publishNote").mockResolvedValue(
+      okResult(),
+    );
+
+    await runCurrent(plugin, { basename: "note", path: "note.md" });
+
+    expect(shown()).toContain("✓ Pull request created for note");
     validate.mockRestore();
     publish.mockRestore();
   });
@@ -321,33 +342,89 @@ describe("settings lifecycle", () => {
   });
 });
 
-// Pins the #246 defect: onProgress builds a fresh Notice per file, so a
-// 167-note batch stacks 167 toasts that bury the summary and the PR URL.
-// This assertion flips when #246 lands.
+// #246: onProgress used to build a fresh Notice per file, so a 167-note
+// batch stacked 167 toasts that outlived the operation and buried the
+// summary, the PR URL and every warning.
 describe("batch progress notices (#246)", () => {
-  test("creates one notice per file", async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    const publisher = plugin as unknown as {
-      publisher: Publisher;
-    } as unknown as {
-      publisher: Publisher & { onProgress?: (d: number, t: number) => void };
-    };
-    const onProgress = (
-      publisher.publisher as unknown as {
+  const progressOf = (plugin: ObsidianPublisher) =>
+    (
+      (plugin as unknown as { publisher: Publisher }).publisher as unknown as {
         onProgress?: (done: number, total: number) => void;
       }
     ).onProgress;
+
+  test("shows one notice and updates it in place", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const onProgress = progressOf(plugin);
 
     NoticeMock.shown.length = 0;
     onProgress?.(1, 3);
     onProgress?.(2, 3);
     onProgress?.(3, 3);
 
-    expect(shown()).toEqual([
-      "Prepared: 1/3",
-      "Prepared: 2/3",
-      "Prepared: 3/3",
-    ]);
+    expect(NoticeMock.shown).toHaveLength(1);
+    const notice = (plugin as unknown as { progress?: { message: string } })
+      .progress;
+    expect(notice?.message).toBe("Prepared: 3/3");
+  });
+
+  test("the progress notice is sticky until dismissed", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+
+    NoticeMock.shown.length = 0;
+    progressOf(plugin)?.(1, 2);
+
+    expect(NoticeMock.shown[0].duration).toBe(0);
+  });
+
+  // The teardown must not hang off `done === total`: if preparation throws
+  // part-way, that tick never arrives and a duration-0 notice would stay up
+  // forever. It runs in a finally instead.
+  test("dismisses the progress notice even when the batch throws", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const publish = spyOn(Publisher.prototype, "publishAll").mockImplementation(
+      async () => {
+        progressOf(plugin)?.(1, 5);
+        throw new Error("failed part-way");
+      },
+    );
+
+    await runAll(plugin);
+
+    const held = (plugin as unknown as { progress?: unknown }).progress;
+    expect(held).toBeUndefined();
+    expect(shown()).toContain("✗ Error: failed part-way");
+    validate.mockRestore();
+    publish.mockRestore();
+  });
+
+  test("dismisses the progress notice after a successful batch", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const publish = spyOn(Publisher.prototype, "publishAll").mockImplementation(
+      async () => {
+        progressOf(plugin)?.(1, 1);
+        return okBatch();
+      },
+    );
+
+    await runAll(plugin);
+
+    expect(
+      (plugin as unknown as { progress?: unknown }).progress,
+    ).toBeUndefined();
+    validate.mockRestore();
+    publish.mockRestore();
   });
 });
