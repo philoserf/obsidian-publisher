@@ -5,7 +5,10 @@ export const REQUIRED_FRONTMATTER_FIELDS = ["title", "date"] as const;
 
 export type Frontmatter = Record<string, unknown>;
 
-const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
+// The trailing newline after the closing --- is optional so that a note
+// which is nothing but frontmatter still parses; without this its block
+// is invisible and the note is silently skipped by publishAll.
+const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n([\s\S]*))?$/;
 
 export function splitFrontmatter(content: string): {
   frontmatter: Frontmatter;
@@ -21,12 +24,12 @@ export function splitFrontmatter(content: string): {
       typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
         ? (parsed as Frontmatter)
         : {};
-    return { frontmatter, body: match[2] };
+    return { frontmatter, body: match[2] ?? "" };
   } catch (error) {
     const message = errorMessage(error);
     return {
       frontmatter: {},
-      body: match[2],
+      body: match[2] ?? "",
       error: `Malformed frontmatter YAML: ${message}`,
     };
   }

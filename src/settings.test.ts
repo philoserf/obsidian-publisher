@@ -138,6 +138,28 @@ describe("parseFrontmatter", () => {
   });
 });
 
+// #235: these inputs are VALID yaml but not objects, so they parse without
+// throwing and were silently discarded. parseFrontmatter still returns {} —
+// recovery is impossible, there are no key:value pairs to recover — but the
+// settings control now notices the empty result and tells the user.
+describe("parseFrontmatter rejects non-object YAML", () => {
+  test("a bare line without a colon yields no fields", () => {
+    expect(parseFrontmatter("My Custom Value")).toEqual({});
+  });
+
+  test("a YAML list yields no fields", () => {
+    expect(parseFrontmatter("- a\n- b")).toEqual({});
+  });
+
+  test("multi-line prose yields no fields", () => {
+    expect(parseFrontmatter("just text\nmore text")).toEqual({});
+  });
+
+  test("valid key: value still parses", () => {
+    expect(parseFrontmatter("author: Mark")).toEqual({ author: "Mark" });
+  });
+});
+
 describe("parseStrippedFieldsInput", () => {
   test("parses simple comma-separated list", () => {
     expect(parseStrippedFieldsInput("status,lastmod,cssclass")).toEqual([

@@ -60,6 +60,42 @@ describe("splitFrontmatter", () => {
   });
 });
 
+// #245: a note that is nothing but frontmatter, with no trailing newline,
+// used not to match at all — its block was invisible, so publishAll
+// skipped it silently and publishNote claimed it lacked status: publish.
+describe("splitFrontmatter with no trailing newline", () => {
+  test("parses frontmatter when the file ends at the closing ---", () => {
+    const result = splitFrontmatter("---\ntitle: X\nstatus: publish\n---");
+    expect(result.frontmatter.title).toBe("X");
+    expect(result.frontmatter.status).toBe("publish");
+    expect(result.body).toBe("");
+    expect(result.error).toBeUndefined();
+  });
+
+  test("parses a CRLF frontmatter-only note", () => {
+    const result = splitFrontmatter("---\r\ntitle: X\r\n---");
+    expect(result.frontmatter.title).toBe("X");
+    expect(result.body).toBe("");
+  });
+
+  test("still parses the normal trailing-newline form", () => {
+    const result = splitFrontmatter("---\ntitle: X\n---\n");
+    expect(result.frontmatter.title).toBe("X");
+    expect(result.body).toBe("");
+  });
+
+  test("does not swallow a --- that appears later in the body", () => {
+    const result = splitFrontmatter("---\ntitle: X\n---\nintro\n\n---\n\nmore");
+    expect(result.frontmatter.title).toBe("X");
+    expect(result.body).toBe("intro\n\n---\n\nmore");
+  });
+
+  test("still ignores a --- block that does not start the file", () => {
+    const result = splitFrontmatter("text\n---\ntitle: X\n---\n");
+    expect(result.frontmatter).toEqual({});
+  });
+});
+
 describe("hasPublishFlag", () => {
   test("true when status equals publish", () => {
     expect(hasPublishFlag({ status: "publish" })).toBe(true);

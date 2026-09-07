@@ -275,11 +275,26 @@ export class PublisherSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl).addTextArea((text) => {
+      // Non-empty input that yields no fields is silently discarded
+      // otherwise: a line without a colon is valid YAML (a plain string),
+      // so it never throws, it just isn't an object. Track the last state
+      // so the Notice fires when the input first goes bad, not on every
+      // keystroke after.
+      let lastRejected = false;
       text
         .setPlaceholder("author: Your Name\ntags: [obsidian]")
         .setValue(serializeFrontmatter(settings.frontmatterTemplate))
         .onChange((value) => {
-          settings.frontmatterTemplate = parseFrontmatter(value);
+          const parsed = parseFrontmatter(value);
+          const rejected =
+            value.trim().length > 0 && Object.keys(parsed).length === 0;
+          settings.frontmatterTemplate = parsed;
+          if (rejected && !lastRejected) {
+            new Notice(
+              "Additional frontmatter must be 'key: value' lines; input ignored.",
+            );
+          }
+          lastRejected = rejected;
           save();
         });
       text.inputEl.rows = 6;
