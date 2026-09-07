@@ -952,3 +952,93 @@ I am [[Source]] and I link to [[Other]].`;
     expect(sourceEntry?.content).toContain("I link to Other.");
   });
 });
+
+// Characterization tests. Nothing else in this suite asserts on the
+// arguments reaching the GitHub seam — only on call counts — yet the
+// branch prefix, commit message and PR title/body are user-visible in
+// the Hugo repo's history. These pin them so orchestration refactors
+// (#256) are provably behavior-preserving rather than merely green.
+describe("Publisher workflow arguments", () => {
+  const BRANCH = "publish/2026-01-01-000000";
+
+  test("single note: branch prefix, commit message, and PR shape", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    await publisher.publishNote(makeTFile("test.md") as never);
+
+    const branchCall = gh.createBranchWithRetry.mock.calls[0] as unknown[];
+    expect(branchCall[0]).toBe("publish");
+    expect(branchCall[1]).toBe("main");
+
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    expect(commitCall[1]).toBe("Publish: test");
+    expect(commitCall[2]).toBe(BRANCH);
+
+    const prCall = gh.createPullRequest.mock.calls[0] as unknown[];
+    expect(prCall[0]).toBe(BRANCH);
+    expect(prCall[1]).toBe("main");
+    expect(prCall[2]).toBe("Publish: test");
+    expect(prCall[3]).toBe("Published from Obsidian\n\n**File:** test.md");
+    expect(prCall[4]).toEqual(["chore"]);
+  });
+
+  test("batch: branch prefix, commit message, and PR shape", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: publishedNote },
+      { name: "b.md", content: publishedNote },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    await publisher.publishAll();
+
+    const branchCall = gh.createBranchWithRetry.mock.calls[0] as unknown[];
+    expect(branchCall[0]).toBe("publish-batch");
+    expect(branchCall[1]).toBe("main");
+
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    expect(commitCall[1]).toBe("Publish 2 notes from Obsidian");
+    expect(commitCall[2]).toBe(BRANCH);
+
+    const prCall = gh.createPullRequest.mock.calls[0] as unknown[];
+    expect(prCall[0]).toBe(BRANCH);
+    expect(prCall[1]).toBe("main");
+    expect(prCall[2]).toBe("Batch Publish: 2 notes");
+    expect(prCall[3]).toBe("Published 2 notes from Obsidian\n\n- a.md\n- b.md");
+    expect(prCall[4]).toEqual(["chore"]);
+  });
+
+  // Pins the `n !== 1` branch. Without a single-file case the ternary
+  // could be broken to always-"s" with the suite still green.
+  test("batch of one uses the singular commit message", async () => {
+    const vault = makeVault([{ name: "only.md", content: publishedNote }]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    await publisher.publishAll();
+
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    expect(commitCall[1]).toBe("Publish 1 note from Obsidian");
+  });
+
+  test("configured baseBranch and prLabels reach the gateway", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(
+      vault,
+      makeSettings({ baseBranch: "trunk", prLabels: ["content", "auto"] }),
+      gh,
+    );
+
+    await publisher.publishNote(makeTFile("test.md") as never);
+
+    const branchCall = gh.createBranchWithRetry.mock.calls[0] as unknown[];
+    expect(branchCall[1]).toBe("trunk");
+
+    const prCall = gh.createPullRequest.mock.calls[0] as unknown[];
+    expect(prCall[1]).toBe("trunk");
+    expect(prCall[4]).toEqual(["content", "auto"]);
+  });
+});
