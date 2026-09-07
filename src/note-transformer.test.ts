@@ -754,6 +754,78 @@ describe("Filename sanitization", () => {
   });
 });
 
+describe("slug rule preserves Unicode", () => {
+  const cp = makeProcessor();
+
+  // The measured production case: this title published at /posts/rnin-…/
+  // with the macron dropped.
+  test("keeps a macron in a page slug", () => {
+    expect(
+      cp.sanitizeSlug(
+        "Rōnin, hedge knights, and landless European knights compared",
+      ),
+    ).toBe("rōnin-hedge-knights-and-landless-european-knights-compared");
+  });
+
+  test("keeps non-Latin scripts", () => {
+    expect(cp.sanitizeSlug("日本語のタイトル")).toBe("日本語のタイトル");
+    expect(cp.sanitizeSlug("Émile, résumé & co.")).toBe("émile-résumé-co");
+  });
+
+  // NFC first, so a decomposed diacritic keeps its combining mark instead
+  // of having it stripped as punctuation and flattening to bare "o".
+  test("normalizes decomposed diacritics rather than stripping them", () => {
+    expect(cp.sanitizeSlug("Rōnin".normalize("NFD"))).toBe("rōnin");
+    expect(cp.sanitizeSlug("Rōnin".normalize("NFD"))).toBe(
+      cp.sanitizeSlug("Rōnin".normalize("NFC")),
+    );
+  });
+
+  // Not every non-ASCII character is a letter: an en dash is punctuation
+  // under both the old rule and the new one, so titles using it are
+  // untouched by this change.
+  test("still strips non-letter punctuation", () => {
+    expect(cp.sanitizeSlug("The long tail – and its discontents")).toBe(
+      "the-long-tail-and-its-discontents",
+    );
+  });
+
+  // sanitizeSlug and sanitizeFilename are both wrappers over the same
+  // rule, and must stay that way: Publisher.buildPublishSet slugifies
+  // while detectFilenameCollisions sanitizes filenames, so if the two
+  // ever diverge a link resolves against a name that was never committed.
+  test("filename and slug agree on the same input", () => {
+    for (const title of [
+      "Rōnin, hedge knights",
+      "Café",
+      "日本語のタイトル",
+      "Émile, résumé & co.",
+      "@#$%",
+    ]) {
+      expect(cp.sanitizeFilename(`${title}.md`)).toBe(
+        `${cp.sanitizeSlug(title)}.md`,
+      );
+    }
+  });
+
+  test("still falls back to untitled when nothing survives", () => {
+    expect(cp.sanitizeSlug("!!!")).toBe("untitled");
+    expect(cp.sanitizeFilename("!!!.md")).toBe("untitled.md");
+  });
+
+  // The bug the unification fixes: the slug dropped the accent the anchor
+  // kept, so the two halves of one link pointed at different places.
+  test("slug and heading anchor agree for [[Café#Café]]", () => {
+    const result = process(
+      cp,
+      wrap("title: X\ndate: 2026-01-01", "See [[Café#Café]]."),
+      "x.md",
+      new Set(["café"]),
+    );
+    expect(result.content).toContain("[Café#Café](/posts/café/#café)");
+  });
+});
+
 describe("Comment stripping", () => {
   const cp = makeProcessor();
 

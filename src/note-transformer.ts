@@ -103,6 +103,33 @@ function splitInlineCode(text: string): Segment[] {
   return segments;
 }
 
+/**
+ * The one slug rule, shared by page slugs, filenames and heading anchors:
+ * NFC-normalize, lowercase, strip everything that is not a Unicode letter,
+ * digit, underscore, space or hyphen, then spaces to hyphens with runs
+ * collapsed and edges trimmed.
+ *
+ * It matches Hugo's default goldmark anchor ID generation
+ * (autoIDType: "github"). Page slugs used to run an ASCII-only variant
+ * instead, so the two halves of a single link disagreed — `[[Café#Café]]`
+ * pointed at /posts/caf/#café — and a title like "Rōnin…" published at a
+ * visibly broken /posts/rnin-…/.
+ *
+ * NFC first so decomposed diacritics (`é` as `e + U+0301`) survive the
+ * punctuation strip rather than losing the combining mark and silently
+ * flattening to `e`.
+ */
+function slugify(value: string): string {
+  return value
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_\s-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export class NoteTransformer {
   private settings: PublisherSettings;
 
@@ -441,19 +468,12 @@ export class NoteTransformer {
   }
 
   /**
-   * Core sanitization: lowercase, spaces→hyphens, strip special chars,
-   * collapse hyphens, trim edges, fallback to "untitled".
+   * Core sanitization: the shared slug rule, plus the "untitled" fallback
+   * a name needs and an anchor does not — an empty anchor is simply no
+   * anchor, but an empty filename is not a file.
    */
   private sanitizeName(value: string): string {
-    return (
-      value
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9\-_]/g, "")
-        .replace(/-+/g, "-")
-        .replace(/^-+|-+$/g, "") || "untitled"
-    );
+    return slugify(value) || "untitled";
   }
 
   /**
@@ -465,21 +485,12 @@ export class NoteTransformer {
   }
 
   /**
-   * Slugify a heading to match Hugo's default goldmark anchor ID generation
-   * (autoIDType: "github"): NFC-normalize, lowercase, strip punctuation but
-   * preserve Unicode letters and digits, spaces -> hyphens, collapse and trim
-   * hyphens. NFC normalization first so decomposed diacritics (e.g. `é` as
-   * `e + U+0301`) survive the punctuation strip.
+   * Slugify a heading into the anchor Hugo will have generated for it.
+   * Same rule as a page slug — see slugify — but with no "untitled"
+   * fallback, because an anchor that slugifies to nothing is no anchor.
    */
   private slugifyHeading(heading: string): string {
-    return heading
-      .normalize("NFC")
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}_\s-]/gu, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    return slugify(heading);
   }
 
   /**
