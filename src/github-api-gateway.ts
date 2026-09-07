@@ -59,22 +59,35 @@ const COMMIT_MAX_ATTEMPTS = 3;
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-/** fetch with an abort timeout; rewraps the opaque DOMException so
- * errorMessage() surfaces "timed out" instead of "signal is aborted". */
-async function fetchWithTimeout(
+/**
+ * fetch with an abort timeout, composed with whatever signal the caller
+ * passed rather than replacing it — Octokit forwards a per-request
+ * `request.signal`, and overwriting it would silently make a caller's
+ * cancellation impossible.
+ *
+ * Rewraps the opaque DOMException so errorMessage() surfaces "timed out"
+ * instead of "signal is aborted", but only when the timeout is what
+ * fired: a caller-initiated abort must not be reported as a timeout.
+ *
+ * Exported for testing; Octokit is mocked wholesale in the suite, so
+ * this is unreachable through the gateway.
+ */
+export async function fetchWithTimeout(
   url: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, timeout])
+    : timeout;
+
   try {
-    return await fetch(url, {
-      ...init,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    return await fetch(url, { ...init, signal });
   } catch (error) {
-    if (
+    const aborted =
       error instanceof DOMException &&
-      (error.name === "TimeoutError" || error.name === "AbortError")
-    ) {
+      (error.name === "TimeoutError" || error.name === "AbortError");
+    if (aborted && timeout.aborted) {
       throw new Error(
         `GitHub API request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`,
       );

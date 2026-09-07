@@ -1,6 +1,6 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { RequestError } from "@octokit/request-error";
-import { GitHubApiGateway } from "./github-api-gateway";
+import { fetchWithTimeout, GitHubApiGateway } from "./github-api-gateway";
 import type { PublisherSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
@@ -458,5 +458,87 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
     await expect(
       service.createBranchWithRetry("publish", "main", 1),
     ).rejects.toThrow("Failed to get SHA for branch main: socket hang up");
+  });
+});
+
+// First coverage of this function. It is unreachable through the
+// gateway under test — Octokit is mocked as an empty class, so the
+// `request: { fetch }` wiring never happens — hence the export.
+describe("fetchWithTimeout", () => {
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  test("passes a signal even when the caller supplies none", async () => {
+    let seen: RequestInit | undefined;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      seen = init;
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+
+    await fetchWithTimeout("https://example.test");
+
+    expect(seen?.signal).toBeInstanceOf(AbortSignal);
+    expect(seen?.signal?.aborted).toBe(false);
+  });
+
+  // #252: the caller's signal used to be spread in and then overwritten,
+  // so a caller-initiated abort could never take effect.
+  test("honors a caller-supplied signal", async () => {
+    const controller = new AbortController();
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      controller.abort();
+      init.signal?.throwIfAborted();
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchWithTimeout("https://example.test", { signal: controller.signal }),
+    ).rejects.toThrow();
+  });
+
+  // A caller abort must not be mislabelled as a timeout.
+  test("reports a caller abort as itself, not as a timeout", async () => {
+    const controller = new AbortController();
+    globalThis.fetch = (async () => {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    }) as unknown as typeof fetch;
+
+    const error = await fetchWithTimeout("https://example.test", {
+      signal: controller.signal,
+    }).catch((e: Error) => e);
+
+    expect(error.message).not.toContain("timed out");
+  });
+
+  test("preserves other init options", async () => {
+    let seen: RequestInit | undefined;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      seen = init;
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+
+    await fetchWithTimeout("https://example.test", {
+      method: "POST",
+      headers: { "x-test": "1" },
+    });
+
+    expect(seen).toBeDefined();
+    expect(seen?.method).toBe("POST");
+    expect(
+      (seen?.headers as Record<string, string> | undefined)?.["x-test"],
+    ).toBe("1");
+  });
+
+  test("rethrows a non-abort error untouched", async () => {
+    const boom = new TypeError("network down");
+    globalThis.fetch = (async () => {
+      throw boom;
+    }) as unknown as typeof fetch;
+
+    await expect(fetchWithTimeout("https://example.test")).rejects.toBe(boom);
   });
 });
