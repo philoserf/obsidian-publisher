@@ -193,20 +193,6 @@ describe("parseSettings", () => {
   });
 });
 
-describe("strippedFrontmatterFields migration", () => {
-  test("migrates removePublishFlag=true to default list", () => {
-    const result = parseSettings({ removePublishFlag: true });
-    expect(result.strippedFrontmatterFields).toContain("status");
-    expect(result.strippedFrontmatterFields).toContain("lastmod");
-  });
-
-  test("migrates removePublishFlag=false to default list minus status", () => {
-    const result = parseSettings({ removePublishFlag: false });
-    expect(result.strippedFrontmatterFields).not.toContain("status");
-    expect(result.strippedFrontmatterFields).toContain("lastmod");
-  });
-});
-
 describe("strippedFrontmatterFields guards required fields", () => {
   test("filters title and date from persisted list", () => {
     const result = parseSettings({
@@ -221,13 +207,27 @@ describe("strippedFrontmatterFields guards required fields", () => {
     });
     expect(result.strippedFrontmatterFields).toEqual(["status", "cssclasses"]);
   });
+});
 
-  test("filters required fields from legacy removePublishFlag migration", () => {
-    // Hypothetical: if a future default-list change included a required
-    // field, the migration path must still filter it. Regression guard for
-    // the branch that builds from defaults rather than the persisted array.
-    const result = parseSettings({ removePublishFlag: false });
-    expect(result.strippedFrontmatterFields).not.toContain("date");
-    expect(result.strippedFrontmatterFields).not.toContain("title");
+describe("parseSettings does not alias DEFAULT_SETTINGS", () => {
+  // DEFAULT_SETTINGS is a shared module-level const and saveSettings
+  // persists whatever the settings object holds, so handing out the
+  // defaults by reference would let one in-place mutation corrupt every
+  // later load. toEqual can't catch this; identity has to be asserted.
+  test("fallback values are copies, not the shared defaults", () => {
+    const result = parseSettings({});
+
+    expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
+    expect(result.prLabels).not.toBe(DEFAULT_SETTINGS.prLabels);
+    expect(result.frontmatterTemplate).not.toBe(
+      DEFAULT_SETTINGS.frontmatterTemplate,
+    );
+    expect(result.strippedFrontmatterFields).not.toBe(
+      DEFAULT_SETTINGS.strippedFrontmatterFields,
+    );
+  });
+
+  test("two loads do not share array instances", () => {
+    expect(parseSettings({}).prLabels).not.toBe(parseSettings({}).prLabels);
   });
 });

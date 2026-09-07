@@ -10,19 +10,16 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
- * Resolve strippedFrontmatterFields from persisted data. Accepts the
- * current field; falls back to the legacy removePublishFlag boolean for
- * migration; otherwise returns the default list.
+ * Resolve strippedFrontmatterFields from persisted data, falling back to
+ * the default list. filterRequiredFields returns a fresh array, so the
+ * defaults are never handed out by reference.
  */
 function resolveStrippedFields(d: Record<string, unknown>): string[] {
-  if (isStringArray(d.strippedFrontmatterFields)) {
-    return filterRequiredFields(d.strippedFrontmatterFields);
-  }
-  const defaults = [...DEFAULT_SETTINGS.strippedFrontmatterFields];
-  if (d.removePublishFlag === false) {
-    return filterRequiredFields(defaults.filter((f) => f !== "status"));
-  }
-  return filterRequiredFields(defaults);
+  return filterRequiredFields(
+    isStringArray(d.strippedFrontmatterFields)
+      ? d.strippedFrontmatterFields
+      : DEFAULT_SETTINGS.strippedFrontmatterFields,
+  );
 }
 
 function filterRequiredFields(fields: string[]): string[] {
@@ -36,9 +33,9 @@ function filterRequiredFields(fields: string[]): string[] {
  * to DEFAULT_SETTINGS.prLabels, symmetric with baseBranch handling.
  */
 function resolvePrLabels(value: unknown): string[] {
-  if (!isStringArray(value)) return DEFAULT_SETTINGS.prLabels;
+  if (!isStringArray(value)) return [...DEFAULT_SETTINGS.prLabels];
   const trimmed = value.map((l) => l.trim()).filter((l) => l.length > 0);
-  return trimmed.length > 0 ? trimmed : DEFAULT_SETTINGS.prLabels;
+  return trimmed.length > 0 ? trimmed : [...DEFAULT_SETTINGS.prLabels];
 }
 
 /**
@@ -67,7 +64,7 @@ export function parseSettings(data: unknown): PublisherSettings {
       typeof d.imageDir === "string" ? d.imageDir : DEFAULT_SETTINGS.imageDir,
     frontmatterTemplate: isPlainObject(d.frontmatterTemplate)
       ? d.frontmatterTemplate
-      : DEFAULT_SETTINGS.frontmatterTemplate,
+      : { ...DEFAULT_SETTINGS.frontmatterTemplate },
     strippedFrontmatterFields: resolveStrippedFields(d),
     baseBranch:
       typeof d.baseBranch === "string" && d.baseBranch.trim() !== ""

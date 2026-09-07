@@ -1,7 +1,6 @@
 import { parseYaml } from "obsidian";
+import { errorMessage } from "./types";
 
-export const PUBLISH_STATUS_FIELD = "status" as const;
-export const PUBLISH_STATUS_VALUE = "publish" as const;
 export const REQUIRED_FRONTMATTER_FIELDS = ["title", "date"] as const;
 
 export type Frontmatter = Record<string, unknown>;
@@ -24,7 +23,7 @@ export function splitFrontmatter(content: string): {
         : {};
     return { frontmatter, body: match[2] };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const message = errorMessage(error);
     return {
       frontmatter: {},
       body: match[2],
@@ -34,7 +33,7 @@ export function splitFrontmatter(content: string): {
 }
 
 export function hasPublishFlag(frontmatter: Frontmatter): boolean {
-  return frontmatter[PUBLISH_STATUS_FIELD] === PUBLISH_STATUS_VALUE;
+  return frontmatter.status === "publish";
 }
 
 type RequiredField = (typeof REQUIRED_FRONTMATTER_FIELDS)[number];
