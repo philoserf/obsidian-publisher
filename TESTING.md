@@ -24,8 +24,8 @@ This is not a replacement for tests — it's the path for catching integration-l
 - **Schema and validation.** `splitFrontmatter`, `hasPublishFlag`, `validateFrontmatter`. Every required-field and CRLF-line-ending fixture from past bugs is pinned.
 - **Settings persistence.** `parseSettings` against every corruption shape we've seen or can imagine: wrong type, missing key, empty/whitespace, and that fallbacks copy rather than alias `DEFAULT_SETTINGS`.
 - **Publisher orchestration.** `publisher.test.ts` constructs a real `Publisher` with a mocked `GitHubApiGateway` and a fake vault; it asserts on the shape of `PublishResult` / `BatchPublishResult`, on branch-cleanup behavior, on the `total === 0` guard, on progress-callback invocation, and on every warning variant. This is the highest-value layer in the suite — it pins the orchestration invariants documented in `THEORY.md`.
-- **GitHub seam error narrowing.** `github-service.test.ts` pins that `RequestError` passes through untouched and generic `Error` gets a descriptive prefix. The 422/404 status-code checks in `createBranchWithRetry` depend on this discipline.
-- **User-visible notice classification.** `main.test.ts` tests `batchNoticeText` as a pure function — which branch of the notice tree a given `BatchPublishResult` falls into.
+- **GitHub seam error narrowing.** `github-api-gateway.test.ts` pins that `RequestError` passes through untouched, carrying its status, and that generic `Error` gets a descriptive prefix. The retry predicate in `createBranchWithRetry` depends on that discipline — when `getBranchSha` re-wrapped `RequestError` into a plain `Error` it destroyed the status and disabled retry entirely (#242).
+- **User-visible notice classification.** `notices.test.ts` tests `formatBatchNotice` and `formatWarnings` as pure functions — which branch of the notice tree a given `BatchPublishResult` falls into. `main.test.ts` drives the plugin through `onload()` and the registered command callbacks, asserting which notices a publish actually shows.
 
 ## What we don't test, and why
 
