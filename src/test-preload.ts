@@ -19,6 +19,8 @@ mock.module("obsidian", () => ({
     return fn;
   },
 
+  // Needed once main.test.ts exists (#237): main.ts evaluates
+  // `class ObsidianPublisher extends Plugin` at module load.
   Plugin: class Plugin {},
 
   PluginSettingTab: class PluginSettingTab {},
@@ -31,9 +33,6 @@ mock.module("obsidian", () => ({
       return this;
     }
     addText() {
-      return this;
-    }
-    addToggle() {
       return this;
     }
     addTextArea() {
