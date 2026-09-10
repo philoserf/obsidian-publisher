@@ -8,6 +8,8 @@ Obsidian Publisher is a plugin that publishes Obsidian notes to GitHub for Hugo 
 
 The current next step for this repo is tracked in the workspace backlog at `../NEXT.md` (the `obsidian-publisher` row). Read it when starting work; update it when that step ships.
 
+`THEORY.md` carries the design rationale behind the invariants this file summarizes — read it before changing the publish set, the slug rule, or the error-narrowing seam. `README.md` holds the full Obsidian-to-Hugo transformation table.
+
 ## Development Commands
 
 ```bash
@@ -15,6 +17,8 @@ bun install          # Install dependencies
 bun run dev          # Watch mode build with source maps
 bun run build        # Production build (runs check first)
 bun test             # Run all tests
+bun test src/note-transformer.test.ts   # Run a single test file
+bun test -t "wikilink"                  # Run tests whose name matches a substring
 bun run typecheck    # Type checking only (tsc --noEmit)
 bun run lint         # Biome check (lint + format verify)
 bun run lint:fix     # Biome check --write
@@ -23,6 +27,8 @@ bun run check        # typecheck + biome check (run before committing)
 bun run audit        # bun audit (critical vulnerabilities)
 bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
 ```
+
+`deploy` needs `OBSIDIAN_DEPLOY_DEST` set to the vault's plugin directory; it lives in the gitignored `.env.local` and the script exits 1 without it.
 
 ## Architecture
 
@@ -76,13 +82,17 @@ Wrap any new idempotent call in `this.withRetry(...)`. Its predicate `isTransien
 
 Tests use Bun's built-in runner (`bun:test`) with `describe`/`test`/`expect` API. Test files live alongside source in `src/` with `.test.ts` suffix. Mocks are consolidated in `src/test-preload.ts`, loaded via `bunfig.toml`.
 
+Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a no-op `sleep` so retry counts are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale. Reach for the level that matches what you are pinning.
+
+`TESTING.md` is the test-policy doc — consult it when deciding where a new test belongs. Its rule: add the test at the layer that would have caught the bug, not the layer it surfaced at.
+
 ### Build
 
 Single-file bundle via Bun: entry `src/main.ts` to output `main.js`. Externals: `obsidian`, `electron`. Bundled: `@octokit/rest` and `@octokit/request-error`. `main.js` is committed, and CI fails if a rebuild moves it — rebuild before committing any source change.
 
 ### Version and Release
 
-Use the `obsidian-release-gate` then `obsidian-release-ship` skills — do not tag by hand.
+Use the `obsidian-gate` then `obsidian-ship` skills — do not tag by hand. `obsidian-ship` sets `disable-model-invocation`, so it cannot be called via `Skill`; ask the user to run `/obsidian-ship`. `obsidian-ship` follows a prep-PR pattern: the version bump, CHANGELOG, and walkthrough ship as one PR, and the tag is applied after merge. Never use `bun version` / `npm version`, which auto-tag immediately and skip that step.
 
 ## Code Style
 
