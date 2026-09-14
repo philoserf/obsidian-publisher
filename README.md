@@ -8,7 +8,7 @@ This is personal tooling, not a general-purpose plugin. It is opinionated in way
 
 - **Single user.** The only known installation is the maintainer's. Breaking changes ship without migration paths (see `CHANGELOG.md` — 1.4.0 renamed the publish sentinel, 1.5.0 retired `removePublishFlag` and the `{{< ref >}}` wikilinks, 1.6.0 retired the direct-commit publish mode entirely).
 - **One target shape.** The Hugo destination is expected to use `content/posts/`, `static/images/`, and the shipped `hugo-shortcodes/` (callout + mermaid) installed in the site's theme. Other layouts will see broken links or missing renderers.
-- **PR workflow only, mandatory.** Every publish creates a timestamped feature branch and opens a PR against `baseBranch`. There is no direct-commit escape hatch.
+- **PR workflow only, mandatory.** Every publish creates a timestamped feature branch and opens a PR against `baseBranch`. There is no direct-commit escape hatch. A second publish is refused while one is still running — on a slow connection, re-tapping a button that has not visibly responded would otherwise open a duplicate branch and PR, and there is no delete path to clean either up.
 - **Required frontmatter.** Notes must carry `status: publish`, plus a non-empty `title` and `date`. Missing or empty required fields fail the publish per-note.
 - **No issue triage for feature requests.** Bugs are welcome; feature requests from other users will almost always be closed as out-of-scope.
 
@@ -50,9 +50,9 @@ Wikilinks and note embeds only resolve to URLs for notes in the **current publis
 ### Settings worth knowing
 
 - **Stripped frontmatter fields.** Removed from published notes; defaults to `status`, `lastmod`, `cssclass`, `cssclasses`, `position`, `created`, `modified`. `aliases` is deliberately _not_ in that list — stripping it would suppress the redirects above.
-- **Frontmatter template.** Fields injected into every published note, without overriding what the note already sets.
+- **Frontmatter template.** Fields injected into every published note, without overriding what the note already sets. Input that is not `key: value` lines is ignored with a notice rather than half-parsed — a partial recovery was the one way a value you never wrote could reach a commit.
 - **Shortcode names.** `callout` and `mermaid` by default; change them to match your theme.
-- **`contentDir` / `imageDir`.** Destination paths in the site repo; the URL prefix in the table above is derived from `contentDir`.
+- **`contentDir` / `imageDir`.** Destination paths in the site repo; the URL prefix in the table above is derived from `contentDir`. A path with a `.` or `..` segment, or a `~` anywhere in it, is rejected whole rather than repaired — the publish then fails with "… is required" instead of quietly writing somewhere else. Surrounding whitespace and edge slashes are still normalized away; what is never done is stripping the *dangerous* parts, because removing them can construct the thing being removed (`.~./posts` used to become `../posts`).
 
 Callout types pass through from Obsidian verbatim (no collapse to a fixed set). The destination Hugo site must define `callout` and `mermaid` shortcodes in `layouts/shortcodes/`. Reference implementations ship in `hugo-shortcodes/` — copy them into your theme. The shortcode names are configurable in the plugin settings (default `callout` and `mermaid`).
 

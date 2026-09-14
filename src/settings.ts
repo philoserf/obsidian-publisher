@@ -281,7 +281,7 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     this.addTextSetting(containerEl, {
       name: "GitHub Personal Access Token",
-      desc: "Create a fine-grained token at github.com/settings/tokens with contents:write permission scoped to your target repo. Token is stored in plugin data (unencrypted).",
+      desc: "Create a fine-grained token at github.com/settings/tokens scoped to your target repo, with contents:write and pull_requests:write — every publish opens a pull request, so contents:write alone will commit and then fail. Token is stored in plugin data (unencrypted).",
       placeholder: "ghp_xxxxxxxxxxxx",
       getValue: () => settings.githubToken,
       onChange: (value) => {
