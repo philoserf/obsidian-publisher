@@ -30,12 +30,16 @@ The plugin converts Obsidian-specific syntax to Hugo-compatible markdown during 
 | `![[image.png\|alt\|300]]` | `![alt](/images/image.png)`                          |
 | `![[Note Name]]` (embed)   | `[Note Name](/posts/note-name/)` (if in publish set) |
 | `![[Note#Heading]]`        | `[Note#Heading](/posts/note/#heading)`               |
+| `[[folder/Page Name]]`     | `[folder/Page Name](/posts/page-name/)`              |
+| `![[folder/image.png]]`    | `![image.png](/images/image.png)`                    |
 | `%%comment%%`              | Removed                                              |
 | `==highlight==`            | `<mark>highlight</mark>`                             |
 | `> [!note] Title`          | `{{< callout note "Title" >}} … {{< /callout >}}`    |
 | ` ```mermaid `             | `{{< mermaid >}} … {{< /mermaid >}}`                 |
 
 Wikilinks and note embeds only resolve to URLs for notes in the **current publish set** (the notes being published in this operation). Out-of-set references degrade to plain text — so you can't publish a link to a note that isn't also being published. The one exception is a same-page anchor (`[[#Heading]]`): its target is the document itself, so it always resolves.
+
+**Paths are addressing, not names.** Obsidian writes a reference path-qualified when the bare filename would be ambiguous, and unconditionally when Files & Links -> **New link format** is set to "Absolute path in vault" or "Relative path to file". The directory tells the plugin which file you mean; the slug, the committed filename and the URL all come from the filename alone. A link that does not resolve still degrades to the full text you wrote.
 
 **Code is left alone.** Everything inside a fenced code block or an inline code span is exempt from every transformation in the table — a `==x==` or `[[Page]]` in a code sample publishes verbatim rather than being rewritten. Mermaid is the deliberate exception: it is the one transformation that acts _on_ a fenced block.
 

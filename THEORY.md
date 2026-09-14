@@ -58,6 +58,14 @@ from the files in _this run_. Otherwise it degrades to bare display text. `build
 computes it, `processFromSplit` takes it as a parameter, `convertWikilinks` and
 `convertEmbeds` consult it.
 
+The set is keyed on `file.basename`, so a reference has to be reduced to a basename before
+it is looked up. That is `vaultBasename`, and it is the whole of #308: Obsidian writes
+references path-qualified under two conditions — an ambiguous filename, or the vault-wide
+"New link format" setting — and the slug rule strips `/` as punctuation, so `folder/Note`
+slugified to `foldernote` and matched nothing. Reducing the reference is deliberately not
+part of `slugify`: addressing and naming are different operations, and folding them together
+would change what an alias like `some/path` means.
+
 The consequence is sharper than "publishing is not monotonic." `publishNote` passes a
 single-element list into the same workflow, so its publish set contains exactly one slug:
 the note's own. **A single-note publish therefore flattens every outbound link**, and only

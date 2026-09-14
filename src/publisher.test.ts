@@ -1156,3 +1156,105 @@ describe("Publisher candidate selection", () => {
     expect(result.successful).toBe(1);
   });
 });
+
+// #308: a path-qualified image reference never resolved. The vault index
+// was keyed on `TFile.name`, so `folder/pic.png` missed, while the
+// transformer had already emitted a URL built from the whole string. The
+// note published successfully pointing at a broken image.
+describe("path-qualified image references (#308)", () => {
+  const img = () => new Uint8Array([1, 2, 3]).buffer as unknown as string;
+  const noteRef = (ref: string) =>
+    `---\ntitle: T\nstatus: publish\ndate: 2026-01-01\n---\nSee ![[${ref}]]`;
+
+  const commitPaths = (gh: ReturnType<typeof makeGitHubApiGateway>) =>
+    (
+      (gh.commitFiles.mock.calls[0] as unknown[])[0] as Array<{
+        path: string;
+      }>
+    ).map((e) => e.path);
+
+  test("resolves a qualified reference and commits under the basename", async () => {
+    const vault = makeVault([
+      { name: "post.md", content: noteRef("folder/pic.png") },
+      { name: "pic.png", content: img(), path: "folder/pic.png" },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(commitPaths(gh)).toContain("static/images/pic.png");
+  });
+
+  test("resolves a deeply nested reference", async () => {
+    const vault = makeVault([
+      { name: "post.md", content: noteRef("a/b/c/pic.png") },
+      { name: "pic.png", content: img(), path: "a/b/c/pic.png" },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.warnings).toEqual([]);
+    expect(commitPaths(gh)).toContain("static/images/pic.png");
+  });
+
+  // Two spellings of ONE file are one image, not a target collision. The
+  // owner map has to key on the resolved vault path; keying it on the
+  // reference text makes these two look like different sources landing on
+  // the same target and drops the second.
+  test("one file referenced two ways is one image, not a collision", async () => {
+    const vault = makeVault([
+      { name: "a.md", content: noteRef("pic.png") },
+      { name: "b.md", content: noteRef("folder/pic.png") },
+      { name: "pic.png", content: img(), path: "folder/pic.png" },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll();
+
+    expect(result.results.flatMap((r) => r.warnings ?? [])).toEqual([]);
+    expect(result.successful).toBe(2);
+    const images = commitPaths(gh).filter((p) =>
+      p.startsWith("static/images/"),
+    );
+    expect(images).toEqual(["static/images/pic.png"]);
+  });
+
+  // The narrow case the plugin already detected: a qualified reference is
+  // how Obsidian disambiguates it, so it must now resolve.
+  test("a qualified reference disambiguates a basename collision", async () => {
+    const vault = makeVault([
+      { name: "post.md", content: noteRef("folder-a/pic.png") },
+      { name: "pic.png", content: img(), path: "folder-a/pic.png" },
+      { name: "pic.png", content: img(), path: "folder-b/pic.png" },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.warnings).toEqual([]);
+    expect(commitPaths(gh)).toContain("static/images/pic.png");
+  });
+
+  // ...while the bare form stays ambiguous and still warns.
+  test("the bare form still reports the basename collision", async () => {
+    const vault = makeVault([
+      { name: "post.md", content: noteRef("pic.png") },
+      { name: "pic.png", content: img(), path: "folder-a/pic.png" },
+      { name: "pic.png", content: img(), path: "folder-b/pic.png" },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishNote(makeTFile("post.md") as never);
+
+    expect(result.warnings?.[0]?.kind).toBe("image-collision");
+    expect(commitPaths(gh)).not.toContain("static/images/pic.png");
+  });
+});

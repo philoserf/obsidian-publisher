@@ -7,7 +7,7 @@ import {
   splitFrontmatter,
   validateFrontmatter,
 } from "./schema";
-import { sanitizeFilename, sanitizeSlug } from "./slug";
+import { sanitizeFilename, sanitizeSlug, vaultBasename } from "./slug";
 import {
   type BatchPublishResult,
   errorMessage,
@@ -162,12 +162,27 @@ export class Publisher {
     }
   }
 
-  private buildFilesByBasename(): Map<string, TFile[]> {
+  /**
+   * Index the vault by every suffix of each file's path, which is how
+   * Obsidian's own shortest-unique-path resolution works: `a/b/pic.png`
+   * is reachable as `pic.png`, `b/pic.png` and `a/b/pic.png`.
+   *
+   * Keying on the basename alone was #308 — a path-qualified reference
+   * never matched, so the note published with a broken image URL and
+   * nothing uploaded. Bare-basename lookups are unchanged: the shortest
+   * suffix is the basename, and it still maps to every file with that
+   * name, so an ambiguous reference still reports `image-collision`.
+   */
+  private buildFilesByPathSuffix(): Map<string, TFile[]> {
     const map = new Map<string, TFile[]>();
     for (const f of this.vault.getFiles()) {
-      const existing = map.get(f.name);
-      if (existing) existing.push(f);
-      else map.set(f.name, [f]);
+      const segments = f.path.split("/");
+      for (let i = 0; i < segments.length; i++) {
+        const key = segments.slice(i).join("/");
+        const existing = map.get(key);
+        if (existing) existing.push(f);
+        else map.set(key, [f]);
+      }
     }
     return map;
   }
@@ -218,7 +233,7 @@ export class Publisher {
 
   private async resolveImages(
     imageNames: string[],
-    filesByBasename: Map<string, TFile[]>,
+    filesByPathSuffix: Map<string, TFile[]>,
     readCache: Map<string, ArrayBuffer>,
     targetPathOwners: Map<string, string>,
   ): Promise<{
@@ -233,7 +248,7 @@ export class Publisher {
       if (seen.has(imageName)) continue;
       seen.add(imageName);
 
-      const matches = filesByBasename.get(imageName) ?? [];
+      const matches = filesByPathSuffix.get(imageName) ?? [];
 
       if (matches.length === 0) {
         console.warn(`Image not found in vault: ${imageName}`);
@@ -250,29 +265,36 @@ export class Publisher {
         continue;
       }
 
-      const sanitizedName = sanitizeFilename(imageName);
+      const sourceFile = matches[0];
+      // The committed name comes from the file, not from the spelling the
+      // author used: `![[pic.png]]` and `![[folder/pic.png]]` name one
+      // image and must land on one target path, matching the URL the
+      // transformer emits.
+      const sanitizedName = sanitizeFilename(vaultBasename(imageName));
       const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
+      // Owned by the resolved vault path, so two spellings of one file are
+      // one image rather than a collision. A genuine collision is two
+      // different files whose names sanitize to the same target.
       const owner = targetPathOwners.get(imgPath);
-      if (owner !== undefined && owner !== imageName) {
+      if (owner !== undefined && owner !== sourceFile.path) {
         console.warn(
-          `Image target path collision at ${imgPath}: ${owner}, ${imageName}`,
+          `Image target path collision at ${imgPath}: ${owner}, ${sourceFile.path}`,
         );
         warnings.push({
           kind: "image-target-collision",
           targetPath: imgPath,
-          sourceNames: [owner, imageName].sort(),
+          sourceNames: [owner, sourceFile.path].sort(),
         });
         continue;
       }
 
       try {
-        const sourceFile = matches[0];
         let imageContent = readCache.get(sourceFile.path);
         if (!imageContent) {
           imageContent = await this.vault.readBinary(sourceFile);
           readCache.set(sourceFile.path, imageContent);
         }
-        targetPathOwners.set(imgPath, imageName);
+        targetPathOwners.set(imgPath, sourceFile.path);
         entries.push({ path: imgPath, content: imageContent });
       } catch (error) {
         // Deliberately not errorMessage(): this is a debug log, and
@@ -570,7 +592,7 @@ export class Publisher {
   }> {
     const results: PublishResult[] = [];
     const entryMap = new Map<string, string | ArrayBuffer>();
-    const filesByBasename = this.buildFilesByBasename();
+    const filesByPathSuffix = this.buildFilesByPathSuffix();
     const publishSet = this.buildPublishSet(files);
     // Read each image source once per batch; multiple notes referencing
     // the same image share the buffer.
@@ -597,7 +619,7 @@ export class Publisher {
 
           const { entries: imageEntries, warnings } = await this.resolveImages(
             processed.images,
-            filesByBasename,
+            filesByPathSuffix,
             imageReadCache,
             targetPathOwners,
           );
