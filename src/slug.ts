@@ -60,3 +60,24 @@ export function sanitizeFilename(filename: string): string {
   const extension = filename.slice(lastDotIndex).toLowerCase();
   return name + extension;
 }
+
+/**
+ * The name half of a vault reference, dropping the directory component:
+ * `folder/pic.png` names the file `pic.png`.
+ *
+ * Obsidian writes a reference path-qualified when the bare basename would
+ * be ambiguous, and unconditionally when the vault's "New link format" is
+ * set to "Absolute path in vault" or "Relative path to file". The
+ * directory is addressing — how to find the file — and the publish set,
+ * the committed filename and the URL are all keyed on the name.
+ *
+ * Deliberately not folded into `slugify`: the slug rule strips `/` as
+ * punctuation, so `folder/Note` slugified to `foldernote` and matched
+ * nothing (#308). Stripping the directory *before* the rule is a
+ * different operation from the rule itself, and an alias like `some/path`
+ * still runs the plain rule.
+ */
+export function vaultBasename(reference: string): string {
+  const slash = reference.lastIndexOf("/");
+  return slash === -1 ? reference : reference.slice(slash + 1);
+}

@@ -1,6 +1,6 @@
 import { stringifyYaml } from "obsidian";
 import type { Frontmatter } from "./schema";
-import { sanitizeFilename, sanitizeSlug, slugify } from "./slug";
+import { sanitizeFilename, sanitizeSlug, slugify, vaultBasename } from "./slug";
 import {
   errorMessage,
   type ProcessedContent,
@@ -384,7 +384,10 @@ export class NoteTransformer {
           return `[${displayText || heading}](#${slugify(heading)})`;
         }
         const display = displayText || (heading ? `${page}#${heading}` : page);
-        const slug = sanitizeSlug(page);
+        // The lookup drops the directory; the display text above keeps it,
+        // because an unresolved link should degrade to what the author
+        // wrote — which is what Obsidian shows too.
+        const slug = sanitizeSlug(vaultBasename(page));
         if (!publishSet.has(slug)) return display;
         const fragment = heading ? `#${slugify(heading)}` : "";
         return `[${display}](${urlPath}${slug}/${fragment})`;
@@ -416,9 +419,13 @@ export class NoteTransformer {
       const { name, alt } = this.parseImageSuffix(raw);
 
       if (IMAGE_EXTENSIONS.test(name)) {
+        const fileName = vaultBasename(name);
         const normalizedAlt = alt?.trim();
-        const altText = normalizedAlt ? normalizedAlt : name;
-        return `![${altText}](${imageUrl}${sanitizeFilename(name)})`;
+        // Alt falls back to the file's name, not the path the author
+        // happened to write it with — `![[pic.png]]` and
+        // `![[folder/pic.png]]` name one image and should render alike.
+        const altText = normalizedAlt ? normalizedAlt : fileName;
+        return `![${altText}](${imageUrl}${sanitizeFilename(fileName)})`;
       }
 
       // For note embeds the pipe is display text: ![[Note|Display]]. That
@@ -435,7 +442,7 @@ export class NoteTransformer {
       const page = hash === -1 ? name : name.slice(0, hash);
       const heading = hash === -1 ? "" : name.slice(hash + 1);
       const display = displayText ?? name;
-      const slug = sanitizeSlug(page);
+      const slug = sanitizeSlug(vaultBasename(page));
       if (!publishSet.has(slug)) return display;
       const fragment = heading ? `#${slugify(heading)}` : "";
       return `[${display}](${postsUrl}${slug}/${fragment})`;

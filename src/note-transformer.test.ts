@@ -1408,3 +1408,60 @@ describe("alias urlization", () => {
     );
   });
 });
+
+// #308: Obsidian writes a reference path-qualified whenever "New link
+// format" is set to "Absolute path in vault" or "Relative path to file" —
+// a whole-vault setting — and whenever the bare basename would be
+// ambiguous. The directory component has to come off before the slug
+// lookup, because the publish set is keyed on `file.basename`. What it
+// must NOT come off is the display text: an unresolved link degrades to
+// what the author wrote, which is how Obsidian renders it too.
+describe("path-qualified references (#308)", () => {
+  const cp = makeProcessor();
+  const set = new Set(["note"]);
+  const fm = "---\ntitle: X\ndate: 2026-01-01\n---\n";
+
+  test("[[folder/Note]] resolves against the basename", () => {
+    const r = process(cp, `${fm}See [[folder/Note]].`, "x.md", set);
+    expect(r.content).toContain("[folder/Note](/posts/note/)");
+  });
+
+  test("deeply nested path resolves", () => {
+    const r = process(cp, `${fm}See [[a/b/c/Note]].`, "x.md", set);
+    expect(r.content).toContain("[a/b/c/Note](/posts/note/)");
+  });
+
+  test("[[folder/Note|Display]] resolves and keeps its display text", () => {
+    const r = process(cp, `${fm}See [[folder/Note|Display]].`, "x.md", set);
+    expect(r.content).toContain("[Display](/posts/note/)");
+  });
+
+  test("[[folder/Note#Heading]] resolves with its anchor", () => {
+    const r = process(cp, `${fm}See [[folder/Note#Heading]].`, "x.md", set);
+    expect(r.content).toContain("[folder/Note#Heading](/posts/note/#heading)");
+  });
+
+  test("![[folder/Note]] note embed resolves", () => {
+    const r = process(cp, `${fm}See ![[folder/Note]].`, "x.md", set);
+    expect(r.content).toContain("[folder/Note](/posts/note/)");
+  });
+
+  // The degraded form keeps the path the author wrote.
+  test("an unpublished path-qualified target degrades to the full path", () => {
+    const r = process(cp, `${fm}See [[folder/Missing]].`, "x.md", set);
+    expect(r.content).toContain("folder/Missing");
+    expect(r.content).not.toContain("](/posts/");
+  });
+
+  test("![[folder/pic.png]] points at the basename URL", () => {
+    const r = process(cp, `${fm}See ![[folder/pic.png]].`, "x.md", set);
+    expect(r.content).toContain("![pic.png](/images/pic.png)");
+  });
+
+  // extractImages keeps the qualified name, because Publisher needs it to
+  // find the file; only the committed path and the URL use the basename.
+  test("a qualified image is queued under the name the author wrote", () => {
+    const r = process(cp, `${fm}See ![[folder/pic.png]].`, "x.md", set);
+    expect(r.images).toEqual(["folder/pic.png"]);
+  });
+});
