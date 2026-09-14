@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.10.1
+
+### Fixed
+
+- The settings tab asked for a token with `contents:write` alone. Every publish has opened a pull request since 1.6.0 retired direct-commit mode, so the token also needs `pull_requests:write` — and the old scope fails in a misleading way: it authenticates, creates the branch and commits the tree, then fails at PR creation, leaving the work on a branch the plugin has no delete path for. `README.md` already listed both permissions, so the in-app text was the wrong half of a disagreement (#339)
+
+### Changed
+
+- `README.md` documents three behaviors that shipped in 1.10.0 after it was last updated: a second publish is refused while one is in flight (#307), `contentDir`/`imageDir` reject a bad path rather than repairing it (#313), and Additional Frontmatter that is not `key: value` is ignored with a notice rather than half-parsed (#319)
+
 ## 1.10.0
 
 ### Fixed
