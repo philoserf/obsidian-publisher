@@ -121,29 +121,49 @@ same post. If you touch the slug rule, the blast radius is not "some URLs change
 "some posts now exist twice," and cleanup is manual. The `aliases` escape hatch below is what
 makes such a change survivable at all.
 
-### Code is opaque, and mermaid is the exception that proves it
+### The document has two levels, and the scanner is the only place that knows it
 
-`splitCodeSegments` divides the body into prose and code before any transform runs; only
-prose goes through the chain. This is not tidiness. Every transform is actively unsafe inside
-code: `==` is the equality operator in most languages and would become `<mark>`, and several
-of the regexes use character classes that admit newlines, so a match could begin inside a
-fence and end in prose, carrying the closing fence away with it.
+`splitCodeSegments` resolves every opaque-region delimiter in one left-to-right pass, by
+earliest start position. Four things compete: a fence opener at line start, a blockquote run
+at line start, an inline backtick run, and `%%`. Whichever opens first wins and consumes its
+extent.
 
-The splitter is lossless by construction — it slices the original string by precomputed line
-offsets rather than rejoining split lines, so concatenating every segment reproduces the
-input byte for byte. That property has its own test, because an earlier version dropped
-newlines at segment boundaries and the entire existing suite still passed.
+Code is opaque because every transform is actively unsafe inside it: `==` is the equality
+operator in most languages and would become `<mark>`, and several regexes use character
+classes that admit newlines, so a match could begin inside a fence and end in prose, carrying
+the closing fence away with it.
 
-Mermaid inverts the rule: it is the one transform that runs over _code_ segments, because a
-mermaid diagram **is** a fenced block. When you add a transform, decide explicitly which side
-it belongs on. There is no default.
+**One competition, not several, is the load-bearing part.** `%%` must compete with fences, or
+a comment wrapping a fenced block is never paired and publishes verbatim. It must equally
+compete with backtick spans, or ``before `%%` after`` regresses — the span opens first, so the
+`%%` stays literal, which is what Obsidian does. And a `%%` inside a fence is not a delimiter
+at all, because the fence was consumed when the scan reached its opening line. Split that
+competition across two stages and you break it in one direction or the other.
 
-Two things about this idea are less settled than the prose above implies, and both are filed:
-`convertMermaid` recognizes a strictly narrower fence syntax than the splitter does, so a
-tilde-fenced or info-string mermaid block is protected from every transform and then never
-converted; and inserting the splitter ahead of `stripComments` quietly reopened two closed
-bugs about comment leakage. Both are consequences of the same thing — the splitter became the
-first stage of the pipeline without every later stage being re-derived against it.
+**A blockquote is a container, not a leaf.** Its interior is left unscanned by the scanner;
+the callout pass strips the markers and re-enters the whole pipeline on the stripped body.
+That recursion is the point. Without it the scanner emits quote/fence/quote and a callout
+containing a code sample is fragmented across three segments, which is the shape that made a
+local fix impossible — teaching the fence regex about a `> ` prefix still left the callout
+pass seeing only the lines above the fence.
+
+The splitter is lossless by construction: concatenating every segment reproduces the input
+byte for byte. That is why a comment is a segment *kind* rather than a deletion — the scanner
+keeps every byte and assembly drops the comment segments. The property has its own test
+across all four kinds, because an earlier version dropped newlines at segment boundaries and
+the entire existing suite still passed.
+
+Mermaid inverts the opacity rule: it is the one transform that runs over _code_ segments,
+because a mermaid diagram **is** a fenced block. It reads the `info` string the scanner
+already parsed rather than re-matching the fence, so it cannot recognize a narrower syntax
+than the scanner accepts — and an inline span, which carries no `info`, is never mistaken for
+one. When you add a transform, decide explicitly which level it belongs on. There is no
+default.
+
+This section used to end by flagging two unsettled consequences — the mermaid fence mismatch
+and the comment leakage reopened by inserting the splitter ahead of `stripComments`. Both
+were instances of one missing level of structure, filed as #316 and fixed by the restructure
+above in 1.10.0, along with four others. `stripComments` no longer exists.
 
 ### Failure has two kinds, and the difference is expressed intent
 
@@ -274,15 +294,6 @@ without realizing it renames live files.
 
 Everything below is inferred from code and history. Treat it as flagged, not settled.
 
-**The pipeline's first stage was inserted without re-deriving the later ones.**
-`splitCodeSegments` (#243) is correct in itself, and so were the comment fixes it landed on
-top of (#80, #244). Together they are not: a `%%` comment containing an inline code span or a
-fence is split across two prose segments, so neither half holds a complete pair and the
-comment publishes verbatim, with its wikilinks rewritten and its images uploaded. I verified
-this against the real transformer. The mermaid fence mismatch has the same origin. I read the
-whole cluster as sequencing accident rather than intent, but I am inferring — it is possible
-someone decided a comment containing code is out of scope. Nothing says so.
-
 **`prepareBatch` has a narrow window where a failed note can still be committed** — tracked
 as #295, and this pass corroborates it without widening it. The note's content is written into
 `entryMap` _before_ `resolveImages` runs; if `resolveImages` threw, the outer catch would
@@ -292,12 +303,6 @@ unreachable today: `resolveImages` catches per-image and its only `await` sits i
 where every _other_ per-note concern accumulated (validation, transform, image resolution,
 progress ticks), so it is the natural place to add the next `await`, and the ordering that
 makes it safe is not visible from inside the loop body.
-
-**The prose/code reassembly is more fragile than it looks.** `processFromSplit` filters
-segments into a `prose` array, then walks all segments again with a `proseIndex++` counter to
-pair them back up. It is correct — `filter` and `map` both preserve order by specification —
-but the coupling is implicit, and a refactor that reorders, memoizes, or parallelizes either
-pass would misalign prose with its slot with no test failing loudly.
 
 **Seam discipline was inconsistent, and the reading was history rather than intent.**
 `GitHubApiGateway` took an injectable `Sleep` so retry timing was testable, while `Publisher`
