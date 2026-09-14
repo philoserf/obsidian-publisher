@@ -51,13 +51,17 @@ function makeOctokit(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// Retry backoff is injected as a no-op: these tests assert how many
-// attempts happen, not how long the waits are.
+// Retry backoff is injected so the suite never actually waits. It is a
+// recording mock rather than a bare no-op so a test can assert that a
+// backoff happened BETWEEN attempts and not after the last one (#312) —
+// nothing observed the sleeps before, which is how a wasted 1.5 s on
+// every exhausted retry survived.
 function makeService(octokitOverrides: Record<string, unknown> = {}) {
-  const service = new GitHubApiGateway(makeSettings(), async () => {});
+  const sleep = mock(async (_ms: number) => {});
+  const service = new GitHubApiGateway(makeSettings(), sleep);
   const octokit = makeOctokit(octokitOverrides);
   (service as unknown as Record<string, unknown>).octokit = octokit;
-  return { service, octokit };
+  return { service, octokit, sleep };
 }
 
 describe("GitHubApiGateway.generateBranchName", () => {
@@ -364,7 +368,7 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
   });
 
   test("retries a 429 until attempts are exhausted, then rethrows", async () => {
-    const { service, octokit } = makeService();
+    const { service, octokit, sleep } = makeService();
     const requestError = new RequestError("rate limited", 429, {} as never);
     octokit.rest.git.createRef.mockImplementation(async () => {
       throw requestError;
@@ -373,6 +377,9 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
       service.createBranchWithRetry("publish", "main", 3),
     ).rejects.toBe(requestError);
     expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
+    // Three attempts, two gaps. A third sleep would be pure dead wait
+    // before a throw the backoff cannot prevent.
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   test("retries a 5xx until attempts are exhausted, then rethrows", async () => {
@@ -422,7 +429,7 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
   // #233: GitHub signals secondary rate limiting with 403, but 403 also
   // covers "token lacks scope". Only the rate-limit shape is retried.
   test("retries a 403 that carries retry-after", async () => {
-    const { service, octokit } = makeService();
+    const { service, octokit, sleep } = makeService();
     octokit.rest.git.createRef.mockImplementation(async () => {
       throw new RequestError("slow down", 403, {
         response: { headers: { "retry-after": "60" } },
@@ -432,6 +439,7 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
       service.createBranchWithRetry("publish", "main", 3),
     ).rejects.toThrow();
     expect(octokit.rest.git.createRef).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   test("retries a 403 with x-ratelimit-remaining: 0", async () => {

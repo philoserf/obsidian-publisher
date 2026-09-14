@@ -77,13 +77,13 @@ Add new methods to `github-api-gateway.ts` using Octokit, and use `this.settings
 
 Error handling goes through `rethrowWithPrefix`: a `RequestError` passes through **untouched** so its status survives for the caller, and only a generic `Error` gets a descriptive prefix. Wrapping a `RequestError` was bug #242 — it destroyed the status and silently disabled retry.
 
-Wrap any new idempotent call in `this.withRetry(...)`. Its predicate `isTransient` covers 429, 5xx, and 403 only when the response looks rate-limit shaped (a `retry-after` header, or `x-ratelimit-remaining: 0`) — a bare 403 is usually a missing scope, and retrying it just burns attempts. `422` is deliberately excluded: on branch creation it means the name is taken, which `createBranchWithRetry` resolves by generating a **different** name, not by repeating the same request.
+Wrap any new idempotent call in `this.withRetry(...)`. Its predicate `isTransient` covers 429, 5xx, and 403 only when the response looks rate-limit shaped (a `retry-after` header, or `x-ratelimit-remaining: 0`) — a bare 403 is usually a missing scope, and retrying it just burns attempts. `422` is deliberately excluded: on branch creation it means the name is taken, which `createBranchWithRetry` resolves by generating a **different** name, not by repeating the same request. Both loops back off through `backoffDelay(attempt)` and call it **between** attempts only — never after the last, which is dead wait before a throw the backoff cannot prevent.
 
 ### Testing
 
 Tests use Bun's built-in runner (`bun:test`) with `describe`/`test`/`expect` API. Test files live alongside source in `src/` with `.test.ts` suffix. Mocks are consolidated in `src/test-preload.ts`, loaded via `bunfig.toml`.
 
-Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a no-op `sleep` so retry counts are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale, passing the fake as `Publisher`'s fifth constructor argument — typed `PublishGateway`, so the compiler checks it. Reach for the level that matches what you are pinning.
+Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a recording `sleep` mock so retry counts — and the number of backoffs between them — are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale, passing the fake as `Publisher`'s fifth constructor argument — typed `PublishGateway`, so the compiler checks it. Reach for the level that matches what you are pinning.
 
 `TESTING.md` is the test-policy doc — consult it when deciding where a new test belongs. Its rule: add the test at the layer that would have caught the bug, not the layer it surfaced at.
 
