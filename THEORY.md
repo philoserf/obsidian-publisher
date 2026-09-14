@@ -1,360 +1,342 @@
 # Theory
 
-What you need to hold in mind to change this plugin without damaging it. The code and its
-comments already document what each function does; this is the reasoning they cannot state
-about themselves — why the pieces are shaped the way they are, and which of those shapes are
-load-bearing.
+What you need to hold in your head to change this system without breaking it in ways the
+tests will not catch. Not a tour — `WALKTHROUGH.md` is the tour, and `README.md` has the
+full transformation table. This document is about _why_, and about which of the things you
+could change are load-bearing.
 
 ## What the system is for
 
-One person keeps one Obsidian vault. A minority of those notes are also public essays on one
-Hugo site. This plugin is the bridge, and its entire job is to answer a question the vault
-cannot answer for itself: **given this pile of notes, which ones are the site, and what does
-the site's copy of each one look like?**
+A private Obsidian vault and a public Hugo site are two collections of markdown with
+different rules. The vault is where writing happens: notes link to each other by title,
+embed images by filename, and carry frontmatter that is nobody's business but the author's.
+The site is a build artifact with URLs, anchors and redirects. This plugin is the
+translation between them, and it runs in one direction only.
 
-Read it as a general Obsidian-to-static-site exporter and you will "fix" things that are
-deliberate. The vault is the source of truth and it is messy — thousands of notes, most
-private, some half-drafted, occasionally one with broken YAML. The destination is a git
-repository with a fixed shape. Between them is a translation with no undo: once a publish
-opens a pull request, the only way back is another commit.
+The domain has three entities worth naming, because the code names them and the vocabulary
+is not obvious from the outside:
 
-Five domain words carry most of the meaning, and they are worth learning exactly:
+A **note** is a vault file carrying `status: publish`. That sentinel is the whole of the
+author's expressed intent — there is no separate manifest, no publish queue, no per-note
+configuration. Publishing is a property the note asserts about itself.
 
-A **publishable file** is a note whose frontmatter carries `status: publish`. That sentinel
-is the whole access-control model — no allow-list, no folder convention, no export flag. One
-string in one field, checked by `hasPublishFlag`.
+A **publish set** is the set of notes participating in _one operation_. Not the set of
+notes on the site. This distinction is the single most important idea in the system and the
+one a well-meaning change is most likely to destroy; it gets its own section below.
 
-A **slug** is what a note's title becomes in a URL and in a committed filename. The
-**publish set** is the collection of slugs going out in _this particular operation_. A
-**result** is per-note and carries success or an error, never both. **Warnings** are
-conditions the user should know about that did not prevent the publish.
+An **operation** is one invocation of one of the two commands. It produces exactly one
+branch, one commit and one pull request, or it produces nothing. There is no partial
+operation and no resumable operation.
+
+What the system does _not_ model is as load-bearing as what it does. It has no
+representation of the site's current contents, no cache of what was published before, no
+record of previous operations. It cannot tell you whether a note is already live. This is
+not an omission waiting to be filled — several behaviors that look like bugs are consequences
+of it, and "fixing" them by acquiring site state would be a different system.
 
 ## The organizing ideas
 
+### One rule, one owner — and rejection rather than repair
+
+This is the newest layer of the theory and the one most likely to be violated by someone
+who has not read this far, because violating it looks like being helpful.
+
+Read the issues closed into 1.10.0 in order and a single argument runs through them. A slug
+rule with three consumers and no module became `slug.ts` (#315). Two settings normalizers
+that disagreed about what a bad value is became one, called from both sides (#314). Two
+functions answering "is this configuration usable?" in two vocabularies became
+`validateConnection` and `validatePublish`, the second deriving from the first (#318). Two
+passes over one embed syntax became `convertEmbeds` (#301). A path sanitizer that removed
+`..`, then `~`, then edge slashes became a validator that removes nothing (#313). Two
+fallback parsers that salvaged input the surrounding code had already rejected were deleted
+(#319, #332).
+
+Two principles, and they are connected.
+
+**A rule has exactly one owner.** Where knowledge was stated twice it was not kept in sync
+by discipline; one statement was deleted and the other made authoritative. The recurring
+failure this prevents is not disagreement between two copies — it is that nobody notices the
+disagreement, because each copy is locally correct. `slug.ts` exists for precisely this: the
+publish set slugifies while the collision precheck sanitizes filenames, and if those two ever
+diverge a link resolves against a name that was never committed. `slug.test.ts` pins the
+agreement directly, which is what a load-bearing invariant with two consumers should look
+like.
+
+**Rejection beats repair.** `sanitizePath` is the sharpest case. Its predecessor removed the
+dangerous parts of a path, and a remover can _synthesize_ what it removes: `.~./posts`
+became `../posts`, because stripping `..` left `.~./` and stripping `~` closed the gap. No
+ordering of removals fixes that. So nothing is removed — a path is acceptable as written or
+rejected whole, and rejection returns `""`, which fails the publish loudly. The same
+reasoning killed the YAML salvage parser: it was the only path by which a value the author
+never wrote could reach a commit.
+
+The practical consequence for you: when you find input that the code refuses to handle, the
+question is not "how do I make this work?" but "which owner should decide, and should it
+reject?" Adding a second place that repairs a value is how every one of the bugs above was
+introduced.
+
+### Every operation is self-contained, and link resolution is scoped to it
+
+`[[Some Note]]` becomes a link only when its slug is in the publish set — the set built from
+the files in _this run_. Otherwise it degrades to the display text the author wrote.
+
+The consequence is sharper than it first sounds. `publishNote` passes a one-element list
+into the same workflow, so a single-note publish has a publish set containing exactly one
+slug: the note's own. **Publishing one note therefore flattens every outbound link it has.**
+Only same-page anchors survive, because their target is the document itself and needs no
+lookup. This is pinned by tests, which is how you know it is intended rather than an
+oversight — the single-note command is useful for notes with no outbound links, and the
+batch command is the one that produces a coherent site.
+
+A sibling project solving this problem would almost certainly resolve links against the
+site: query what is already published, or emit optimistically and let the build break. This
+one does neither, because it has no model of the site and refuses to acquire one. That
+refusal is the premise most of the rest of this document rests on. If you ever find yourself
+adding a "what is already published?" lookup, you are not fixing a bug; you are proposing a
+different system, and most of the reasoning below stops applying.
+
+The reference must be reduced to a basename before the lookup, because the set is keyed on
+`file.basename`. That is `vaultBasename`, and it is deliberately _not_ part of the slug
+rule: the rule strips `/` as punctuation, so `folder/Note` slugified to `foldernote` and
+matched nothing (#308). Addressing and naming are different operations. Note the asymmetry
+that falls out — the lookup drops the directory, but the degraded display text keeps the
+path the author wrote, because an unresolved link should read the way it read in the vault.
+
+### The document has two levels, and the scanner is the only thing that knows
+
+The transform chain does not see a flat stream of text with code blocks to skip. It sees a
+tree, one level deep at a time, and `splitCodeSegments` is the only place that knows how to
+find the boundaries.
+
+Four delimiters compete in one left-to-right pass, resolved by earliest start: a fence at
+line start, a blockquote run at line start, an inline backtick run, and `%%`. The
+competition is load-bearing in both directions. `%%` must compete with fences, or a comment
+wrapping a fenced block never pairs and publishes verbatim (#300). It must equally compete
+with backtick spans, or a `%%` inside a code span stops being literal — which is what
+Obsidian itself does. A `%%` _inside_ a fence is not a delimiter at all, not by special case
+but because the fence was consumed when the scan reached its opening line.
+
+Two properties make this tractable. The split is **lossless** — concatenating every
+segment's text reproduces the input — which is what lets a comment be a _kind_ rather than a
+deletion, so removing comments becomes an assembly decision made later and downstream code
+never sees a hole. And a quote segment is a **container**: its interior is deliberately
+unscanned, and the callout pass strips the markers and re-enters the pipeline recursively.
+That recursion is why a fenced block can nest inside a callout (#303), a case the previous
+flat model could not reach with any local fix.
+
+Mermaid is the one transform that runs over code rather than prose, because it owns fences.
+It reads the `info` string the scanner already captured rather than re-matching the fence
+with a second pattern — re-matching is what made tilde fences and four-backtick fences
+publish raw (#306). If you add a transform, the first question is which level it operates on.
+
+### "Prepared" and "published" are different types, on purpose
+
+A `PublishResult` with `success: true` means _this note was published_ everywhere in the
+system: it is what the batch counts, what the notice announces, what the console prints
+under "Successful publishes". At preparation time nothing has been committed, so preparation
+produces `Prepared`, a different type.
+
+They used to be the same type, and every path from preparation to a returned batch was
+responsible for remembering to rewrite an optimistic `success: true` before it escaped. The
+compiler could not help, because the two were the same type (#309). Now exactly one function,
+`toResults`, converts one into the other, and it is therefore the only place a publish
+outcome is decided.
+
+The second property is subtler and worth preserving deliberately: **a note's file entries
+hang off its own `Prepared`**, built and attached together after every `await` that note
+needs. There is no batch-wide map for a note to write into before it is known to have
+succeeded. An earlier version wrote a note's content into a shared map before resolving its
+images, so a note that failed mid-preparation had already contributed content to the commit
+(#295). Making entries a field of the note dissolves that, rather than fixing it by ordering
+two statements correctly and hoping nobody reorders them.
+
+### Counts are a user-facing contract
+
+`total`, `successful` and `failed` are not statistics; they select which sentence the user
+sees. A batch that fails on a filename collision synthesizes one failure _per file_ rather
+than returning a bare error, because otherwise `total` is 0 and the "No publishable notes
+found" branch swallows a real failure (#193 is the ancestor of this rule).
+
+So when you add a failure mode, the question is not only "does the error reach the user" but
+"which count does this land in, and does the notice tree still say something true?" On iOS
+there is no console, so the `Notice` is the entire user interface. Anything that only reaches
+`console.log` has, for the platform this plugin exists to serve, not been reported at all.
+
 ### The iOS constraint sits upstream of the architecture
 
-The author writes on a phone. Obsidian on iOS has no shell, no git binary, and no console.
-Most of what looks odd here descends from that single fact.
-
-It is why the GitHub seam is Octokit REST rather than a git wrapper — not a preference, a
-platform limit. It is why `main.js` is a committed bundle rather than a build artifact: the
-plugin is installed by copying files, and there is no build step on a phone. And it is why
-`Notice` is treated as a real output channel rather than a nicety. `PR_NOTICE_DURATION_MS`
-gives the pull request URL ten seconds instead of the default five, because on the one
-platform that motivated the design, a `console.log` of that URL is unreachable. Per-file
-failure detail _does_ go to the console, and that is an accepted degradation: the summary
-reaches everyone, the detail reaches desktop only.
-
-If you reach for a child process, a filesystem path outside the vault, or a native module,
-stop. That is the constraint talking.
-
-### Link resolution is scoped to the operation, not to the site
-
-This is the least obvious idea here and the one most likely to be broken by a well-meaning
-change.
-
-`[[Some Note]]` becomes a link only if `some-note` is in the publish set — the set built
-from the files in _this run_. Otherwise it degrades to bare display text. `buildPublishSet`
-computes it, `processFromSplit` takes it as a parameter, `convertWikilinks` and
-`convertEmbeds` consult it.
-
-The set is keyed on `file.basename`, so a reference has to be reduced to a basename before
-it is looked up. That is `vaultBasename`, and it is the whole of #308: Obsidian writes
-references path-qualified under two conditions — an ambiguous filename, or the vault-wide
-"New link format" setting — and the slug rule strips `/` as punctuation, so `folder/Note`
-slugified to `foldernote` and matched nothing. Reducing the reference is deliberately not
-part of `slugify`: addressing and naming are different operations, and folding them together
-would change what an alias like `some/path` means.
-
-The consequence is sharper than "publishing is not monotonic." `publishNote` passes a
-single-element list into the same workflow, so its publish set contains exactly one slug:
-the note's own. **A single-note publish therefore flattens every outbound link**, and only
-same-page anchors survive. `publisher.test.ts` pins this directly. It is not a degenerate
-edge case — it means the single-note command is useful only for notes with no outbound
-links, and the batch path is the one that produces a coherent site. That is why the batch
-path is the one that gets used.
-
-A sibling project would almost certainly resolve links against the whole site: query what is
-already published, or emit optimistically and let the build fail. This one does neither,
-because it has no model of the site's current state and deliberately refuses to acquire one.
-Every operation is self-contained. That refusal is the single premise most of the rest of
-this document depends on.
-
-The one exception is a same-page anchor, `[[#Heading]]`. Its target is the document itself,
-so it needs no lookup and always resolves. If you add another link form, the first question
-to settle is which side of that line it falls on.
-
-### One slug rule, three consumers, and no delete path
-
-`slugify` is the single rule: NFC-normalize, lowercase, keep Unicode letters, digits,
-underscore, whitespace and hyphen; whitespace to hyphens, collapse runs, trim edges. Three
-things consume it — the page slug in a URL, the committed filename, and the heading anchor.
-`sanitizeSlug` wraps it with the `untitled` fallback that a filename needs and an anchor does
-not, because an empty anchor is simply no anchor while an empty filename is not a file; a
-heading anchor therefore calls `slugify` directly.
-
-As of 1.10.0 (#315) the rule owns a module, `src/slug.ts`, exporting those two plus
-`sanitizeFilename`. It used to live inside `NoteTransformer`, and the two consumers that are
-not body rewriting — `buildPublishSet` and `detectFilenameCollisions` — reached it by calling
-public methods on a transformer instance, so an invariant whose blast radius is renamed live
-files was spread across two modules and four names layered over one regex chain.
-
-They were not always unified, and the bug that resulted teaches the rule: page slugs ran an
-ASCII-only variant while anchors preserved Unicode, so `[[Café#Café]]` emitted
-`/posts/caf/#café` and the two halves of one link disagreed with each other. Unification is
-now an invariant with a test, and it is load-bearing beyond aesthetics — `buildPublishSet`
-slugifies while `detectFilenameCollisions` sanitizes filenames, so if the two ever diverge a
-link resolves against a name that was never committed.
-
-The rule also has to agree with something outside this repository: Hugo's default goldmark
-anchor generation (`autoIDType: "github"`) and its default `removePathAccents: false`. A site
-that opts into `github-ascii`, or turns accents off, gets links that load pages but do not
-jump, or do not load at all. Nothing in this repo checks it. It is a contract held in a
-comment, and it is the thinnest strand in the whole design.
-
-**The invariant that costs the most if forgotten: there is no delete path.** The gateway can
-create branches, blobs, trees, commits and pull requests, and it can delete a _branch_ — it
-cannot delete a _file_. So any change to the destination filename is a rename that leaves the
-old file live on the site. Renaming a note does it. Changing `slugify` does it to every
-affected note at once. Neither the plugin nor the site notices, and you get two copies of the
-same post. If you touch the slug rule, the blast radius is not "some URLs change," it is
-"some posts now exist twice," and cleanup is manual. The `aliases` escape hatch below is what
-makes such a change survivable at all.
-
-### The document has two levels, and the scanner is the only place that knows it
-
-`splitCodeSegments` resolves every opaque-region delimiter in one left-to-right pass, by
-earliest start position. Four things compete: a fence opener at line start, a blockquote run
-at line start, an inline backtick run, and `%%`. Whichever opens first wins and consumes its
-extent.
-
-Code is opaque because every transform is actively unsafe inside it: `==` is the equality
-operator in most languages and would become `<mark>`, and several regexes use character
-classes that admit newlines, so a match could begin inside a fence and end in prose, carrying
-the closing fence away with it.
-
-**One competition, not several, is the load-bearing part.** `%%` must compete with fences, or
-a comment wrapping a fenced block is never paired and publishes verbatim. It must equally
-compete with backtick spans, or ``before `%%` after`` regresses — the span opens first, so the
-`%%` stays literal, which is what Obsidian does. And a `%%` inside a fence is not a delimiter
-at all, because the fence was consumed when the scan reached its opening line. Split that
-competition across two stages and you break it in one direction or the other.
-
-**A blockquote is a container, not a leaf.** Its interior is left unscanned by the scanner;
-the callout pass strips the markers and re-enters the whole pipeline on the stripped body.
-That recursion is the point. Without it the scanner emits quote/fence/quote and a callout
-containing a code sample is fragmented across three segments, which is the shape that made a
-local fix impossible — teaching the fence regex about a `> ` prefix still left the callout
-pass seeing only the lines above the fence.
-
-The splitter is lossless by construction: concatenating every segment reproduces the input
-byte for byte. That is why a comment is a segment *kind* rather than a deletion — the scanner
-keeps every byte and assembly drops the comment segments. The property has its own test
-across all four kinds, because an earlier version dropped newlines at segment boundaries and
-the entire existing suite still passed.
-
-Mermaid inverts the opacity rule: it is the one transform that runs over _code_ segments,
-because a mermaid diagram **is** a fenced block. It reads the `info` string the scanner
-already parsed rather than re-matching the fence, so it cannot recognize a narrower syntax
-than the scanner accepts — and an inline span, which carries no `info`, is never mistaken for
-one. When you add a transform, decide explicitly which level it belongs on. There is no
-default.
-
-This section used to end by flagging two unsettled consequences — the mermaid fence mismatch
-and the comment leakage reopened by inserting the splitter ahead of `stripComments`. Both
-were instances of one missing level of structure, filed as #316 and fixed by the restructure
-above in 1.10.0, along with four others. `stripComments` no longer exists.
-
-### Failure has two kinds, and the difference is expressed intent
-
-A note without `status: publish` is not a failure in `publishAll` — it is silently skipped,
-because a vault scan makes no claim about any particular note. The same note _is_ a failure in
-`publishNote`, because the user pointed at it and pressed publish. Same condition, opposite
-handling, and the discriminator is whether intent was expressed.
-
-Read and parse failures break that symmetry on purpose. When a file cannot be read, or its
-frontmatter is malformed YAML, the batch reports it rather than skipping it — because a
-malformed block _hides_ publish intent. We cannot tell whether the author wrote
-`status: publish` when the YAML does not parse, and silently dropping a note the author meant
-to publish is the worse of the two errors. `splitFrontmatter` returns a distinct `error`
-field precisely so callers can tell "malformed" from "absent," and the same asymmetry drives
-`isDefinitelyNotPublishable`.
-
-Warnings are a third category and never fail anything. The clearest case is a pull request
-whose labels could not be applied: the PR exists, it is the artifact the user wanted, and
-throwing would orphan it. So label failure becomes a warning on a successful result.
-
-### Counts are a user-facing contract, not statistics
-
-`buildBatchResult` derives `total` from the number of results, and `failedResults` exists
-solely to produce one failed result per attempted file. That looks like padding until you
-read the notice tree: `formatBatchNotice` branches on `total === 0` and prints "No publishable
-notes found." A batch that failed wholesale before preparing anything — a filename collision,
-say — would otherwise report zero total and be announced to the user as _nothing to do_.
-
-`toResults` is the same idea from the other end. If the commit throws after preparation
-succeeded, every prepared note becomes a failure carrying that error, so the user is never
-told "twelve notes prepared successfully" about a commit that never landed.
-
-Preparation success is not publish success, and **the type system now knows that.** It did
-not always: `prepareBatch` used to report preparation outcomes as `PublishResult`, so a
-prepared success and a published success were the same value, and correctness depended on
-three separate exits each remembering to rewrite one that was already wrong. Resolved in
-1.10.0 (#309) — `prepareBatch` returns `Prepared`, a distinct type whose successful arm owns
-that note's file entries, and `toResults` is the only place a `PublishResult` is made from
-one. The difference lives in a type instead of in two corrective helpers.
-
-### A publish is single-flight, and the flag lives on the plugin
-
-Obsidian will invoke a command again while the previous invocation's promise is still
-pending. Nothing stopped it until 1.10.0 (#307), so a second hotkey press — or a re-tap on a
-mobile toolbar button that had not visibly responded — ran the whole workflow again and
-produced two branches and two identical pull requests. Both then had to be cleaned up by
-hand, because the gateway has no delete path.
-
-The property is worth stating because it is not obvious where it belongs. `ObsidianPublisher`
-holds one `inFlight` promise covering **both** commands, since publishing the current note
-while a batch is committing has the same outcome as two batches. `Publisher` is deliberately
-left concurrently drivable: it is a pure orchestrator, `publisher.test.ts` drives it in
-parallel on purpose, and a guard there would have made the tests harder to write while
-protecting nothing the plugin does not already protect. The single shared `progress` notice is
-the second reason the flag sits on the plugin — two live batches would interleave counts into
-one field.
-
-The flag is cleared in a `finally`, so a publish that throws cannot wedge the plugin until
-reload. That is a case worth a test rather than an assumption; it has one.
+Every GitHub operation goes through the REST API via Octokit, never a git binary, because
+there is no shell on iOS. That is the stated constraint, and it explains the gateway's
+existence. What is easier to miss is how far downstream it reaches: it is why the plugin
+reports exclusively through toasts, why the PR URL gets a longer notice duration than the
+default, why the per-request timeout exists at all (a stalled cellular connection must
+surface as an error rather than hang a publish forever), and why the single-flight guard
+exists — re-tapping a button that has not visibly responded is the natural thing to do on a
+slow mobile connection, and it used to produce two branches and two pull requests that had
+to be cleaned up by hand (#307).
 
 ### Retry is licensed by idempotency, and 422 is not a retry
 
-`withRetry` wraps every call inside `commitFiles`, and it is safe only because of a property
-of the Git data API: blobs and trees are content-addressed, and `updateRef` is non-forced, so
-repeating any of them is a no-op rather than a duplicate. Retry here is not optimism; it is a
-claim about the API that happens to be true.
+`withRetry` wraps only calls that are safe to repeat: blobs and trees are content-addressed,
+and `updateRef` with an unchanged SHA is a no-op. The predicate is narrow on purpose. 403
+counts only when the response looks rate-limit shaped, because GitHub uses it both for
+secondary rate limiting and for "token lacks scope", and retrying a permission error burns
+every attempt before surfacing something the user could have acted on immediately.
 
-`isTransient` decides what is worth repeating: 429 and 5xx unconditionally, 403 only when the
-response looks rate-limit shaped (a `retry-after` header, or `x-ratelimit-remaining: 0`). A
-bare 403 is usually a missing token scope, and retrying it burns attempts before surfacing a
-permission error.
+422 is deliberately excluded, and the reason is the useful part: on branch creation it means
+the name is taken, which is resolved by trying a **different** name rather than repeating the
+same request. `createBranchWithRetry` treats it as retryable for exactly that reason —
+the retry changes the input. Two loops, two different notions of what a retry is.
 
-422 is deliberately excluded, and this is the distinction to keep straight. On branch
-creation, 422 means the name is taken, which `createBranchWithRetry` resolves by generating a
-_different_ name — a different request, not the same one again. Elsewhere it is a hard
-validation error. Two retry mechanisms live in one file for two different reasons; conflating
-them is easy and wrong.
+Both loops back off _between_ attempts and never after the last, which sounds like a
+micro-optimization and was worth a fix (#312): the tail sleep added seconds of dead wait to
+every failure the backoff could not have prevented, and a commit that failed both ways paid
+it twice.
 
-Holding it together is `rethrowWithPrefix`, which passes `RequestError` through untouched so
-its status survives and wraps only generic errors. This looks like a stylistic rule and is
-not: when `getBranchSha` once re-wrapped `RequestError` into a plain `Error` it destroyed the
-status code and silently disabled retry throughout the gateway (#242). Any new call site that
-wraps a `RequestError` reintroduces that.
+### The single-user premise is a design input, not a disclaimer
+
+The README's "you probably shouldn't install this" is not modesty. Breaking changes ship
+without migration paths, and the changelog is a list of retirements: the publish sentinel
+renamed, `removePublishFlag` retired, `{{< ref >}}` wikilinks retired, direct-commit publish
+mode removed entirely along with its setting.
+
+This is what makes the "one owner, reject don't repair" discipline affordable. A plugin with
+users could not delete a salvage parser that had been quietly fixing their malformed input
+for a year. This one can, because the only installation is the author's and the author is
+also the integration test. When you are weighing whether to keep a compatibility path, the
+answer here is almost always no — and that answer would be wrong in a sibling project.
 
 ## The seams
 
-**Obsidian** is reached through `vault` (`read`, `readBinary`, `getMarkdownFiles`,
-`getFiles`), `metadataCache`, and `Notice`. The tests mock this wholesale, so nothing here
-verifies that Obsidian dispatches a command or renders a notice — only that the right APIs
-are called with the right arguments.
+**Obsidian** is the runtime and is entirely mocked in tests. The plugin can be verified to
+call the right APIs with the right arguments and nothing more; whether Obsidian dispatches a
+command, populates `metadataCache`, or renders a `Notice` is untested by construction. The
+mock is deliberately only as wide as the code reaches — `Setting`'s builder methods are
+absent, which is a standing claim that `PublisherSettingTab.display()` has no test. Adding
+one means restoring them in the same change.
 
-`metadataCache` is the newest and subtlest part of that seam. It exists so a vault of
-thousands of notes is not read end to end to find a hundred, and `isDefinitelyNotPublishable`
-is deliberately one-sided: the _only_ answer it trusts is "the cache parsed frontmatter and
-there is no publish flag." A cold cache and parsed-but-absent frontmatter both fall through
-to a real read, because `metadataCache` reports malformed frontmatter as simply missing — and
-a malformed block is exactly the case that must not be skipped (#129). Widening this predicate
-to trust more answers is the single easiest way to silently stop publishing notes. It arrives
-as an optional fourth constructor parameter, appended rather than woven in; that shape is
-honest about it being a late performance addition, and it means every test predating it still
-constructs a `Publisher` that reads everything.
+The `metadataCache` prefilter is the one place this seam leaks into logic. Only one answer
+from the cache is safe to trust — it parsed the frontmatter and there is no publish flag —
+because the cache reports _malformed_ frontmatter as simply absent. Trusting "no
+frontmatter" as "not publishable" would silently skip exactly the notes whose YAML is broken,
+which is the case the read path exists to surface.
 
-**GitHub** is `GitHubApiGateway`, the only Octokit-aware module. Keep it that way; the iOS
-constraint lives here.
+**GitHub** is behind `GitHubApiGateway`, and `Publisher` depends on a four-method `Pick` of
+it named `PublishGateway`. That port is typed rather than nominal because the class's private
+fields make it unsatisfiable by a fake; the constructor's default argument is where the real
+class is checked against the port. Error narrowing has one rule and it is load-bearing: a
+`RequestError` passes through untouched so its status survives, and only a generic `Error`
+gets a prefix. Wrapping a `RequestError` destroyed the status and silently disabled retry,
+because the retry predicate reads it (#242).
 
-**Hugo** is the seam with no code at all. The plugin emits shortcodes (`callout`, `mermaid`)
-the destination theme must define, writes to paths the site must use, assumes an
-anchor-generation algorithm, and rewrites `aliases` into redirect URLs. None of it is
-verified by anything. `hugo-shortcodes/` ships reference templates, and that is the entire
-enforcement mechanism. This is where a silent breakage is most likely to originate, and where
-you should look first when output that passes every test still renders wrong.
+The gateway has **no delete path**, and this is felt well outside it. Because a note's
+committed filename follows the slug rule, renaming a note publishes a new file and leaves
+the old one live. Changing the slug rule does this to every note at once. There is no
+mechanism in this system to clean that up, which is why the rule's blast radius is the real
+argument for keeping it in one module.
 
-The alias behavior deserves attention because it hides inside a settings default. `aliases` is
-_deliberately absent_ from `DEFAULT_SETTINGS.strippedFrontmatterFields`, with a comment saying
-why: Hugo reads that field as its redirect list, so stripping it would discard every redirect
-the publisher emits. `urlizeAliases` then converts each alias from a bare title into the URL
-that title actually produced, reusing `sanitizeSlug` and `postsUrlPath` — the same functions
-that generated the original URLs, which is precisely why the redirect lands. A value already
-starting with `/` passes through untouched, checked _before_ slugification because
-`sanitizeSlug` would strip the slash. That escape hatch is how you pin an exact historical
-URL, and it is the counterweight to having no delete path.
+**Hugo** is the seam with no verification at all. The plugin assumes `autoIDType: "github"`
+and `removePathAccents: false` — both Hugo defaults — and emits `callout` and `mermaid`
+shortcodes the site must define. Reference implementations ship in `hugo-shortcodes/`.
+Nothing in this repository would notice if the site changed any of it. If anchors or accented
+URLs start failing, read the site's config before debugging the transformer.
+
+**The settings file** is a seam because it is the one place data crosses a process boundary
+and comes back changed by nobody. `parseSettings` answers two questions per field — absent or
+wrong type falls back, present but unnormalized runs the same normalizer the UI runs — and
+that pairing is the invariant. A field added to only one side is the bug class (#314).
+
+**Between the transformer and the publisher** there is a seam worth knowing about because it
+is enforced only incidentally. The image URL written into the markdown and the path the image
+is committed at are computed in two different modules, from the same input, through the same
+two functions — and the directory halves are deliberately _different_, because `imageUrlPath`
+strips a leading `static/` that the commit path keeps. Mutating either side does currently
+fail a test, so the coupling is pinned; but the publisher-side catch comes from a target
+collision test whose subject is something else entirely. Rewrite that test with pre-sanitized
+fixtures and the coupling silently stops being checked. It deserves a direct test of its own,
+the way `slug.test.ts` directly pins the slug/filename agreement.
 
 ## What the system accommodates, and what it does not
 
-Adding a transform is easy and the shape is obvious: a method on `NoteTransformer`, slotted
-into `processFromSplit` on the prose side (or the code side, if it owns a fence), plus tests.
-Adding a settings field is easy: `PublisherSettings`, `DEFAULT_SETTINGS`, and one normalizer
-in `settings.ts` called by both the control and `parseSettings` — one place, not two, since
-1.10.0 (#314). Adding a warning kind means a variant in
-`PublishWarning` and a branch in `formatWarnings` — and `notices.ts` is pure and separately
-tested precisely so the notice tree can be reasoned about without a plugin instance.
+It absorbs new **transforms** well. Add a prose transform to the chain in `transformProse`,
+or a segment kind to the scanner, and the two-level model carries it — provided you settle
+first which level it belongs to and whether the split stays lossless.
 
-What would require rethinking something fundamental:
+It absorbs new **settings** well, now that each has one normalizer. Add the field to
+`PublisherSettings`, give it a default, write one normalizer, call it from `parseSettings`
+and the control. There is no second place to forget.
 
-**Publishing incrementally, or deleting.** Both need a model of what the site currently
-contains, and the system deliberately has none. "Unpublish" is not a new gateway method; it is
-a new relationship between the plugin and the site's state, and it collides with the
-publish-set idea head-on, because link resolution would have to consult the site rather than
-the operation.
+It absorbs new **warning kinds** well. The union in `types.ts` is discriminated and
+`notices.ts` is pure formatting, so the compiler will walk you to every site.
 
-**Publishing a subset with working links.** Same root. Today the answer is "publish everything
-together," which is why the batch path is the one that gets used.
+It does **not** accommodate anything requiring knowledge of the site. Incremental publishing,
+link resolution against live pages, detecting that a note was renamed, cleaning up orphaned
+files — each needs a model of remote state the system deliberately lacks. These are not
+features waiting to be added; the first one implemented becomes the system's new premise.
 
-**Any second user.** Settings validation, error messages, and the whole notice tree assume the
-person reading them wrote the code. `README.md` says so outright, at length.
+It does **not** accommodate multi-user anything. Both the "reject don't repair" discipline
+and the freedom to ship breaking changes depend on the single installation.
 
-A maintainer who holds the theory looks first at the publish set when links misbehave, at
-`slugify` when URLs move, at `isDefinitelyNotPublishable` when notes go missing, at the
-Hugo-side config when anchors fail, and at `rethrowWithPrefix` when retries stop working. A
-maintainer who does not is most likely to cause damage by widening the metadata-cache
-predicate, by "simplifying" the two retry mechanisms into one, or by adjusting the slug rule
-without realizing it renames live files.
+It does **not** accommodate partial success at the operation level. One branch, one commit,
+one PR, or nothing. A note can fail individually and the batch continues, but there is no
+"commit what worked and retry the rest" — and adding it would put the system in the position
+of knowing what is already committed, which is the premise again.
+
+**Where a maintainer who did not read this would do damage.** Making `publishNote` resolve
+links against all notes with `status: publish` rather than the operation's set — it looks
+like an obvious fix for flattened links and it silently changes the system's premise. Adding
+a "clean up" or "repair" step to a normalizer. Re-wrapping a `RequestError` to improve an
+error message. Adding a second place that decides a publish outcome. Adding an option where
+something was deliberately removed.
 
 ## Uncertainties
 
-Everything below is inferred from code and history. Treat it as flagged, not settled.
+Everything here is inferred from code, tests and history. Treat it as flagged rather than
+settled.
 
-**Seam discipline was inconsistent, and the reading was history rather than intent.**
-`GitHubApiGateway` took an injectable `Sleep` so retry timing was testable, while `Publisher`
-constructed its own gateway with no injection point, so `publisher.test.ts` reached in and
-overwrote a private field — two different answers to the same testability question in adjacent
-files. Resolved in 1.10.0 (#311): `Publisher` now takes a fifth constructor argument defaulting
-to `new GitHubApiGateway(settings)`, matching the `Sleep` seam exactly. It is typed
-`PublishGateway`, a `Pick` of the four methods `Publisher` actually calls, because the class
-itself has private fields and is therefore nominal — no fake can satisfy it, so typing the
-parameter as the class would have moved the cast rather than removed it.
+**Two prior uncertainties are now resolved**, recorded here so they are not re-investigated:
+the inconsistent testability seams (`Sleep` injected, gateway not) closed with #311, and the
+unreachable image guard in the old `convertNoteEmbeds` closed with #301 when the two embed
+passes merged.
 
-**Image target collisions are only visible within one batch.** `targetPathOwners` is created
-per `prepareBatch` call, so two images that sanitize to the same target path are caught when
-published together and silently overwrite each other when published separately. This is
-consistent with "every operation is self-contained," so it may be deliberate — but the
-warning's existence implies someone thought the overwrite worth reporting, and the
-cross-operation case is not reported.
+**Image target collisions are only visible within one operation.** `targetPathOwners` is
+created per batch, so two images that sanitize to one target path are caught when published
+together and silently overwrite each other when published separately. This is consistent
+with "every operation is self-contained," so it may be deliberate — but the warning's
+existence implies somebody thought the overwrite worth reporting, and the cross-operation
+case is not reported. I could not determine from the code which reading is correct.
 
-**One transform branch appeared unreachable, and was.** `convertNoteEmbeds` tested
-`IMAGE_EXTENSIONS.test(nameForCheck)` and returned the match untouched "for
-convertImageReferences" — but `convertImageReferences` ran first over the same regex, so no
-image embed survived to reach it. The parenthetical "(already processed)" suggested the author
-knew. Left here rather than filed, because whether it was dead weight or deliberate belt-and-
-braces was a reduction question, not a theory one. Reduction answered it: the two methods
-were one pass over one syntax, and #317 merged them into `convertEmbeds`, which classifies
-once and dispatches. The guard is gone because the ordering it depended on no longer exists
-(#301, closed against the merge).
+**Error-message handling has two conventions and nothing marks which applies where.**
+`errorMessage` flattens a non-`Error` throw to "Unknown error"; `resolveImages` deliberately
+uses `String(error)` so a thrown non-Error keeps its value in a debug log. The comment says
+this is intentional and I believe it. But only one is the default, and a new call site has
+nothing to consult.
 
-**Error-message handling has two conventions.** `errorMessage` flattens any non-`Error` throw
-to `"Unknown error"`; `resolveImages` deliberately uses `String(error)` instead, so a thrown
-non-Error keeps its value in the debug log. The comment says this is on purpose and I believe
-it, but only one of the two is the default and nothing marks which call sites should use
-which.
+**`Publisher.validateSettings` is a one-line delegation kept for its callers' convenience**,
+and #298 deleted exactly that shape elsewhere in the same release — one-line delegations
+whose bodies are the functions they call. #335's reasoning is explicit (twelve test call
+sites spy on the method, and `main.ts` already holds a `Publisher` at both call sites), so
+this is a reasoned exception rather than drift. I record it because the next person to run a
+reduction pass will find it and should know the argument was already had.
 
-**The Hugo contract may already have drifted.** The plugin assumes `autoIDType: "github"` and
-`removePathAccents: false`. Both are Hugo defaults, and nothing in this repository would
-notice if the site changed them. If anchors or accented URLs start failing, read the site's
-`hugo.yaml` before debugging the transformer.
+**The `~` rejection in `sanitizePath` has no stated justification.** The code comment admits
+it: there is no shell, and GitHub's tree API does not expand `~`, so the threat model is
+unclear. It was carried forward from the sanitizer it replaced. It is harmless, and it is
+the one rule in the settings layer nobody can currently explain.
+
+**The Hugo contract may already have drifted and nothing here would know.** See the seam
+above. This is the system's largest untested assumption and it lives entirely outside the
+repository.
+
+## Findings from this pass
+
+| #   | Severity | Issue                                                                         | Primary location                                 |
+| --- | -------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| 1   | low      | `TESTING.md` has no regeneration cadence and three of its counts have drifted | `TESTING.md`, "Current state" and "What we test" |
+
+**Total: 1 issue (0 critical, 0 high, 0 medium, 1 low)**
+
+The critical, high and medium bands are empty, and that is a real result rather than a
+shortfall of looking: 1.10.0 closed twenty-one issues that were largely this kind of finding,
+and the stale doc comments found while regenerating `WALKTHROUGH.md` were corrected in
+`12e6612`. What remains is the one standing document with no cadence — the same failure class
+as #254 and #328, which were resolved by giving the other two documents one.
