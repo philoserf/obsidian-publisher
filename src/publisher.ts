@@ -7,6 +7,7 @@ import {
   splitFrontmatter,
   validateFrontmatter,
 } from "./schema";
+import { sanitizeFilename, sanitizeSlug } from "./slug";
 import {
   type BatchPublishResult,
   errorMessage,
@@ -178,7 +179,7 @@ export class Publisher {
   private buildPublishSet(files: Array<{ file: TFile }>): Set<string> {
     const set = new Set<string>();
     for (const { file } of files) {
-      set.add(this.noteTransformer.sanitizeSlug(file.basename));
+      set.add(sanitizeSlug(file.basename));
     }
     return set;
   }
@@ -194,9 +195,7 @@ export class Publisher {
   ): Array<{ filename: string; paths: string[] }> {
     const byFilename = new Map<string, string[]>();
     for (const { file } of files) {
-      const sanitizedFilename = this.noteTransformer.sanitizeFilename(
-        file.name,
-      );
+      const sanitizedFilename = sanitizeFilename(file.name);
       const paths = byFilename.get(sanitizedFilename) ?? [];
       paths.push(file.path);
       byFilename.set(sanitizedFilename, paths);
@@ -251,7 +250,7 @@ export class Publisher {
         continue;
       }
 
-      const sanitizedName = this.noteTransformer.sanitizeFilename(imageName);
+      const sanitizedName = sanitizeFilename(imageName);
       const imgPath = `${this.settings.imageDir}/${sanitizedName}`;
       const owner = targetPathOwners.get(imgPath);
       if (owner !== undefined && owner !== imageName) {
