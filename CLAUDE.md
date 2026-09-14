@@ -10,6 +10,8 @@ The current next step for this repo is tracked in the workspace backlog at `../N
 
 `THEORY.md` carries the design rationale behind the invariants this file summarizes — read it before changing the publish set, the slug rule, or the error-narrowing seam. `README.md` holds the full Obsidian-to-Hugo transformation table.
 
+`WALKTHROUGH.md` is **generated, and regenerated once per release — not per PR.** Run the `code-walkthrough` skill after all the work for a release has landed; do not hand-edit it, and do not regenerate it because one PR moved a function it quotes. `bun run verify:docs` belongs to the release gate for the same reason: wiring it into CI would fail on every PR that touches a quoted function and would pressure exactly the per-PR regeneration this rule rules out. Note also what a green verify does and does not mean — it re-executes the code blocks and never reads the prose around them, so a deleted function leaves the narrative describing something that is gone while verify still passes (#328).
+
 ## Development Commands
 
 ```bash
@@ -25,6 +27,7 @@ bun run lint:fix     # Biome check --write
 bun run format       # Biome format --write
 bun run check        # typecheck + biome check (run before committing)
 bun run audit        # bun audit (critical vulnerabilities)
+bun run verify:docs  # re-run WALKTHROUGH.md's code blocks (release gate only)
 bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
 ```
 

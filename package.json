@@ -17,6 +17,7 @@
     "format:check": "biome format .",
     "version": "bun run version-bump.ts",
     "test": "bun test",
+    "verify:docs": "uvx showboat verify WALKTHROUGH.md",
     "deploy": "bun run deploy.ts"
   },
   "dependencies": {
