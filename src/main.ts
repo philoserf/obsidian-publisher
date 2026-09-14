@@ -1,8 +1,7 @@
 import { Notice, Plugin, type TFile } from "obsidian";
 import { formatBatchNotice, formatWarnings } from "./notices";
 import { Publisher } from "./publisher";
-import { PublisherSettingTab } from "./settings";
-import { parseSettings } from "./settings-parse";
+import { PublisherSettingTab, parseSettings } from "./settings";
 import {
   type BatchPublishResult,
   errorMessage,

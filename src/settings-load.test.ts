@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseSettings } from "./settings-parse";
+import { parseSettings } from "./settings";
 import { DEFAULT_SETTINGS } from "./types";
 
 describe("parseSettings", () => {
@@ -52,18 +52,19 @@ describe("parseSettings", () => {
     expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
   });
 
-  test("falls back when prLabels is an empty array", () => {
+  // #314 changed these two. An empty array is what the control stores
+  // when the user clears the field, so replacing it with the default
+  // meant clearing never stuck — there was no way to publish without
+  // labels. A wrong *type* still falls back, because that is corruption
+  // rather than a choice.
+  test("keeps an empty prLabels, so clearing the field sticks", () => {
     const result = parseSettings({ prLabels: [] });
-    expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
+    expect(result.prLabels).toEqual([]);
   });
 
-  test("falls back when prLabels contains only whitespace", () => {
-    expect(parseSettings({ prLabels: [""] }).prLabels).toEqual(
-      DEFAULT_SETTINGS.prLabels,
-    );
-    expect(parseSettings({ prLabels: ["  ", "\t"] }).prLabels).toEqual(
-      DEFAULT_SETTINGS.prLabels,
-    );
+  test("normalizes a whitespace-only prLabels to empty, as the control does", () => {
+    expect(parseSettings({ prLabels: [""] }).prLabels).toEqual([]);
+    expect(parseSettings({ prLabels: ["  ", "\t"] }).prLabels).toEqual([]);
   });
 
   test("trims prLabels entries", () => {
@@ -227,5 +228,60 @@ describe("parseSettings does not alias DEFAULT_SETTINGS", () => {
 
   test("two loads do not share array instances", () => {
     expect(parseSettings({}).prLabels).not.toBe(parseSettings({}).prLabels);
+  });
+});
+
+// #314. The settings UI normalizes every value on the way in, and
+// parseSettings normalizes it again on the way out — but the two layers
+// encoded different policies, so for every one of these fields the value
+// the UI held and the value the next load produced disagreed. These
+// assert the load path agrees with what the control would have stored.
+describe("the load path applies the same normalizer as the UI (#314)", () => {
+  test("a hazardous contentDir is rejected, not passed through", () => {
+    expect(parseSettings({ contentDir: "../escape" }).contentDir).toBe("");
+  });
+
+  test("a hazardous imageDir is rejected, not passed through", () => {
+    expect(parseSettings({ imageDir: "~/x" }).imageDir).toBe("");
+  });
+
+  test("an illegal repoOwner is repaired", () => {
+    expect(parseSettings({ repoOwner: "my owner!" }).repoOwner).toBe("myowner");
+  });
+
+  test("an illegal repoName is repaired", () => {
+    expect(parseSettings({ repoName: "my repo!!" }).repoName).toBe("myrepo");
+  });
+
+  test("baseBranch is trimmed, as the control trims it", () => {
+    expect(parseSettings({ baseBranch: "  main  " }).baseBranch).toBe("main");
+  });
+
+  // Not a consistency nit but a user-facing bug: clearing the labels field
+  // stored [], and the next load turned it back into the default. There
+  // was no way to publish without labels. The comment called this
+  // "symmetric with baseBranch", which is false — you must have a branch,
+  // you may have no labels.
+  test("an empty prLabels round-trips as empty", () => {
+    expect(parseSettings({ prLabels: [] }).prLabels).toEqual([]);
+  });
+
+  test("a missing prLabels still falls back to the default", () => {
+    expect(parseSettings({}).prLabels).toEqual(["chore"]);
+  });
+
+  // The property that catches the next field added to only one side.
+  test("normalizing is idempotent across the boundary", () => {
+    const settings = parseSettings({
+      contentDir: "content/posts",
+      imageDir: "static/images",
+      repoOwner: "philoserf",
+      repoName: "site",
+      baseBranch: "main",
+      prLabels: ["chore", "docs"],
+      calloutShortcodeName: "callout",
+      mermaidShortcodeName: "mermaid",
+    });
+    expect(parseSettings(settings)).toEqual(settings);
   });
 });
