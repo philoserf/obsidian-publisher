@@ -87,7 +87,7 @@ Tests use Bun's built-in runner (`bun:test`) with `describe`/`test`/`expect` API
 
 Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a recording `sleep` mock so retry counts — and the number of backoffs between them — are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale, passing the fake as `Publisher`'s fifth constructor argument — typed `PublishGateway`, so the compiler checks it. Reach for the level that matches what you are pinning.
 
-`TESTING.md` is the test-policy doc — consult it when deciding where a new test belongs. Its rule: add the test at the layer that would have caught the bug, not the layer it surfaced at.
+`TESTING.md` is the test-policy doc — consult it when deciding where a new test belongs. Its rule: add the test at the layer that would have caught the bug, not the layer it surfaced at. Unlike `WALKTHROUGH.md` and `THEORY.md` it is not regenerated per release and nothing checks it; re-read it when a test **file** is added or removed, which is the event that drifts it.
 
 ### Build
 

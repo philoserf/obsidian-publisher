@@ -4,7 +4,7 @@ Policy doc for what this repo tests, what it doesn't, and why. Written for a fut
 
 ## Current state
 
-- 330 tests across 8 files, one runner (`bun test`), one assertion shape (`describe`/`test`/`expect` from `bun:test`).
+- 390 tests across 9 files, one runner (`bun test`), one assertion shape (`describe`/`test`/`expect` from `bun:test`). `bun test` prints the live total, which is the number that rots fastest; the **file** count is the one worth noticing, because adding a test file is the trigger to re-read this document.
 - Tests live beside source in `src/` as `*.test.ts`. Fixtures are inline strings in the test files.
 - Shared mocks live in `src/test-preload.ts` (loaded via `bunfig.toml`). `parseYaml`/`stringifyYaml` delegate to the real `yaml` package, so nested mappings and multi-line strings round-trip. The Obsidian surface is mocked only as far as the code touches it, but that is further than "pretend to exist": `Notice` records what it showed and implements `setMessage`/`hide`, `debounce` invokes immediately, and `Plugin` carries `app`/`addCommand`/`addSettingTab`/`loadData`/`saveData` so `main.test.ts` can drive `onload()`. Read "as far as the code touches it" strictly — a method no test reaches is a claim that something is exercised when it is not, which is why `Setting` is bare (#302). `PublisherSettingTab.display()` has no test; adding one means restoring `Setting`'s builder methods in the same change.
 - **`spyOn(Class.prototype, …)` stacks call counts across tests in a `describe`, even after `mockRestore()`.** A `toHaveBeenCalledTimes(2)` written against a fresh-looking spy came back `5` and then `7` while writing #307's fixtures. Call `mockClear()` immediately after each `spyOn` when the assertion is about counts, or it is measuring the whole file rather than the test.
@@ -23,7 +23,7 @@ This is not a replacement for tests — it's the path for catching integration-l
 ## What we test
 
 - **The slug rule.** `slug.ts`'s three exports, in `slug.test.ts`: Unicode preservation, NFC normalization, the `untitled` fallback, and that a filename and a page slug agree on the same input. These are the rule's own tests; fixtures that drive it *through* the transform chain stay in `note-transformer.test.ts`.
-- **Pure transforms.** `NoteTransformer` methods: wikilink conversion, image conversion, callout/mermaid shortcode emission, comment/highlight handling, code-fence and inline-code protection, and alias urlization. This is the largest file in the suite by a wide margin (120 tests). Inputs are strings, outputs are strings — the test shape matches the code shape.
+- **Pure transforms.** `NoteTransformer` methods: wikilink conversion, image conversion, callout/mermaid shortcode emission, comment/highlight handling, code-fence and inline-code protection, and alias urlization. This is the largest file in the suite by a wide margin — more than twice the next. Inputs are strings, outputs are strings — the test shape matches the code shape.
 - **Schema and validation.** `splitFrontmatter`, `hasPublishFlag`, `validateFrontmatter`. Every required-field and CRLF-line-ending fixture from past bugs is pinned.
 - **Settings persistence.** `parseSettings` against every corruption shape we've seen or can imagine: wrong type, missing key, empty/whitespace, and that fallbacks copy rather than alias `DEFAULT_SETTINGS`. Since #314 it also pins that the load path and the settings control agree per field — a value stored by the control must survive a reload unchanged, which is the property that catches a field added to only one side.
 - **Publisher orchestration.** `publisher.test.ts` constructs a real `Publisher` with a mocked `GitHubApiGateway` and a fake vault; it asserts on the shape of `PublishResult` / `BatchPublishResult`, on branch-cleanup behavior, on the `total === 0` guard, on progress-callback invocation, on the `metadataCache` prefilter (including the cache-not-yet-populated race), and on every warning variant. This is the highest-value layer in the suite — it pins the orchestration invariants documented in `THEORY.md`.
@@ -52,3 +52,21 @@ Signals that the unit-level strategy has stopped paying for itself:
 - Users beyond the author appear and their breakage patterns differ from the author's.
 
 Until then, the unit suite plus the author-as-integration-test is the policy. This is deliberate — not a gap to fill.
+
+## Keeping this document honest
+
+Re-read this file whenever a test file is added or removed. That is the event that
+invalidated it last time: `settings-load.test.ts` arrived with #314 and the counts above sat
+wrong until a theory pass recounted them.
+
+Unlike its two siblings this document has no mechanical check and cannot easily have one.
+`WALKTHROUGH.md` is regenerated once per release and `bun run verify:docs` re-executes its
+code blocks at the release gate; `THEORY.md` is regenerated once per release. Nothing
+re-executes prose. So this is a convention, stated here because an unstated one is what let
+the drift happen — and the same failure class already cost `THEORY.md` (#254) and
+`WALKTHROUGH.md` (#328) a regeneration each.
+
+Prefer claims that cannot rot. "The largest file in the suite by a wide margin" stays true
+through a hundred new tests; "(120 tests)" was wrong after twenty. Where an exact number is
+genuinely the point — the three Octokit mocking levels, the four methods `PublishGateway`
+exposes — it is load-bearing and belongs. Where it is colour, leave it out.
