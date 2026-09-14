@@ -81,8 +81,15 @@ to settle is which side of that line it falls on.
 `slugify` is the single rule: NFC-normalize, lowercase, keep Unicode letters, digits,
 underscore, whitespace and hyphen; whitespace to hyphens, collapse runs, trim edges. Three
 things consume it — the page slug in a URL, the committed filename, and the heading anchor.
-`sanitizeName` wraps it with the `untitled` fallback that a filename needs and an anchor does
-not, because an empty anchor is simply no anchor while an empty filename is not a file.
+`sanitizeSlug` wraps it with the `untitled` fallback that a filename needs and an anchor does
+not, because an empty anchor is simply no anchor while an empty filename is not a file; a
+heading anchor therefore calls `slugify` directly.
+
+As of 1.10.0 (#315) the rule owns a module, `src/slug.ts`, exporting those two plus
+`sanitizeFilename`. It used to live inside `NoteTransformer`, and the two consumers that are
+not body rewriting — `buildPublishSet` and `detectFilenameCollisions` — reached it by calling
+public methods on a transformer instance, so an invariant whose blast radius is renamed live
+files was spread across two modules and four names layered over one regex chain.
 
 They were not always unified, and the bug that resulted teaches the rule: page slugs ran an
 ASCII-only variant while anchors preserved Unicode, so `[[Café#Café]]` emitted
