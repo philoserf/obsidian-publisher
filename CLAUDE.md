@@ -54,7 +54,7 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 - **`schema.ts`** — Frontmatter split, the `status: publish` gate, and required-field validation
 - **`notices.ts`** — Pure formatting of user-visible notice text; no Obsidian calls
 - **`settings-parse.ts`** — Validates and repairs persisted plugin data
-- **`settings.ts`** — Plugin settings UI with GitHub connection test. The YAML seam has no recovery path: input that does not parse to an object yields `{}`, which the additional-frontmatter control notices and reports. Do not add a salvage parser — the one that existed was the only way a value the user never wrote could reach a commit (#319)
+- **`settings.ts`** — Plugin settings UI with GitHub connection test. The YAML seam has no recovery path: input that does not parse to an object yields `{}`, which the additional-frontmatter control notices and reports. Do not add a salvage parser — the one that existed was the only way a value the user never wrote could reach a commit (#319). `sanitizePath` validates rather than subtracts, for the same reason: removing characters can synthesize the value being removed, and `.~./posts` used to become `../posts` (#313). It rejects whole (returning `""`, which `validateSettings` turns into a failed publish) rather than repairing, and deliberately does not restrict which characters a path may contain
 - **`slug.ts`** — The one slug rule and its three shapes: `slugify` (heading anchors), `sanitizeSlug` (page slugs, with the `untitled` fallback), `sanitizeFilename` (committed filenames)
 - **`types.ts`** — `PublisherSettings`, `PublishResult` (a `PublishSuccess`/`PublishFailure` union), `BatchPublishResult`, `ProcessedContent`, `PublishWarning`, `DEFAULT_SETTINGS`, `errorMessage()`
 

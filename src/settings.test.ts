@@ -76,12 +76,56 @@ describe("sanitizePath", () => {
     expect(sanitizePath("///a/b///")).toBe("a/b");
   });
 
-  test("removes parent-directory traversal", () => {
-    expect(sanitizePath("../etc/passwd")).toBe("etc/passwd");
+  // #313 changed these two from repair to rejection. Removing the marker
+  // and keeping the rest made the value look checked while leaving the
+  // author's intent — "escape the content directory" — partly honoured.
+  // An empty return routes into validateSettings(), which fails the
+  // publish with "Content directory must be configured".
+  test("rejects parent-directory traversal", () => {
+    expect(sanitizePath("../etc/passwd")).toBe("");
   });
 
-  test("removes home-directory marker and resulting leading slash", () => {
-    expect(sanitizePath("~/secrets")).toBe("secrets");
+  test("rejects a home-directory marker", () => {
+    expect(sanitizePath("~/secrets")).toBe("");
+  });
+
+  test("rejects a single-dot segment", () => {
+    expect(sanitizePath("./posts")).toBe("");
+  });
+
+  // The three inputs from #313. Each is a case where removing characters
+  // SYNTHESIZED a value worse than the input: subtraction cannot be made
+  // safe by ordering, only by not subtracting.
+  test("does not reconstruct .. from an interleaved marker", () => {
+    expect(sanitizePath(".~./posts")).toBe("");
+  });
+
+  test("does not collapse a run of dots into a relative path", () => {
+    expect(sanitizePath("..././")).toBe("");
+  });
+
+  // The complaint in #313 about this input was the empty segment that
+  // `a///b` left behind, which no later normalization removed. A run of
+  // four dots is an odd directory name but not a traversal, so it is kept
+  // — rejecting it would be narrowing, not fixing.
+  test("collapses the empty segment without rejecting a dotted name", () => {
+    expect(sanitizePath("a/....//b")).toBe("a/..../b");
+  });
+
+  // Guards: rejection must not narrow what a legitimate path may contain.
+  // Notably NOT an ASCII allowlist — this repo spent #315 making sure a
+  // macron survives a slug, and a Hugo content/artículos directory is
+  // ordinary.
+  test("preserves a space in a segment", () => {
+    expect(sanitizePath("content/my posts")).toBe("content/my posts");
+  });
+
+  test("preserves non-ASCII letters", () => {
+    expect(sanitizePath("content/artículos")).toBe("content/artículos");
+  });
+
+  test("collapses a doubled interior slash rather than rejecting", () => {
+    expect(sanitizePath("content//posts")).toBe("content/posts");
   });
 
   test("preserves interior slashes", () => {
