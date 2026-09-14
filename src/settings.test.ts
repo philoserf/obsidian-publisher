@@ -260,3 +260,30 @@ describe("validateConnectionSettings", () => {
     ).toContain("name");
   });
 });
+
+// #319. Deleting parseKeyValueText removed the only code that made a
+// throwing parse behave differently from a non-object one, so these
+// document the now-uniform branch rather than guarding a regression. The
+// old fallback split on the first colon per line and returned a non-empty
+// object, which meant the settings control's Notice never fired and a
+// value the user never wrote reached the commit.
+describe("parseFrontmatter rejects malformed YAML the same way (#319)", () => {
+  test("an unclosed flow sequence yields no fields", () => {
+    expect(parseFrontmatter("author: [unclosed")).toEqual({});
+  });
+
+  test("one bad line rejects the whole input, rather than half of it", () => {
+    expect(parseFrontmatter("author: Mark\nbad: [oops")).toEqual({});
+  });
+
+  test("an undefined anchor yields no fields", () => {
+    expect(parseFrontmatter("key: *undefined-anchor")).toEqual({});
+  });
+
+  test("valid YAML is unaffected", () => {
+    expect(parseFrontmatter("author: Mark\ntags: [obsidian]")).toEqual({
+      author: "Mark",
+      tags: ["obsidian"],
+    });
+  });
+});
