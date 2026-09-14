@@ -11,7 +11,15 @@ import {
 import { GitHubApiGateway } from "./github-api-gateway";
 import type ObsidianPublisher from "./main";
 import { REQUIRED_FRONTMATTER_FIELDS } from "./schema";
-import { errorMessage, type PublisherSettings } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  errorMessage,
+  type PublisherSettings,
+} from "./types";
+
+/** The fields a note must carry; stripping one would make every note
+ * fail validation. Hoisted so the three consumers cannot drift. */
+const REQUIRED_SET = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
 
 export function sanitizeGitHubOwner(value: string): string {
   return value
@@ -61,8 +69,21 @@ export function sanitizePath(value: string): string {
   return hazardous ? "" : segments.join("/");
 }
 
-export function sanitizeShortcodeName(value: string): string {
-  return value.trim().replace(/[^a-zA-Z0-9_-]/g, "");
+/**
+ * A shortcode name is accepted as typed or replaced by the default.
+ *
+ * It used to be repaired on the way in (`my callout!` became `mycallout`)
+ * and rejected on the way out, so the same input meant two different
+ * things depending on which layer saw it. Rejection is the one to keep:
+ * a silently rewritten shortcode name points at a Hugo template that does
+ * not exist, which fails at build time rather than here (#314).
+ */
+export function normalizeShortcodeName(
+  value: string,
+  fallback: string,
+): string {
+  const trimmed = value.trim();
+  return /^[a-zA-Z0-9_-]+$/.test(trimmed) ? trimmed : fallback;
 }
 
 export function serializeFrontmatter(
@@ -72,17 +93,25 @@ export function serializeFrontmatter(
   return stringifyYaml(template).trim();
 }
 
-export function parseStrippedFieldsInput(value: string): string[] {
-  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
+/** Split a comma-separated list once; the caller derives both the kept
+ * fields and the blocked ones from the same split rather than re-splitting. */
+export function splitFieldsInput(value: string): string[] {
   return value
     .split(",")
     .map((f) => f.trim())
-    .filter((f) => f.length > 0 && !required.has(f));
+    .filter((f) => f.length > 0);
+}
+
+export function parseStrippedFieldsInput(value: string): string[] {
+  return filterRequiredFields(splitFieldsInput(value));
+}
+
+export function filterRequiredFields(fields: string[]): string[] {
+  return fields.filter((f) => !REQUIRED_SET.has(f));
 }
 
 export function requiredFieldsIn(fields: string[]): string[] {
-  const required = new Set<string>(REQUIRED_FRONTMATTER_FIELDS);
-  return [...new Set(fields.filter((f) => required.has(f)))];
+  return [...new Set(fields.filter((f) => REQUIRED_SET.has(f)))];
 }
 
 export function parseFrontmatter(text: string): Record<string, unknown> {
@@ -113,6 +142,93 @@ export function validateConnectionSettings(
     return "Repository owner and name are required";
   }
   return null;
+}
+
+/** A branch name is trimmed and must be non-empty: unlike PR labels, you
+ * cannot publish without one. */
+export function normalizeBaseBranch(value: string): string {
+  return value.trim() || DEFAULT_SETTINGS.baseBranch;
+}
+
+/**
+ * Labels are trimmed and emptied of blanks. An empty result is kept, not
+ * replaced: publishing with no labels is a thing a user may want, and
+ * replacing `[]` with the default meant clearing the field never stuck
+ * across a reload (#314). Only a value that is not a string array at all
+ * falls back.
+ */
+export function normalizePrLabels(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
+    return [...DEFAULT_SETTINGS.prLabels];
+  }
+  return value.map((l) => l.trim()).filter((l) => l.length > 0);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * One normalizer per field, applied on load as well as on input.
+ *
+ * Two questions, and each field needs both answered. **Absent or the
+ * wrong type** falls back to the default — a single corrupted field must
+ * not wipe the rest of a configuration. **Present but unnormalized**
+ * runs the same function the settings control runs, so the value a
+ * reload produces is the value the control would have stored.
+ *
+ * Previously the load path answered only the first question and the
+ * control only the second, which meant all nine fields could disagree
+ * about what a bad value is. A persisted `../escape` survived untouched;
+ * `  main  ` kept its spaces; `[]` labels came back as the default. This
+ * is the one place to add a field, and adding it here is what keeps the
+ * two sides from drifting again.
+ */
+export function parseSettings(data: unknown): PublisherSettings {
+  const d = isPlainObject(data) ? data : {};
+  const str = (value: unknown, fallback: string) =>
+    typeof value === "string" ? value : fallback;
+
+  return {
+    githubToken: str(d.githubToken, DEFAULT_SETTINGS.githubToken),
+    repoOwner:
+      typeof d.repoOwner === "string"
+        ? sanitizeGitHubOwner(d.repoOwner)
+        : DEFAULT_SETTINGS.repoOwner,
+    repoName:
+      typeof d.repoName === "string"
+        ? sanitizeRepoName(d.repoName)
+        : DEFAULT_SETTINGS.repoName,
+    contentDir:
+      typeof d.contentDir === "string"
+        ? sanitizePath(d.contentDir)
+        : DEFAULT_SETTINGS.contentDir,
+    imageDir:
+      typeof d.imageDir === "string"
+        ? sanitizePath(d.imageDir)
+        : DEFAULT_SETTINGS.imageDir,
+    frontmatterTemplate: isPlainObject(d.frontmatterTemplate)
+      ? d.frontmatterTemplate
+      : { ...DEFAULT_SETTINGS.frontmatterTemplate },
+    strippedFrontmatterFields: filterRequiredFields(
+      Array.isArray(d.strippedFrontmatterFields) &&
+        d.strippedFrontmatterFields.every((v) => typeof v === "string")
+        ? (d.strippedFrontmatterFields as string[])
+        : DEFAULT_SETTINGS.strippedFrontmatterFields,
+    ),
+    baseBranch: normalizeBaseBranch(
+      str(d.baseBranch, DEFAULT_SETTINGS.baseBranch),
+    ),
+    prLabels: normalizePrLabels(d.prLabels),
+    calloutShortcodeName: normalizeShortcodeName(
+      str(d.calloutShortcodeName, ""),
+      DEFAULT_SETTINGS.calloutShortcodeName,
+    ),
+    mermaidShortcodeName: normalizeShortcodeName(
+      str(d.mermaidShortcodeName, ""),
+      DEFAULT_SETTINGS.mermaidShortcodeName,
+    ),
+  };
 }
 
 export class PublisherSettingTab extends PluginSettingTab {
@@ -200,7 +316,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: "main",
       getValue: () => settings.baseBranch,
       onChange: (value) => {
-        settings.baseBranch = value.trim() || "main";
+        settings.baseBranch = normalizeBaseBranch(value);
         save();
       },
     });
@@ -211,10 +327,7 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: "chore",
       getValue: () => settings.prLabels.join(", "),
       onChange: (value) => {
-        settings.prLabels = value
-          .split(",")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
+        settings.prLabels = splitFieldsInput(value);
         save();
       },
     });
@@ -225,8 +338,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: "callout",
       getValue: () => settings.calloutShortcodeName,
       onChange: (value) => {
-        settings.calloutShortcodeName =
-          sanitizeShortcodeName(value) || "callout";
+        settings.calloutShortcodeName = normalizeShortcodeName(
+          value,
+          DEFAULT_SETTINGS.calloutShortcodeName,
+        );
         save();
       },
     });
@@ -237,8 +352,10 @@ export class PublisherSettingTab extends PluginSettingTab {
       placeholder: "mermaid",
       getValue: () => settings.mermaidShortcodeName,
       onChange: (value) => {
-        settings.mermaidShortcodeName =
-          sanitizeShortcodeName(value) || "mermaid";
+        settings.mermaidShortcodeName = normalizeShortcodeName(
+          value,
+          DEFAULT_SETTINGS.mermaidShortcodeName,
+        );
         save();
       },
     });
@@ -260,13 +377,10 @@ export class PublisherSettingTab extends PluginSettingTab {
         .setPlaceholder("status, lastmod, cssclasses")
         .setValue(settings.strippedFrontmatterFields.join(", "))
         .onChange((value) => {
-          const raw = value
-            .split(",")
-            .map((f) => f.trim())
-            .filter((f) => f.length > 0);
+          const raw = splitFieldsInput(value);
           const blocked = requiredFieldsIn(raw);
           const newlyBlocked = blocked.filter((f) => !lastBlocked.has(f));
-          settings.strippedFrontmatterFields = parseStrippedFieldsInput(value);
+          settings.strippedFrontmatterFields = filterRequiredFields(raw);
           if (newlyBlocked.length > 0) {
             new Notice(
               `Cannot strip required frontmatter field${newlyBlocked.length > 1 ? "s" : ""}: ${newlyBlocked.join(", ")}. Required for publishing; ignored.`,

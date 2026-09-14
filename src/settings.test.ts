@@ -2,6 +2,7 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import type { App } from "obsidian";
 import type ObsidianPublisher from "./main";
 import {
+  normalizeShortcodeName,
   PublisherSettingTab,
   parseFrontmatter,
   parseStrippedFieldsInput,
@@ -9,7 +10,6 @@ import {
   sanitizeGitHubOwner,
   sanitizePath,
   sanitizeRepoName,
-  sanitizeShortcodeName,
   serializeFrontmatter,
   validateConnectionSettings,
 } from "./settings";
@@ -137,21 +137,31 @@ describe("sanitizePath", () => {
   });
 });
 
-describe("sanitizeShortcodeName", () => {
-  test("strips spaces", () => {
-    expect(sanitizeShortcodeName("my bad name")).toBe("mybadname");
+describe("normalizeShortcodeName", () => {
+  // #314 retired repair in favour of reject-or-default. `my bad name`
+  // used to become `mybadname`, which names a Hugo template that does not
+  // exist — a failure at site build time rather than at the point the
+  // value was typed. The load path already rejected; now both do.
+  test("accepts a legal name as typed", () => {
+    expect(normalizeShortcodeName("my-callout_2", "callout")).toBe(
+      "my-callout_2",
+    );
   });
 
-  test("strips template delimiters and special chars", () => {
-    expect(sanitizeShortcodeName("foo{{<bar>}}")).toBe("foobar");
+  test("trims surrounding whitespace", () => {
+    expect(normalizeShortcodeName("  callout  ", "callout")).toBe("callout");
   });
 
-  test("preserves hyphens and underscores", () => {
-    expect(sanitizeShortcodeName("my_custom-name")).toBe("my_custom-name");
+  test("rejects a name with a space rather than closing it up", () => {
+    expect(normalizeShortcodeName("my bad name", "callout")).toBe("callout");
   });
 
-  test("returns empty string when input is all invalid chars", () => {
-    expect(sanitizeShortcodeName(" !@#$ ")).toBe("");
+  test("rejects punctuation rather than stripping it", () => {
+    expect(normalizeShortcodeName("call!out", "callout")).toBe("callout");
+  });
+
+  test("falls back on empty input", () => {
+    expect(normalizeShortcodeName("   ", "mermaid")).toBe("mermaid");
   });
 });
 

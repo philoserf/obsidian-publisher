@@ -290,8 +290,9 @@ URL, and it is the counterweight to having no delete path.
 
 Adding a transform is easy and the shape is obvious: a method on `NoteTransformer`, slotted
 into `processFromSplit` on the prose side (or the code side, if it owns a fence), plus tests.
-Adding a settings field is easy: `PublisherSettings`, `DEFAULT_SETTINGS`, a validated branch
-in `parseSettings`, a control in `settings.ts`. Adding a warning kind means a variant in
+Adding a settings field is easy: `PublisherSettings`, `DEFAULT_SETTINGS`, and one normalizer
+in `settings.ts` called by both the control and `parseSettings` — one place, not two, since
+1.10.0 (#314). Adding a warning kind means a variant in
 `PublishWarning` and a branch in `formatWarnings` — and `notices.ts` is pure and separately
 tested precisely so the notice tree can be reasoned about without a plugin instance.
 
