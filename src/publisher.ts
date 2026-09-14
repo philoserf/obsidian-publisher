@@ -15,6 +15,15 @@ import {
   type PublishWarning,
 } from "./types";
 
+/** The gateway surface `Publisher` uses. A port rather than the class
+ * itself because `GitHubApiGateway`'s private fields make it nominal, so
+ * no fake can satisfy it; the constructor's default argument is where the
+ * real class is checked against these four. */
+export type PublishGateway = Pick<
+  GitHubApiGateway,
+  "commitFiles" | "createBranchWithRetry" | "createPullRequest" | "deleteBranch"
+>;
+
 type ProgressCallback = (done: number, total: number) => void;
 
 type FileEntry = { path: string; content: string | ArrayBuffer };
@@ -104,7 +113,7 @@ export class Publisher {
   private vault: Vault;
   private settings: PublisherSettings;
   private noteTransformer: NoteTransformer;
-  private githubApiGateway: GitHubApiGateway;
+  private githubApiGateway: PublishGateway;
   private onProgress?: ProgressCallback;
   private metadataCache?: MetadataCache;
 
@@ -113,11 +122,12 @@ export class Publisher {
     settings: PublisherSettings,
     onProgress?: ProgressCallback,
     metadataCache?: MetadataCache,
+    githubApiGateway: PublishGateway = new GitHubApiGateway(settings),
   ) {
     this.vault = vault;
     this.settings = settings;
     this.noteTransformer = new NoteTransformer(settings);
-    this.githubApiGateway = new GitHubApiGateway(settings);
+    this.githubApiGateway = githubApiGateway;
     this.onProgress = onProgress;
     this.metadataCache = metadataCache;
   }
