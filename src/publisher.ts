@@ -29,6 +29,32 @@ type ProgressCallback = (done: number, total: number) => void;
 
 type FileEntry = { path: string; content: string | ArrayBuffer };
 
+/**
+ * The outcome of preparing one note: transformed, its images resolved,
+ * nothing committed.
+ *
+ * Deliberately not a `PublishResult`. A `PublishResult` with
+ * `success: true` means "this note was published" everywhere else in the
+ * system — it is what `buildBatchResult` counts, what `formatBatchNotice`
+ * announces, and what `main.ts` prints under "Successful publishes". At
+ * preparation time no branch has been written to, so minting one here
+ * made every path from preparation to a returned batch responsible for
+ * remembering to rewrite it, and the compiler could not help because the
+ * two were the same type (#309).
+ *
+ * A note's entries hang off its own `Prepared`, built and attached
+ * together, so a note that failed cannot own entries — which is what
+ * dissolves #295 rather than reordering two statements.
+ */
+type Prepared =
+  | {
+      filePath: string;
+      ok: true;
+      entries: FileEntry[];
+      warnings: PublishWarning[];
+    }
+  | { filePath: string; ok: false; error: string; warnings: PublishWarning[] };
+
 type PublishableFile = { file: TFile; frontmatter: Frontmatter; body: string };
 
 type WorkflowOpts = {
@@ -61,23 +87,62 @@ function failedResults(
  * Return a copy of results with every successful entry converted to a
  * failed one carrying the given error. Failures keep their original error.
  */
-function markResultsFailed(
-  results: PublishResult[],
-  error: unknown,
-  prefix?: string,
+/**
+ * The only place a `PublishResult` is made from a `Prepared`, and so the
+ * only place a publish outcome is decided.
+ *
+ * `commitError` is the commit that never landed: a prepared success
+ * becomes a failure carrying that error, and a note that failed during
+ * preparation keeps the reason it failed for. This replaces three exits
+ * that each had to remember to rewrite a value that was already wrong.
+ */
+function toResults(
+  prepared: Prepared[],
+  commitError?: { error: unknown; prefix?: string },
 ): PublishResult[] {
-  const message = errorMessage(error);
-  const formatted = prefix ? `${prefix}: ${message}` : message;
-  return results.map((r) =>
-    r.success
-      ? {
-          filePath: r.filePath,
+  const formatted = commitError
+    ? commitError.prefix
+      ? `${commitError.prefix}: ${errorMessage(commitError.error)}`
+      : errorMessage(commitError.error)
+    : undefined;
+
+  return prepared.map((p) => {
+    if (!p.ok) {
+      return {
+        filePath: p.filePath,
+        success: false,
+        error: p.error,
+        warnings: p.warnings,
+      };
+    }
+    return formatted === undefined
+      ? { filePath: p.filePath, success: true, warnings: p.warnings }
+      : {
+          filePath: p.filePath,
           success: false,
           error: formatted,
-          warnings: r.warnings,
-        }
-      : r,
-  );
+          warnings: p.warnings,
+        };
+  });
+}
+
+/**
+ * The commit's file entries, from the notes that actually prepared.
+ *
+ * Deduplicates by target path in note order, reproducing what the shared
+ * `entryMap` did: two notes referencing one image share a buffer through
+ * `imageReadCache`, so a later write of the same path is the same bytes.
+ */
+function flattenEntries(prepared: Prepared[]): FileEntry[] {
+  const byPath = new Map<string, string | ArrayBuffer>();
+  for (const p of prepared) {
+    if (!p.ok) continue;
+    for (const entry of p.entries) byPath.set(entry.path, entry.content);
+  }
+  return Array.from(byPath.entries()).map(([path, content]) => ({
+    path,
+    content,
+  }));
 }
 
 function buildBatchResult(
@@ -396,21 +461,19 @@ export class Publisher {
    * results with every successful entry marked failed plus the error
    * message; on success (or nothing to commit) returns them unchanged.
    */
+  /** Commit, reporting only whether it landed. Turning that into publish
+   * outcomes is `toResults`' job, not this one's. */
   private async commitPreparedBatch(
     branchName: string,
-    results: PublishResult[],
     fileEntries: FileEntry[],
     message: string,
-  ): Promise<{ results: PublishResult[]; error?: string }> {
-    if (fileEntries.length === 0) return { results };
+  ): Promise<{ error?: unknown }> {
+    if (fileEntries.length === 0) return {};
     try {
       await this.githubApiGateway.commitFiles(fileEntries, message, branchName);
-      return { results };
+      return {};
     } catch (error) {
-      return {
-        results: markResultsFailed(results, error, "Commit failed"),
-        error: errorMessage(error),
-      };
+      return { error };
     }
   }
 
@@ -419,7 +482,8 @@ export class Publisher {
    * then prepares `opts.files` into the entries to commit. If branch
    * creation fails, per-file failures are synthesized from that same
    * list (so the user sees N failures, not just a bare error). On any
-   * other failure, the prepared results are marked failed. Callers
+   * other failure the prepared notes are converted with the workflow
+   * error, so a prepared success never reports as published. Callers
    * supply the branch prefix plus the commit-message and PR title/body
    * builders so single-note and batch paths share this workflow while
    * keeping their distinct PR shapes.
@@ -434,14 +498,16 @@ export class Publisher {
         this.settings.baseBranch,
       );
     } catch (error) {
-      return this.workflowFailure(opts, [], error);
+      return this.workflowFailure(opts, undefined, error);
     }
 
-    let prepared: PublishResult[] = [];
+    // Left undefined until preparation completes, so `workflowFailure`
+    // can tell "nothing was prepared" from "these notes prepared and then
+    // the workflow failed" rather than inferring it from an empty array.
+    let prepared: Prepared[] | undefined;
     try {
-      const batch = await this.prepareBatch(opts.files);
-      prepared = batch.results;
-      return await this.commitAndOpenPr(branchName, batch, opts);
+      prepared = await this.prepareBatch(opts.files);
+      return await this.commitAndOpenPr(branchName, prepared, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
       return this.workflowFailure(opts, prepared, error);
@@ -454,23 +520,33 @@ export class Publisher {
    */
   private async commitAndOpenPr(
     branchName: string,
-    batch: { results: PublishResult[]; fileEntries: FileEntry[] },
+    prepared: Prepared[],
     opts: WorkflowOpts,
   ): Promise<BatchPublishResult> {
-    const successCount = batch.results.filter((r) => r.success).length;
+    const successCount = prepared.filter((p) => p.ok).length;
     const committed = await this.commitPreparedBatch(
       branchName,
-      batch.results,
-      batch.fileEntries,
+      flattenEntries(prepared),
       opts.commitMessage(successCount),
     );
 
-    const succeeded = committed.results.filter((r) => r.success);
-    const results = [...opts.readFailures, ...committed.results];
+    const committedResults = toResults(
+      prepared,
+      committed.error === undefined
+        ? undefined
+        : { error: committed.error, prefix: "Commit failed" },
+    );
+    const succeeded = committedResults.filter((r) => r.success);
+    const results = [...opts.readFailures, ...committedResults];
 
     if (succeeded.length === 0) {
       await this.cleanupBranch(branchName);
-      return buildBatchResult(results, { error: committed.error });
+      return buildBatchResult(results, {
+        error:
+          committed.error === undefined
+            ? undefined
+            : errorMessage(committed.error),
+      });
     }
 
     const pr = await this.githubApiGateway.createPullRequest(
@@ -493,14 +569,18 @@ export class Publisher {
    */
   private workflowFailure(
     opts: WorkflowOpts,
-    prepared: PublishResult[],
+    prepared: Prepared[] | undefined,
     error: unknown,
   ): BatchPublishResult {
     const message = errorMessage(error);
+    // `undefined` means preparation never completed — branch creation
+    // failed, or `prepareBatch` itself threw — so every file failed with
+    // the workflow error. Otherwise the notes carry their own outcomes and
+    // the workflow error overrides the successes among them.
     const failed =
-      prepared.length === 0
+      prepared === undefined
         ? failedResults(opts.files, message)
-        : markResultsFailed(prepared, error);
+        : toResults(prepared, { error });
     return buildBatchResult([...opts.readFailures, ...failed], {
       error: message,
     });
@@ -582,16 +662,18 @@ export class Publisher {
 
   /**
    * Prepare all files for a batch commit.
-   * Validates each file's frontmatter; invalid files become failed
-   * results. Returns per-file results and collected file entries for
-   * commitFiles().
+   *
+   * Validates each file's frontmatter, transforms the body and resolves
+   * its images. Returns one `Prepared` per note, each owning its own
+   * entries — nothing here decides a publish outcome, because nothing
+   * here has committed anything.
+   *
+   * The batch-scoped `imageReadCache` and `targetPathOwners` stay
+   * batch-scoped on purpose: cross-note deduplication and collision
+   * warnings are batch concerns, not per-note ones.
    */
-  private async prepareBatch(files: PublishableFile[]): Promise<{
-    results: PublishResult[];
-    fileEntries: FileEntry[];
-  }> {
-    const results: PublishResult[] = [];
-    const entryMap = new Map<string, string | ArrayBuffer>();
+  private async prepareBatch(files: PublishableFile[]): Promise<Prepared[]> {
+    const prepared: Prepared[] = [];
     const filesByPathSuffix = this.buildFilesByPathSuffix();
     const publishSet = this.buildPublishSet(files);
     // Read each image source once per batch; multiple notes referencing
@@ -605,7 +687,12 @@ export class Publisher {
       try {
         const validationError = validateFrontmatter(frontmatter);
         if (validationError) {
-          results.push(failedResult(file.path, validationError));
+          prepared.push({
+            filePath: file.path,
+            ok: false,
+            error: validationError,
+            warnings: [],
+          });
         } else {
           const processed = this.noteTransformer.processFromSplit(
             frontmatter,
@@ -614,31 +701,41 @@ export class Publisher {
             publishSet,
           );
 
-          const targetPath = `${this.settings.contentDir}/${processed.filename}`;
-          entryMap.set(targetPath, processed.content);
-
           const { entries: imageEntries, warnings } = await this.resolveImages(
             processed.images,
             filesByPathSuffix,
             imageReadCache,
             targetPathOwners,
           );
-          for (const entry of imageEntries) {
-            entryMap.set(entry.path, entry.content);
-          }
 
-          results.push({ filePath: file.path, success: true, warnings });
+          // Built and attached together, after every await this note
+          // needs. There is no window in which the note's content belongs
+          // to the batch before the note does.
+          prepared.push({
+            filePath: file.path,
+            ok: true,
+            entries: [
+              {
+                path: `${this.settings.contentDir}/${processed.filename}`,
+                content: processed.content,
+              },
+              ...imageEntries,
+            ],
+            warnings,
+          });
         }
       } catch (error) {
-        results.push(failedResult(file.path, errorMessage(error)));
+        prepared.push({
+          filePath: file.path,
+          ok: false,
+          error: errorMessage(error),
+          warnings: [],
+        });
       }
 
-      this.onProgress?.(results.length, files.length);
+      this.onProgress?.(prepared.length, files.length);
     }
 
-    const fileEntries = Array.from(entryMap.entries()).map(
-      ([path, content]) => ({ path, content }),
-    );
-    return { results, fileEntries };
+    return prepared;
   }
 }

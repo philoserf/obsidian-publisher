@@ -192,11 +192,17 @@ read the notice tree: `formatBatchNotice` branches on `total === 0` and prints "
 notes found." A batch that failed wholesale before preparing anything — a filename collision,
 say — would otherwise report zero total and be announced to the user as _nothing to do_.
 
-`markResultsFailed` is the same idea from the other end. If the commit throws after
-preparation succeeded, every prepared success is rewritten as a failure, so the user is never
-told "twelve notes prepared successfully" about a commit that never landed. Preparation
-success is not publish success, and the type system does not know that; these two helpers are
-where the distinction lives.
+`toResults` is the same idea from the other end. If the commit throws after preparation
+succeeded, every prepared note becomes a failure carrying that error, so the user is never
+told "twelve notes prepared successfully" about a commit that never landed.
+
+Preparation success is not publish success, and **the type system now knows that.** It did
+not always: `prepareBatch` used to report preparation outcomes as `PublishResult`, so a
+prepared success and a published success were the same value, and correctness depended on
+three separate exits each remembering to rewrite one that was already wrong. Resolved in
+1.10.0 (#309) — `prepareBatch` returns `Prepared`, a distinct type whose successful arm owns
+that note's file entries, and `toResults` is the only place a `PublishResult` is made from
+one. The difference lives in a type instead of in two corrective helpers.
 
 ### Retry is licensed by idempotency, and 422 is not a retry
 
@@ -293,16 +299,6 @@ without realizing it renames live files.
 ## Uncertainties
 
 Everything below is inferred from code and history. Treat it as flagged, not settled.
-
-**`prepareBatch` has a narrow window where a failed note can still be committed** — tracked
-as #295, and this pass corroborates it without widening it. The note's content is written into
-`entryMap` _before_ `resolveImages` runs; if `resolveImages` threw, the outer catch would
-record a failed result while the entry stayed in the map and went out with the commit. Still
-unreachable today: `resolveImages` catches per-image and its only `await` sits inside that
-`try`. What this pass adds is why the hazard is easy to reintroduce — `prepareBatch` is also
-where every _other_ per-note concern accumulated (validation, transform, image resolution,
-progress ticks), so it is the natural place to add the next `await`, and the ordering that
-makes it safe is not visible from inside the loop body.
 
 **Seam discipline was inconsistent, and the reading was history rather than intent.**
 `GitHubApiGateway` took an injectable `Sleep` so retry timing was testable, while `Publisher`
