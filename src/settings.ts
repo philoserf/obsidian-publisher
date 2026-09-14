@@ -46,8 +46,8 @@ export function sanitizeRepoName(value: string): string {
  *
  * No ordering of removals fixes that, so nothing is removed. A path is
  * either acceptable as written or rejected whole, and rejection returns
- * `""`, which routes into `Publisher.validateSettings()` and fails the
- * publish with "Content directory must be configured" — loud, rather than
+ * `""`, which routes into `validatePublish` and fails the publish with
+ * "Content directory is required" — loud, rather than
  * silently publishing somewhere odd.
  *
  * Deliberately *not* an allowlist of permitted characters: a space and a
@@ -134,13 +134,38 @@ export function parseFrontmatter(text: string): Record<string, unknown> {
   }
 }
 
-export function validateConnectionSettings(
-  settings: PublisherSettings,
-): string | null {
+/**
+ * Is this configuration enough to reach GitHub?
+ *
+ * Deliberately narrower than `validatePublish`: a connection test does not
+ * need a content directory, and requiring one would block the button whose
+ * whole job is telling the user their token works.
+ */
+export function validateConnection(settings: PublisherSettings): string | null {
   if (!settings.githubToken) return "GitHub token is required";
   if (!settings.repoOwner || !settings.repoName) {
     return "Repository owner and name are required";
   }
+  return null;
+}
+
+/**
+ * Is this configuration enough to publish?
+ *
+ * Derived from `validateConnection` rather than restating its two checks —
+ * the field sets differ on purpose, but "a usable configuration needs a
+ * token and an owner/name pair" is one piece of knowledge and used to be
+ * stated twice, in two modules, in two vocabularies that the user met in
+ * the same settings session (#318).
+ *
+ * One vocabulary now: "… is required". A field added to `PublisherSettings`
+ * that publishing needs goes here, and there is no second place to forget.
+ */
+export function validatePublish(settings: PublisherSettings): string | null {
+  const connection = validateConnection(settings);
+  if (connection) return connection;
+  if (!settings.contentDir) return "Content directory is required";
+  if (!settings.imageDir) return "Image directory is required";
   return null;
 }
 
@@ -464,7 +489,7 @@ export class PublisherSettingTab extends PluginSettingTab {
   private async testConnection(): Promise<void> {
     const settings = this.plugin.settings;
 
-    const validationError = validateConnectionSettings(settings);
+    const validationError = validateConnection(settings);
     if (validationError) {
       new Notice(validationError);
       return;

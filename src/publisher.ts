@@ -7,6 +7,7 @@ import {
   splitFrontmatter,
   validateFrontmatter,
 } from "./schema";
+import { validatePublish } from "./settings";
 import { sanitizeFilename, sanitizeSlug, vaultBasename } from "./slug";
 import {
   type BatchPublishResult,
@@ -589,20 +590,16 @@ export class Publisher {
   /**
    * Validate settings before publishing
    */
+  /**
+   * Delegates to `validatePublish`, which owns the question.
+   *
+   * Kept as a method because `main.ts` already holds a `Publisher` at both
+   * call sites and `main.test.ts` spies on it, but it states nothing of its
+   * own: configuration validity belongs beside the settings type, its
+   * defaults and its normalizers, not in the orchestrator (#318).
+   */
   validateSettings(): string | null {
-    if (!this.settings.githubToken) {
-      return "GitHub token is not configured";
-    }
-    if (!this.settings.repoOwner || !this.settings.repoName) {
-      return "Repository owner and name must be configured";
-    }
-    if (!this.settings.contentDir) {
-      return "Content directory must be configured";
-    }
-    if (!this.settings.imageDir) {
-      return "Image directory must be configured";
-    }
-    return null;
+    return validatePublish(this.settings);
   }
 
   // === Private helpers ===

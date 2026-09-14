@@ -11,7 +11,7 @@ import {
   sanitizePath,
   sanitizeRepoName,
   serializeFrontmatter,
-  validateConnectionSettings,
+  validateConnection,
 } from "./settings";
 import { DEFAULT_SETTINGS, type PublisherSettings } from "./types";
 
@@ -80,7 +80,7 @@ describe("sanitizePath", () => {
   // and keeping the rest made the value look checked while leaving the
   // author's intent — "escape the content directory" — partly honoured.
   // An empty return routes into validateSettings(), which fails the
-  // publish with "Content directory must be configured".
+  // publish with "Content directory is required".
   test("rejects parent-directory traversal", () => {
     expect(sanitizePath("../etc/passwd")).toBe("");
   });
@@ -291,27 +291,27 @@ describe("PublisherSettingTab.hide", () => {
   });
 });
 
-describe("validateConnectionSettings", () => {
+describe("validateConnection", () => {
   test("returns null for complete settings", () => {
-    expect(validateConnectionSettings(makeSettings())).toBeNull();
+    expect(validateConnection(makeSettings())).toBeNull();
   });
 
   test("returns error when githubToken missing", () => {
-    expect(
-      validateConnectionSettings(makeSettings({ githubToken: "" })),
-    ).toContain("token");
+    expect(validateConnection(makeSettings({ githubToken: "" }))).toContain(
+      "token",
+    );
   });
 
   test("returns error when repoOwner missing", () => {
-    expect(
-      validateConnectionSettings(makeSettings({ repoOwner: "" })),
-    ).toContain("owner");
+    expect(validateConnection(makeSettings({ repoOwner: "" }))).toContain(
+      "owner",
+    );
   });
 
   test("returns error when repoName missing", () => {
-    expect(
-      validateConnectionSettings(makeSettings({ repoName: "" })),
-    ).toContain("name");
+    expect(validateConnection(makeSettings({ repoName: "" }))).toContain(
+      "name",
+    );
   });
 });
 
