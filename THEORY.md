@@ -255,6 +255,15 @@ collision test whose subject is something else entirely. Rewrite that test with 
 fixtures and the coupling silently stops being checked. It deserves a direct test of its own,
 the way `slug.test.ts` directly pins the slug/filename agreement.
 
+**The standing documents are themselves a seam, and only two of the three are
+checked.** `WALKTHROUGH.md` is regenerated once per release and `bun run verify:docs`
+re-executes its code blocks at the release gate; `THEORY.md` is regenerated once per
+release. Nothing re-executes prose, so a claim in any of them can go false silently — which
+has happened twice (#254, #328) and, until `af727dd`, a third time in `TESTING.md`, the one
+document that had no cadence at all. Its rule now is to be re-read whenever a test file is
+added or removed, that being the event that drifts it. Treat all three as code that no
+compiler checks.
+
 ## What the system accommodates, and what it does not
 
 It absorbs new **transforms** well. Add a prose transform to the chain in `transformProse`,
@@ -315,8 +324,8 @@ nothing to consult.
 and #298 deleted exactly that shape elsewhere in the same release — one-line delegations
 whose bodies are the functions they call. #335's reasoning is explicit (twelve test call
 sites spy on the method, and `main.ts` already holds a `Publisher` at both call sites), so
-this is a reasoned exception rather than drift. I record it because the next person to run a
-reduction pass will find it and should know the argument was already had.
+this is a reasoned exception rather than drift. Recorded because the next person hunting
+for code to delete will find it and should know the argument was already had.
 
 **The `~` rejection in `sanitizePath` has no stated justification.** The code comment admits
 it: there is no shell, and GitHub's tree API does not expand `~`, so the threat model is
@@ -326,17 +335,3 @@ the one rule in the settings layer nobody can currently explain.
 **The Hugo contract may already have drifted and nothing here would know.** See the seam
 above. This is the system's largest untested assumption and it lives entirely outside the
 repository.
-
-## Findings from this pass
-
-| #   | Severity | Issue                                                                         | Primary location                                 |
-| --- | -------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
-| 1   | low      | `TESTING.md` has no regeneration cadence and three of its counts have drifted | `TESTING.md`, "Current state" and "What we test" |
-
-**Total: 1 issue (0 critical, 0 high, 0 medium, 1 low)**
-
-The critical, high and medium bands are empty, and that is a real result rather than a
-shortfall of looking: 1.10.0 closed twenty-one issues that were largely this kind of finding,
-and the stale doc comments found while regenerating `WALKTHROUGH.md` were corrected in
-`12e6612`. What remains is the one standing document with no cadence — the same failure class
-as #254 and #328, which were resolved by giving the other two documents one.

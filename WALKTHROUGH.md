@@ -2243,8 +2243,15 @@ Know what a green verify does and does not mean. It re-runs the code blocks
 and never reads the prose around them, so a *deleted* function leaves the
 narrative describing something that is gone while verify still passes — a
 `sed` range matching nothing yields empty output rather than wrong output.
-Issue #328 has the measurements. The same blind spot applies to the
-source's own doc comments, which is what this pass's one finding is about.
+Issue #328 has the measurements.
+
+The same blind spot covers the source's own doc comments, and this
+regeneration turned up six of them: four sites carrying two consecutive
+block comments where the newer one had been added below the stale one, and
+two orphaned blocks whose functions no longer existed at all. The sharpest
+stated `commitPreparedBatch`'s pre-#309 contract directly above a signature
+that contradicted it. Corrected in `12e6612`; nothing in the toolchain
+could have reported them.
 
 ## Companion documents
 
@@ -2257,31 +2264,3 @@ This one deliberately does not duplicate them:
 - `TESTING.md` — where a new test belongs, and why Octokit is mocked at
   three levels.
 - `CLAUDE.md` — the working conventions and the invariants in brief.
-
-## Findings from this pass
-
-One finding, filed while tracing the call chain and corrected in the same
-pass.
-
-| #   | Severity | Issue                                                                                                            | Primary location                                                                                                                            | Status            |
-| --- | -------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| 1   | medium   | Five JSDoc blocks describe functions that no longer exist, and one states a return contract the code contradicts | `note-transformer.ts` (between `imageUrlPath` and `convertHighlights`, and above `convertMermaid`); `publisher.ts` (above `toResults` and `commitPreparedBatch`) | corrected in place |
-
-**Total: 1 issue (0 critical, 0 high, 1 medium, 0 low)**
-
-Five refactor threads had moved or dissolved functions without removing the
-doc comments above them. Four sites carried two consecutive block comments
-where the newer one had been added below the stale one rather than
-replacing it; two carried an orphaned block with no function beneath it at
-all. The sharpest sat above `commitPreparedBatch`, stating that function's
-pre-#309 contract ("returns the results with every successful entry marked
-failed") directly above the current doc and a signature returning
-`{ error?: unknown }`.
-
-Neither `bun run check` nor `bun run verify:docs` could see any of it, which
-is the same blind spot #328 measured for this document's own prose. All six
-sites were corrected in the same pass that found them: four blocks deleted
-outright, and the callout prose — still accurate, merely detached — merged
-into `transformQuote`, where the behavior it describes now lives. The
-change is comment-only, and the minified bundle is byte-identical.
-
