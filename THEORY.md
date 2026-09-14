@@ -56,7 +56,7 @@ change.
 `[[Some Note]]` becomes a link only if `some-note` is in the publish set — the set built
 from the files in _this run_. Otherwise it degrades to bare display text. `buildPublishSet`
 computes it, `processFromSplit` takes it as a parameter, `convertWikilinks` and
-`convertNoteEmbeds` consult it.
+`convertEmbeds` consult it.
 
 The consequence is sharper than "publishing is not monotonic." `publishNote` passes a
 single-element list into the same workflow, so its publish set contains exactly one slug:
@@ -308,12 +308,15 @@ consistent with "every operation is self-contained," so it may be deliberate —
 warning's existence implies someone thought the overwrite worth reporting, and the
 cross-operation case is not reported.
 
-**One transform branch appears unreachable.** `convertNoteEmbeds` tests
-`IMAGE_EXTENSIONS.test(nameForCheck)` and returns the match untouched "for
-convertImageReferences" — but `convertImageReferences` runs first over the same regex, so no
-image embed survives to reach it. The parenthetical "(already processed)" suggests the author
-knew. Left here rather than filed, because whether it is dead weight or deliberate belt-and-
-braces is a reduction question, not a theory one.
+**One transform branch appeared unreachable, and was.** `convertNoteEmbeds` tested
+`IMAGE_EXTENSIONS.test(nameForCheck)` and returned the match untouched "for
+convertImageReferences" — but `convertImageReferences` ran first over the same regex, so no
+image embed survived to reach it. The parenthetical "(already processed)" suggested the author
+knew. Left here rather than filed, because whether it was dead weight or deliberate belt-and-
+braces was a reduction question, not a theory one. Reduction answered it: the two methods
+were one pass over one syntax, and #317 merged them into `convertEmbeds`, which classifies
+once and dispatches. The guard is gone because the ordering it depended on no longer exists
+(#301, closed against the merge).
 
 **Error-message handling has two conventions.** `errorMessage` flattens any non-`Error` throw
 to `"Unknown error"`; `resolveImages` deliberately uses `String(error)` instead, so a thrown

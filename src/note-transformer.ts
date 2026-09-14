@@ -23,9 +23,9 @@ const FENCE_OPEN = /^([ \t]*)(`{3,}|~{3,})([^\n]*)$/;
  *
  * Everything the transform chain does is unsafe inside code: `==` is the
  * equality operator in most languages, and `stripComments`,
- * `convertImageReferences`, `convertNoteEmbeds` and `convertWikilinks` all
- * use character classes that admit newlines, so a match can begin inside a
- * fence and end in prose — taking the closing fence with it.
+ * `convertEmbeds` and `convertWikilinks` all use character classes that
+ * admit newlines, so a match can begin inside a fence and end in prose —
+ * taking the closing fence with it.
  *
  * Fenced blocks are matched line-wise so an unterminated fence runs to the
  * end of the note rather than swallowing a later delimiter. Inline spans
@@ -133,8 +133,8 @@ export class NoteTransformer {
 
     // Images are collected from comment-stripped prose, so a reference
     // that only exists inside %% %% or inside a fence is never queued for
-    // upload. Must run before convertImageReferences, which rewrites the
-    // ![[...]] syntax out of existence.
+    // upload. Must run before convertEmbeds, which rewrites the ![[...]]
+    // syntax out of existence.
     const images = this.extractImages(prose.join("\n"));
 
     let proseIndex = 0;
@@ -144,8 +144,7 @@ export class NoteTransformer {
         let text = prose[proseIndex++];
         text = this.convertHighlights(text);
         text = this.convertCallouts(text);
-        text = this.convertImageReferences(text);
-        text = this.convertNoteEmbeds(text, publishSet);
+        text = this.convertEmbeds(text, publishSet);
         text = this.convertWikilinks(text, publishSet);
         return text;
       })
@@ -394,50 +393,52 @@ export class NoteTransformer {
   }
 
   /**
-   * Convert note embeds (![[Note Name]]) to markdown links when the
-   * target slug is in the publish set; otherwise degrade to plain
-   * display text. Image embeds are left alone for convertImageReferences.
+   * Convert an embed, `![[...]]`, to the markdown it becomes.
+   *
+   * Obsidian's embed syntax has one form, so this is one pass with one
+   * classification: an image extension makes it an image reference, and
+   * anything else is a note embed, converted to a link when its slug is in
+   * the publish set and degraded to plain display text when it is not.
+   *
+   * This used to be two methods, each a full pass that matched every embed
+   * and returned half of them verbatim. That forced them to agree about
+   * classification forever, with the dependency recorded only in two
+   * comments pointing at each other — and made the second one's image
+   * guard unreachable, since the first had already consumed every image
+   * embed (#301).
    */
-  private convertNoteEmbeds(content: string, publishSet: Set<string>): string {
-    const urlPath = this.postsUrlPath();
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const nameForCheck = this.parseImageSuffix(raw).name;
-      if (IMAGE_EXTENSIONS.test(nameForCheck)) {
-        return _match; // leave for convertImageReferences (already processed)
+  private convertEmbeds(content: string, publishSet: Set<string>): string {
+    const imageUrl = this.imageUrlPath();
+    const postsUrl = this.postsUrlPath();
+    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw: string) => {
+      // One front end for both arms: `name` is the text before the first
+      // pipe, which is the image filename and equally the note target.
+      const { name, alt } = this.parseImageSuffix(raw);
+
+      if (IMAGE_EXTENSIONS.test(name)) {
+        const normalizedAlt = alt?.trim();
+        const altText = normalizedAlt ? normalizedAlt : name;
+        return `![${altText}](${imageUrl}${sanitizeFilename(name)})`;
       }
-      // For note embeds, pipe is display text: ![[Note|Display]]. The
-      // target may still carry an anchor (![[Note#Heading]]), which has to
-      // come off before the slug lookup — sanitizeSlug drops the `#` and
+
+      // For note embeds the pipe is display text: ![[Note|Display]]. That
+      // is not `alt` — parseImageSuffix joins everything after the first
+      // pipe, which is right for an image caption and wrong here.
+      //
+      // The target may still carry an anchor (![[Note#Heading]]), which has
+      // to come off before the slug lookup — sanitizeSlug drops the `#` and
       // runs the heading into the name, so "Note#Heading" slugified to
       // "noteheading", never matched the publish set, and every anchored
       // embed degraded to plain text.
-      const [target, displayText] = raw.split("|");
-      const hash = target.indexOf("#");
-      const name = hash === -1 ? target : target.slice(0, hash);
-      const heading = hash === -1 ? "" : target.slice(hash + 1);
-      const display = displayText ?? target;
-      const slug = sanitizeSlug(name);
+      const displayText = raw.split("|")[1];
+      const hash = name.indexOf("#");
+      const page = hash === -1 ? name : name.slice(0, hash);
+      const heading = hash === -1 ? "" : name.slice(hash + 1);
+      const display = displayText ?? name;
+      const slug = sanitizeSlug(page);
       if (!publishSet.has(slug)) return display;
       const fragment = heading ? `#${slugify(heading)}` : "";
-      return `[${display}](${urlPath}${slug}/${fragment})`;
-    });
-  }
-
-  /**
-   * Convert Obsidian image references to Hugo-compatible markdown.
-   * Derives the URL path from the imageDir setting.
-   */
-  private convertImageReferences(content: string): string {
-    const urlPath = this.imageUrlPath();
-    return content.replace(/!\[\[([^\]]+)\]\]/g, (_match, raw) => {
-      const { name, alt } = this.parseImageSuffix(raw);
-      if (!IMAGE_EXTENSIONS.test(name)) {
-        return _match; // not an image — leave for convertNoteEmbeds
-      }
-      const sanitizedName = sanitizeFilename(name);
-      const normalizedAlt = alt?.trim();
-      const altText = normalizedAlt ? normalizedAlt : name;
-      return `![${altText}](${urlPath}${sanitizedName})`;
+      return `[${display}](${postsUrl}${slug}/${fragment})`;
     });
   }
 }
