@@ -9,99 +9,188 @@ import {
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i;
 
-/** A span of the note body. Prose is rewritten by the transform chain;
- * code is opaque to it. */
-type Segment = { kind: "prose" | "code"; text: string };
+/**
+ * A span of the note body.
+ *
+ * - `prose` is rewritten by the transform chain.
+ * - `code` is opaque to it — a fence or an inline span. A fence carries
+ *   the `info` string the scanner already parsed, so `convertMermaid`
+ *   reads it instead of re-matching a narrower fence syntax (#306). A
+ *   span has none, which is how the two are told apart.
+ * - `comment` is a `%% ... %%` run. It is a *kind* rather than a deletion
+ *   so the split stays lossless; assembly and image collection drop it.
+ * - `quote` is a contiguous run of `>`-prefixed lines, interior
+ *   deliberately unscanned. It is a block container: the callout pass
+ *   strips the markers and re-scans the body, which is what lets a fence
+ *   or a comment nest inside one (#303).
+ */
+type Segment = {
+  kind: "prose" | "code" | "comment" | "quote";
+  text: string;
+  info?: string;
+};
 
 /** Opening fence: optional indent, 3+ backticks or tildes, optional info
  * string. Captured so the closing fence can be required to match the same
  * character and be at least as long, per CommonMark. */
 const FENCE_OPEN = /^([ \t]*)(`{3,}|~{3,})([^\n]*)$/;
 
+/** A blockquote line, which is also how Obsidian writes a callout. The
+ * marker needs no trailing space: a bare `>` is Obsidian's own paragraph
+ * separator inside a callout (#299). */
+const QUOTE_LINE = /^[ \t]*>/;
+
 /**
- * Split a body into prose and code segments.
+ * Split a body into segments, resolving every opaque-region delimiter in
+ * one left-to-right pass by earliest start position.
  *
- * Everything the transform chain does is unsafe inside code: `==` is the
- * equality operator in most languages, and `stripComments`,
- * `convertEmbeds` and `convertWikilinks` all use character classes that
- * admit newlines, so a match can begin inside a fence and end in prose —
- * taking the closing fence with it.
+ * The competitors are a fence opener at line start, a blockquote run at
+ * line start, an inline backtick run, and `%%`. One competition is
+ * load-bearing and splitting it would be wrong in both directions:
  *
- * Fenced blocks are matched line-wise so an unterminated fence runs to the
- * end of the note rather than swallowing a later delimiter. Inline spans
- * are matched within prose lines only, and require the same backtick run
- * length to open and close.
+ * - `%%` must compete with fences, or a comment wrapping a fenced block
+ *   is never paired and publishes verbatim (#300).
+ * - `%%` must equally compete with backtick spans, or ``before `%%` after``
+ *   regresses — the span opens first, so the `%%` stays literal, which is
+ *   what Obsidian does.
+ * - A `%%` inside a fence is not a delimiter at all, because the fence
+ *   was consumed when the scan reached its opening line. `note-transformer
+ *   .test.ts` pins this through Mermaid's own `%%` comment syntax.
+ *
+ * Splitting is lossless: concatenating every segment's text reproduces the
+ * input exactly. That is what lets `comment` be a segment rather than a
+ * deletion, and the suite asserts it across every kind.
  */
 export function splitCodeSegments(body: string): Segment[] {
   const segments: Segment[] = [];
-  const lines = body.split("\n");
-
-  // Start offset of each line within `body`. Slicing by offset rather than
-  // rejoining lines is what makes the split lossless: concatenating every
-  // segment's text reproduces the input exactly, newlines included.
-  const starts: number[] = [];
-  let offset = 0;
-  for (const line of lines) {
-    starts.push(offset);
-    offset += line.length + 1;
-  }
-
   let proseStart = 0;
-  const pushProse = (end: number) => {
+  let pos = 0;
+
+  const flushProse = (end: number) => {
     if (end > proseStart) {
-      segments.push(...splitInlineCode(body.slice(proseStart, end)));
+      segments.push({ kind: "prose", text: body.slice(proseStart, end) });
     }
   };
 
-  for (let i = 0; i < lines.length; i++) {
-    const open = lines[i].match(FENCE_OPEN);
-    if (!open) continue;
+  const lineEndAt = (from: number) => {
+    const nl = body.indexOf("\n", from);
+    return nl === -1 ? body.length : nl + 1;
+  };
 
-    pushProse(starts[i]);
+  while (pos < body.length) {
+    const atLineStart = pos === 0 || body[pos - 1] === "\n";
 
-    const marker = open[2];
-    // CommonMark: the closing fence uses the same character, is at least as
-    // long, and carries nothing but whitespace.
-    const closer = new RegExp(
-      `^[ \\t]*\\${marker[0]}{${marker.length},}[ \\t]*$`,
-    );
-    let close = i + 1;
-    while (close < lines.length && !closer.test(lines[close])) close++;
+    if (atLineStart) {
+      const lineEnd = lineEndAt(pos);
+      const line = body.slice(pos, lineEnd).replace(/\r?\n$/, "");
 
-    // An unterminated fence runs to the end of the note rather than
-    // swallowing some later delimiter.
-    const lastLine = close < lines.length ? close : lines.length - 1;
-    const end =
-      lastLine < lines.length - 1 ? starts[lastLine + 1] : body.length;
+      const open = line.match(FENCE_OPEN);
+      if (open) {
+        const marker = open[2];
+        // CommonMark: the closing fence uses the same character, is at
+        // least as long, and carries nothing but whitespace.
+        const closer = new RegExp(
+          `^[ \\t]*\\${marker[0]}{${marker.length},}[ \\t]*$`,
+        );
+        let cursor = lineEnd;
+        while (cursor < body.length) {
+          const nextEnd = lineEndAt(cursor);
+          if (closer.test(body.slice(cursor, nextEnd).replace(/\r?\n$/, ""))) {
+            cursor = nextEnd;
+            break;
+          }
+          cursor = nextEnd;
+        }
+        flushProse(pos);
+        segments.push({
+          kind: "code",
+          text: body.slice(pos, cursor),
+          info: open[3],
+        });
+        proseStart = cursor;
+        pos = cursor;
+        continue;
+      }
 
-    segments.push({ kind: "code", text: body.slice(starts[i], end) });
-    proseStart = end;
-    i = lastLine;
+      if (QUOTE_LINE.test(line)) {
+        let cursor = lineEnd;
+        while (cursor < body.length) {
+          const nextEnd = lineEndAt(cursor);
+          if (
+            !QUOTE_LINE.test(body.slice(cursor, nextEnd).replace(/\r?\n$/, ""))
+          )
+            break;
+          cursor = nextEnd;
+        }
+        flushProse(pos);
+        segments.push({ kind: "quote", text: body.slice(pos, cursor) });
+        proseStart = cursor;
+        pos = cursor;
+        continue;
+      }
+    }
+
+    if (body[pos] === "`") {
+      const span = matchSpan(body, pos);
+      if (span !== null) {
+        flushProse(pos);
+        segments.push({ kind: "code", text: body.slice(pos, span) });
+        proseStart = span;
+        pos = span;
+        continue;
+      }
+    }
+
+    if (body.startsWith("%%", pos)) {
+      const close = body.indexOf("%%", pos + 2);
+      if (close !== -1) {
+        const end = close + 2;
+        flushProse(pos);
+        segments.push({ kind: "comment", text: body.slice(pos, end) });
+        proseStart = end;
+        pos = end;
+        continue;
+      }
+    }
+
+    pos++;
   }
 
-  pushProse(body.length);
+  flushProse(body.length);
   return segments;
 }
 
-/** Split one prose run on inline code spans, requiring the opening and
- * closing backtick runs to be the same length so ``a ` b`` works. */
-function splitInlineCode(text: string): Segment[] {
-  const segments: Segment[] = [];
-  const span = /(`+)(?!`)([\s\S]*?[^`]|)\1(?!`)/g;
-  let last = 0;
-  let m = span.exec(text);
-  while (m !== null) {
-    if (m.index > last) {
-      segments.push({ kind: "prose", text: text.slice(last, m.index) });
+/**
+ * End offset of an inline code span opening at `start`, or null.
+ *
+ * The closing run must be the same length as the opening one, so
+ * ``a ` b`` works. The span may not cross a blank line: CommonMark matches
+ * a span within a paragraph, and admitting `\n\s*\n` let two unmatched
+ * backticks in different paragraphs pair up and exempt everything between
+ * them from the transform chain — comments included (#305).
+ */
+function matchSpan(text: string, start: number): number | null {
+  let runEnd = start;
+  while (text[runEnd] === "`") runEnd++;
+  const runLength = runEnd - start;
+
+  const blank = /\n[ \t]*\n/g;
+  blank.lastIndex = start;
+  const blankAt = blank.exec(text);
+  const limit = blankAt ? blankAt.index : text.length;
+
+  let cursor = runEnd;
+  while (cursor < limit) {
+    if (text[cursor] !== "`") {
+      cursor++;
+      continue;
     }
-    segments.push({ kind: "code", text: m[0] });
-    last = m.index + m[0].length;
-    m = span.exec(text);
+    let closeEnd = cursor;
+    while (text[closeEnd] === "`") closeEnd++;
+    if (closeEnd - cursor === runLength && closeEnd <= limit) return closeEnd;
+    cursor = closeEnd;
   }
-  if (last < text.length) {
-    segments.push({ kind: "prose", text: text.slice(last) });
-  }
-  return segments;
+  return null;
 }
 
 export class NoteTransformer {
@@ -123,30 +212,29 @@ export class NoteTransformer {
   ): ProcessedContent {
     const processedFrontmatter = this.processFrontmatter(frontmatter);
 
+    // One pass over the segments. Each carries its own text, so there is
+    // no second array to re-pair by index (#310) and no synthetic joined
+    // string to collect images from.
+    //
     // Code is opaque to the transform chain. Mermaid is the exception: it
-    // owns ```mermaid fences, so it runs over code segments while every
-    // other transform sees prose only.
+    // owns mermaid fences, so it runs over code segments while every other
+    // transform sees prose. A comment contributes nothing — not to the
+    // output and not to the image set — which is what makes a reference
+    // hidden inside `%% %%` never queued for upload.
     const segments = splitCodeSegments(body);
-    const prose = segments
-      .filter((seg) => seg.kind === "prose")
-      .map((seg) => this.stripComments(seg.text));
 
-    // Images are collected from comment-stripped prose, so a reference
-    // that only exists inside %% %% or inside a fence is never queued for
-    // upload. Must run before convertEmbeds, which rewrites the ![[...]]
-    // syntax out of existence.
-    const images = this.extractImages(prose.join("\n"));
+    const images: string[] = [];
+    for (const seg of segments) {
+      if (seg.kind === "prose" || seg.kind === "quote") {
+        images.push(...this.extractImages(seg.text));
+      }
+    }
 
-    let proseIndex = 0;
     const processedBody = segments
       .map((seg) => {
-        if (seg.kind === "code") return this.convertMermaid(seg.text);
-        let text = prose[proseIndex++];
-        text = this.convertHighlights(text);
-        text = this.convertCallouts(text);
-        text = this.convertEmbeds(text, publishSet);
-        text = this.convertWikilinks(text, publishSet);
-        return text;
+        if (seg.kind === "comment") return "";
+        if (seg.kind === "code") return this.convertMermaid(seg);
+        return this.transformProse(seg.text, publishSet);
       })
       .join("");
 
@@ -161,6 +249,15 @@ export class NoteTransformer {
       filename: sanitizedFilename,
       images,
     };
+  }
+
+  /** The prose transform chain, in the order the transforms depend on. */
+  private transformProse(text: string, publishSet: Set<string>): string {
+    let out = this.convertHighlights(text);
+    out = this.convertCallouts(out);
+    out = this.convertEmbeds(out, publishSet);
+    out = this.convertWikilinks(out, publishSet);
+    return out;
   }
 
   /**
@@ -277,9 +374,6 @@ export class NoteTransformer {
   /**
    * Strip Obsidian comments (%%...%%) including multiline
    */
-  private stripComments(content: string): string {
-    return content.replace(/%%[\s\S]*?%%/g, "");
-  }
 
   /**
    * Convert Obsidian highlight syntax (==text==) to HTML mark tags
@@ -316,13 +410,25 @@ export class NoteTransformer {
   /**
    * Convert mermaid fenced code blocks to mermaid shortcodes
    */
-  private convertMermaid(content: string): string {
+  /**
+   * Rewrite a mermaid fence to its shortcode.
+   *
+   * Takes the segment rather than its text so it can read the `info`
+   * string the scanner already parsed. Re-matching the fence with a
+   * second, stricter pattern is what made tilde fences, four-backtick
+   * fences and any info string beyond the bare language publish raw
+   * (#306) — and an inline span, which has no `info`, is never a fence.
+   */
+  private convertMermaid(segment: Segment): string {
+    if (segment.info === undefined) return segment.text;
+    if (segment.info.trim().split(/\s+/)[0] !== "mermaid") return segment.text;
+
     const name = this.settings.mermaidShortcodeName;
-    return content.replace(
-      /```mermaid\n([\s\S]*?)```/g,
-      (_match, body: string) =>
-        `{{< ${name} >}}\n${body.trimEnd()}\n{{< /${name} >}}`,
-    );
+    const lines = segment.text.split("\n");
+    // Drop the opening fence line, and the closing one when it is present
+    // — an unterminated fence runs to the end of the note.
+    const body = lines.slice(1, lines[lines.length - 1] === "" ? -2 : -1);
+    return `{{< ${name} >}}\n${body.join("\n").trimEnd()}\n{{< /${name} >}}`;
   }
 
   /**

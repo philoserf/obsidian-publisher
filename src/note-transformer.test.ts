@@ -1316,6 +1316,33 @@ describe("code is opaque to the transform chain", () => {
         .join(""),
     ).toBe(body);
   });
+
+  // #316 extends the split to comment and quote segments. Losslessness is
+  // what lets the scanner keep every byte in some segment rather than
+  // deleting comments as it goes, so it has to hold across every kind —
+  // this is the property the restructure is measured against.
+  test("splitting stays lossless across every segment kind", () => {
+    const bodies = [
+      "a\n\n```js\nx == y\n```\n\nb `inline` c\n~~~\ntilde\n~~~\n",
+      "before %% a `b` c %% after",
+      "%%\ndraft\n```js\nx\n```\n%%\nvisible",
+      "> [!note] T\n> before\n> ```js\n> const a = 1;\n> ```\n> after\n\ntail",
+      "> [!note] Title\n> one\n>\n> two\n\nafter",
+      "> just a quote\n\nprose `span` more\n\n> another\n> quote",
+      "a ` b\n\npara two ` c",
+      "unclosed %% tail",
+      "```\nnever closed",
+      "",
+      "\n\n\n",
+    ];
+    for (const body of bodies) {
+      expect(
+        splitCodeSegments(body)
+          .map((seg) => seg.text)
+          .join(""),
+      ).toBe(body);
+    }
+  });
 });
 
 // #279. Hugo emits its redirect stub at whatever path an alias names,
@@ -1463,5 +1490,168 @@ describe("path-qualified references (#308)", () => {
   test("a qualified image is queued under the name the author wrote", () => {
     const r = process(cp, `${fm}See ![[folder/pic.png]].`, "x.md", set);
     expect(r.images).toEqual(["folder/pic.png"]);
+  });
+});
+
+// #316 and its instances. The transform chain modelled the document as a
+// flat prose/code alternation, but Markdown nests: fenced blocks,
+// blockquotes (and therefore callouts) and %% comments are block
+// containers. Every fixture below is a container the old model could not
+// see. Each cites the issue that filed it.
+describe("block containers (#316)", () => {
+  const cp = makeProcessor();
+  const FM = "title: X\ndate: 2026-01-01";
+
+  // #305: the inline-span regex admitted blank lines, so two unmatched
+  // backticks in different paragraphs paired into one "code span" and
+  // exempted everything between them — comments included.
+  describe("an inline code span cannot cross a blank line (#305)", () => {
+    const body = "a ` b [[Link]] %%secret%%\n\npara two ` c [[Link]]";
+
+    test("the hidden comment is stripped rather than published", () => {
+      const r = process(cp, wrap(FM, body), "x.md", new Set(["link"]));
+      expect(r.content).not.toContain("%%");
+      expect(r.content).not.toContain("secret");
+    });
+
+    test("both wikilinks convert, not just the one outside the span", () => {
+      const r = process(cp, wrap(FM, body), "x.md", new Set(["link"]));
+      expect(r.content.match(/\(\/posts\/link\/\)/g)).toHaveLength(2);
+    });
+
+    test("a genuine multi-line span with no blank line is still opaque", () => {
+      const r = process(
+        cp,
+        wrap(FM, "`a\nb [[Link]] c`"),
+        "x.md",
+        new Set(["link"]),
+      );
+      expect(r.content).toContain("[[Link]]");
+    });
+  });
+
+  // #300: stripComments ran per prose segment, so a comment whose
+  // delimiters landed in different segments was never paired.
+  describe("a %% comment containing code is still stripped (#300)", () => {
+    test("comment wrapping an inline code span", () => {
+      const r = process(cp, wrap(FM, "before %% a `b` c %% after"), "x.md");
+      expect(r.content).not.toContain("%%");
+      expect(r.content).not.toContain("`b`");
+    });
+
+    test("comment wrapping a fenced block", () => {
+      const body =
+        "%%\ndraft ![[secret.png]] [[Other]]\n```js\nx\n```\nmore\n%%\nvisible";
+      const r = process(cp, wrap(FM, body), "x.md", new Set(["other"]));
+      expect(r.content).not.toContain("%%");
+      expect(r.content).not.toContain("draft");
+      expect(r.content).toContain("visible");
+    });
+
+    test("an image referenced only inside a comment is never queued", () => {
+      const body = "%%\ndraft ![[secret.png]]\n```js\nx\n```\n%%\nvisible";
+      const r = process(cp, wrap(FM, body), "x.md");
+      expect(r.images).toEqual([]);
+    });
+
+    // No test pinned this before; the old stripComments required a closer,
+    // so a lone %% stayed literal. Keep that.
+    test("an unclosed %% is left alone", () => {
+      const r = process(cp, wrap(FM, "before %% after"), "x.md");
+      expect(r.content).toContain("%%");
+    });
+  });
+
+  // #306: convertMermaid re-parsed the fence with a stricter pattern than
+  // the splitter used, so anything but exactly ```mermaid published raw.
+  describe("mermaid is recognized wherever the splitter sees a fence (#306)", () => {
+    test("tilde fence", () => {
+      const r = process(cp, wrap(FM, "~~~mermaid\ngraph TD\n~~~"), "x.md");
+      expect(r.content).toContain("{{< mermaid >}}");
+      expect(r.content).toContain("graph TD");
+      expect(r.content).not.toContain("~~~");
+    });
+
+    test("info string after the language", () => {
+      const r = process(
+        cp,
+        wrap(FM, "```mermaid {caption=x}\ngraph TD\n```"),
+        "x.md",
+      );
+      expect(r.content).toContain("{{< mermaid >}}");
+    });
+
+    // Passes today only by accident: ```mermaid matches at offset 1 of
+    // ````mermaid, so the shortcode appears with a stray backtick welded
+    // to it. Assert the whole fence is consumed.
+    test("four-backtick fence", () => {
+      const r = process(cp, wrap(FM, "````mermaid\ngraph TD\n````"), "x.md");
+      expect(r.content).toContain("{{< mermaid >}}");
+      expect(r.content).not.toContain("`");
+    });
+
+    test("a non-mermaid fence is still left alone", () => {
+      const r = process(cp, wrap(FM, "```js\nconst a = 1;\n```"), "x.md");
+      expect(r.content).toContain("```js");
+    });
+
+    // An inline code span has no info string and must never be mistaken
+    // for a fence now that both are `code` segments.
+    test("an inline `mermaid` span is not a shortcode", () => {
+      const r = process(cp, wrap(FM, "the `mermaid` package"), "x.md");
+      expect(r.content).toContain("`mermaid`");
+      expect(r.content).not.toContain("{{< mermaid >}}");
+    });
+  });
+
+  // #303: a fence inside a callout failed FENCE_OPEN's line anchor, so
+  // splitInlineCode claimed the backtick run and cut the callout in two.
+  describe("a callout containing a fenced block (#303)", () => {
+    const body =
+      "> [!note] T\n> before\n> ```js\n> const a = 1;\n> ```\n> after";
+
+    test("the whole callout lands between the shortcodes", () => {
+      const r = process(cp, wrap(FM, body), "x.md");
+      const m = r.content.match(
+        /\{\{< callout note "T" >\}\}([\s\S]*?)\{\{< \/callout >\}\}/,
+      );
+      expect(m).not.toBeNull();
+      expect(m?.[1]).toContain("const a = 1;");
+      expect(m?.[1]).toContain("after");
+    });
+
+    test("the quote prefixes are stripped inside the callout", () => {
+      const r = process(cp, wrap(FM, body), "x.md");
+      expect(r.content).not.toContain("> const a = 1;");
+    });
+
+    test("the closing shortcode is not welded to a fence", () => {
+      const r = process(cp, wrap(FM, body), "x.md");
+      expect(r.content).not.toContain("{{< /callout >}}```");
+    });
+  });
+
+  // #299: the callout body regex required "> " with a space, so Obsidian's
+  // own multi-paragraph separator — a bare ">" — ended the match.
+  describe("a callout with a bare > paragraph separator (#299)", () => {
+    const body = "> [!note] Title\n> line one\n>\n> line two\n\nafter";
+
+    test("the second paragraph stays inside the callout", () => {
+      const r = process(cp, wrap(FM, body), "x.md");
+      const m = r.content.match(
+        /\{\{< callout note "Title" >\}\}([\s\S]*?)\{\{< \/callout >\}\}/,
+      );
+      expect(m?.[1]).toContain("line two");
+    });
+
+    test("no stray > follows the closing shortcode", () => {
+      const r = process(cp, wrap(FM, body), "x.md");
+      expect(r.content).not.toContain("{{< /callout >}}>");
+    });
+
+    test("content after the callout still publishes", () => {
+      const r = process(cp, wrap(FM, body), "x.md");
+      expect(r.content).toContain("after");
+    });
   });
 });
