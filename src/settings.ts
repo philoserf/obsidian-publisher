@@ -43,13 +43,7 @@ export function serializeFrontmatter(
   template: Record<string, unknown>,
 ): string {
   if (Object.keys(template).length === 0) return "";
-  try {
-    return stringifyYaml(template).trim();
-  } catch {
-    return Object.entries(template)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join("\n");
-  }
+  return stringifyYaml(template).trim();
 }
 
 export function parseStrippedFieldsInput(value: string): string[] {
@@ -76,22 +70,13 @@ export function parseFrontmatter(text: string): Record<string, unknown> {
       ? parsed
       : {};
   } catch {
-    return parseKeyValueText(trimmed);
+    // Broken YAML behaves like non-object YAML: empty result, which the
+    // settings control notices and reports. Recovering it by splitting on
+    // the first colon per line was the one path that could put a value the
+    // user did not write into a commit — `author: [unclosed` became
+    // `{ author: "[unclosed" }`, non-empty, so no Notice fired (#319).
+    return {};
   }
-}
-
-function parseKeyValueText(text: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    const colonIndex = t.indexOf(":");
-    if (colonIndex === -1) continue;
-    const key = t.slice(0, colonIndex).trim();
-    const value = t.slice(colonIndex + 1).trim();
-    if (key && value) result[key] = value;
-  }
-  return result;
 }
 
 export function validateConnectionSettings(
