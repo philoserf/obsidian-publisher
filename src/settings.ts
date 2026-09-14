@@ -27,12 +27,38 @@ export function sanitizeRepoName(value: string): string {
     .slice(0, 100);
 }
 
+/**
+ * Validate a directory prefix, rather than sanitizing one by subtraction.
+ *
+ * The previous version removed `..`, then `~`, then edge slashes — and a
+ * sanitizer that removes characters can *synthesize* the value it was
+ * written to remove. `.~./posts` became `../posts`: stripping `..` left
+ * `.~./`, and stripping `~` closed the gap. `..././` became `./.` and
+ * `a/....//b` left an empty segment no later step removed (#313).
+ *
+ * No ordering of removals fixes that, so nothing is removed. A path is
+ * either acceptable as written or rejected whole, and rejection returns
+ * `""`, which routes into `Publisher.validateSettings()` and fails the
+ * publish with "Content directory must be configured" — loud, rather than
+ * silently publishing somewhere odd.
+ *
+ * Deliberately *not* an allowlist of permitted characters: a space and a
+ * non-ASCII letter are both legitimate in a Hugo content directory, and
+ * narrowing what a path may contain is a separate decision from fixing
+ * the reconstruction bug. Only the two markers that mean "leave this
+ * directory" are rejected. `~` is kept from the original; its threat
+ * model here is unclear — there is no shell, and GitHub's tree API does
+ * not expand it — but relaxing it is its own call.
+ */
 export function sanitizePath(value: string): string {
-  return value
+  const segments = value
     .trim()
-    .replace(/\.\./g, "")
-    .replace(/~/g, "")
-    .replace(/^\/+|\/+$/g, "");
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  const hazardous = segments.some(
+    (segment) => segment === "." || segment === ".." || segment.includes("~"),
+  );
+  return hazardous ? "" : segments.join("/");
 }
 
 export function sanitizeShortcodeName(value: string): string {
