@@ -221,22 +221,8 @@ export class NoteTransformer {
     // transform sees prose. A comment contributes nothing — not to the
     // output and not to the image set — which is what makes a reference
     // hidden inside `%% %%` never queued for upload.
-    const segments = splitCodeSegments(body);
-
     const images: string[] = [];
-    for (const seg of segments) {
-      if (seg.kind === "prose" || seg.kind === "quote") {
-        images.push(...this.extractImages(seg.text));
-      }
-    }
-
-    const processedBody = segments
-      .map((seg) => {
-        if (seg.kind === "comment") return "";
-        if (seg.kind === "code") return this.convertMermaid(seg);
-        return this.transformProse(seg.text, publishSet);
-      })
-      .join("");
+    const processedBody = this.transformBody(body, publishSet, images);
 
     const processedContent = this.assembleDocument(
       processedFrontmatter,
@@ -251,10 +237,97 @@ export class NoteTransformer {
     };
   }
 
+  /**
+   * Scan a body into segments and transform each one.
+   *
+   * Called recursively: a quote block strips its markers and re-enters
+   * here, which is what makes it a container rather than a leaf. Without
+   * the recursion the scanner emits quote/fence/quote and the callout is
+   * fragmented again, which is the case #303 proved a local fix cannot
+   * reach.
+   *
+   * Images are collected per level from prose only, before any transform
+   * rewrites the `![[...]]` syntax out of existence. A quote's images are
+   * collected by its own recursion, and a comment's are never collected
+   * at all.
+   */
+  private transformBody(
+    body: string,
+    publishSet: Set<string>,
+    images: string[],
+  ): string {
+    const segments = splitCodeSegments(body);
+
+    for (const seg of segments) {
+      if (seg.kind === "prose") images.push(...this.extractImages(seg.text));
+    }
+
+    return segments
+      .map((seg) => {
+        if (seg.kind === "comment") return "";
+        if (seg.kind === "code") return this.convertMermaid(seg);
+        if (seg.kind === "quote")
+          return this.transformQuote(seg.text, publishSet, images);
+        return this.transformProse(seg.text, publishSet);
+      })
+      .join("");
+  }
+
+  /**
+   * Transform one blockquote run: strip the markers, re-scan the body,
+   * then emit either a callout shortcode or the blockquote again.
+   *
+   * Stripping with `^[ \t]*> ?` — the space optional — is what admits
+   * Obsidian's bare `>` paragraph separator. The old body regex required
+   * `> ` and so ended the callout at that line, publishing the remainder
+   * as a raw blockquote welded to the closing shortcode (#299). The
+   * author's own `cleanBody` already used the optional-space form; only
+   * the matching regex disagreed, three lines apart.
+   *
+   * The callout header is recognized on the first line only, which is
+   * where Obsidian requires it. The old `gm` regex could match one
+   * mid-block.
+   */
+  private transformQuote(
+    text: string,
+    publishSet: Set<string>,
+    images: string[],
+  ): string {
+    const trailingNewline = text.endsWith("\n") ? "\n" : "";
+    const lines = text.replace(/\n$/, "").split("\n");
+    const stripped = lines.map((line) => line.replace(/^[ \t]*> ?/, ""));
+
+    // `\r?$` so a CRLF note's title does not carry its carriage return
+    // into the shortcode attribute.
+    const header = stripped[0].match(/^\[!([\w-]+)\][-+]?(?: (.+))?\r?$/);
+
+    if (!header) {
+      const inner = this.transformBody(stripped.join("\n"), publishSet, images);
+      return (
+        inner
+          .split("\n")
+          .map((line) => (line === "" ? ">" : `> ${line}`))
+          .join("\n") + trailingNewline
+      );
+    }
+
+    const name = this.settings.calloutShortcodeName;
+    const calloutType = header[1].toLowerCase();
+    const title = header[2];
+    const titleAttr = title
+      ? ` "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+      : "";
+    const inner = this.transformBody(
+      stripped.slice(1).join("\n"),
+      publishSet,
+      images,
+    );
+    return `{{< ${name} ${calloutType}${titleAttr} >}}\n${inner.trim()}\n{{< /${name} >}}${trailingNewline}`;
+  }
+
   /** The prose transform chain, in the order the transforms depend on. */
   private transformProse(text: string, publishSet: Set<string>): string {
     let out = this.convertHighlights(text);
-    out = this.convertCallouts(out);
     out = this.convertEmbeds(out, publishSet);
     out = this.convertWikilinks(out, publishSet);
     return out;
@@ -387,25 +460,6 @@ export class NoteTransformer {
    * Obsidian type through verbatim (lowercased). The site-side shortcode
    * template handles per-type styling (shipped in hugo-shortcodes/).
    */
-  private convertCallouts(content: string): string {
-    const name = this.settings.calloutShortcodeName;
-    // `\r?\n` in both places, matching FRONTMATTER_REGEX. JS counts `\r`
-    // as a line terminator, so `.` never crosses it: with a bare `\n` the
-    // header alternative could not match a CRLF note at all, and the body
-    // repeat stopped after its first line. Callouts in a CRLF note
-    // published as raw `> [!note]` blockquotes.
-    return content.replace(
-      /^> \[!([\w-]+)\][-+]?(?: (.+))?\r?\n((?:^> .*(?:\r?\n|$))*)/gm,
-      (_match, type: string, title: string | undefined, body: string) => {
-        const calloutType = type.toLowerCase();
-        const cleanBody = body.replace(/^> ?/gm, "").trim();
-        const titleAttr = title
-          ? ` "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-          : "";
-        return `{{< ${name} ${calloutType}${titleAttr} >}}\n${cleanBody}\n{{< /${name} >}}`;
-      },
-    );
-  }
 
   /**
    * Convert mermaid fenced code blocks to mermaid shortcodes
