@@ -493,6 +493,30 @@ describe("image alt text", () => {
     expect(result.content).toContain("![alt](/images/img.png)");
   });
 
+  // The one place the image arm and the note arm read the pipe
+  // differently, and so the one thing the convertEmbeds merge (#317) had
+  // to get right: an image caption is everything after the first pipe
+  // joined back together, while a note embed's display text is only the
+  // second segment. Nothing pinned this before the merge.
+  test("image alt joins every segment after the first pipe", () => {
+    const result = process(
+      processor,
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[img.png|A|B]]",
+      "x.md",
+    );
+    expect(result.content).toContain("![A|B](/images/img.png)");
+  });
+
+  test("note embed display text is the second segment only", () => {
+    const result = process(
+      processor,
+      "---\ntitle: X\ndate: 2026-01-01\n---\n![[Note|A|B]]",
+      "x.md",
+      new Set(["note"]),
+    );
+    expect(result.content).toContain("[A](/posts/note/)");
+  });
+
   test("empty alt falls back to filename", () => {
     const result = process(
       processor,
