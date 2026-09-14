@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.10.0
+
+### Fixed
+
+- **Path-qualified references now resolve.** `[[folder/Note]]` degraded to plain text and `![[folder/pic.png]]` published a broken URL with nothing uploaded — the slug rule strips `/` as punctuation, so `folder/Note` became `foldernote` and matched nothing. Obsidian writes references this way whenever the bare filename would be ambiguous, and unconditionally when **Files & Links → New link format** is set to an absolute or relative path, so for those vaults every qualified reference was silently broken. The directory is now dropped before the lookup, while an unresolved link still degrades to the full text the author wrote (#308)
+- **A callout holds whatever you put in it.** A fenced code block inside a callout was parsed as an inline code span, splitting the callout across three segments so only the text above the fence converted and the rest published as a raw blockquote welded to the closing shortcode (#303). A bare `>` line — Obsidian's own multi-paragraph syntax inside a callout — truncated the block the same way (#299). Blockquotes are now containers whose interiors are re-scanned, so fences, comments and multiple paragraphs all nest correctly
+- A `%%` comment wrapping an inline code span or a fenced block is stripped rather than published, and an image referenced only inside one is no longer uploaded (#300)
+- Two unmatched backticks in different paragraphs no longer pair into one "code span" that exempted every line between them — comments included — from the entire transform chain. A code span may not cross a blank line, matching CommonMark (#305)
+- Mermaid is recognized in any fence the parser accepts: tilde fences, four or more markers, and info strings beyond the bare language. These previously published as raw fenced blocks (#306)
+- **A second publish is refused while one is in flight.** Re-tapping a mobile toolbar button that had not visibly responded produced two branches and two duplicate pull requests, both of which had to be cleaned up by hand — and re-tapping is the natural response to a slow cellular publish, which is the case this plugin exists for (#307)
+- `sanitizePath` no longer *synthesizes* the value it was written to remove. Stripping `..` before `~` turned `.~./posts` into `../posts`; `..././` became `./.`. Paths are now validated rather than repaired — acceptable as written, or rejected whole, which fails the publish loudly instead of publishing somewhere odd (#313)
+- Retry backoff no longer sleeps after the final attempt, removing up to 2 s of dead wait from every failure it could not have prevented. Two loops, so a commit that failed both ways paid it twice (#312)
+
+### Changed
+
+- **Settings are normalized identically on load and in the UI.** The two layers previously disagreed about what a bad value is: a persisted `../escape` survived untouched, `  main  ` kept its spaces, and clearing the PR labels never stuck across a reload because `[]` was replaced by the default. Each field now has one normalizer, called from both sides (#314)
+- Configuration errors speak one vocabulary. "GitHub token is not configured" and "GitHub token is required" were the same failure reported two ways in the same settings session; every message now ends "… is required". The field sets still differ on purpose — a connection test does not demand a content directory (#318)
+- Malformed YAML in **Additional Frontmatter** is reported rather than salvaged. The old recovery path split on the first colon per line, which meant `author: [unclosed` became `{ author: "[unclosed" }` — non-empty, so no notice fired, and a value the author never wrote reached a commit (#319)
+- Internal restructuring, no user-visible behavior change: the transform chain models the document as nested block containers rather than a flat prose/code alternation (#316, #310); the slug rule gained its own module (#315); the two embed converters merged into one pass (#317); preparation outcomes gained a type distinct from publish results (#309); and `Publisher` takes its gateway by injection (#311)
+
+### Internal
+
+- Test files are typechecked again — they had been excluded from `tsc`, so every cast, fake and stub in the suite was unchecked (#320). Dead mock surface removed from `test-preload.ts` (#302)
+- `THEORY.md`, `WALKTHROUGH.md` and `TESTING.md` regenerated or corrected for this release. Doc comments describing functions that no longer exist were deleted (#304 was the same defect class, in a third file); `TESTING.md` gained the regeneration cadence it was the only standing document to lack
+
 ## 1.9.0
 
 ### Fixed
