@@ -47,7 +47,7 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 
 ### Component Responsibilities
 
-- **`main.ts`** — Plugin entry point: registers commands, loads settings, routes to Publisher
+- **`main.ts`** — Plugin entry point: registers commands, loads settings, routes to Publisher. Holds the single-flight `inFlight` promise: one flag across both commands, so a second invocation while a publish is pending is refused with a notice rather than opening a duplicate branch and PR. The guard is here and not on `Publisher`, which stays concurrently drivable for tests
 - **`publisher.ts`** — Orchestration: `publishNote()` (single) and `publishAll()` (batch), both branch+PR, frontmatter validation, the `metadataCache` candidate prefilter, and the filename-collision precheck. `prepareBatch` returns `Prepared[]`, **not** `PublishResult[]` — a prepared note has not been committed, and its successful arm owns that note's file entries so a failed note cannot contribute any. `toResults()` is the only place a `PublishResult` is made from a `Prepared`
 - **`github-api-gateway.ts`** — GitHub API wrapper using Octokit. All REST API calls must be iOS-compatible
 - **`note-transformer.ts`** — The transform chain: code-fence protection, wikilinks, images, note embeds, callouts, mermaid, highlights, comments, slug/filename sanitization, alias urlization
