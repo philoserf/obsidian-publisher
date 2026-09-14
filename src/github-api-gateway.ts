@@ -18,8 +18,6 @@ function rethrowWithPrefix(error: unknown, prefix: string): never {
   throw error;
 }
 
-/** Per-request budget for GitHub API calls; a stalled connection on
- * mobile must surface as an error rather than hang a publish forever. */
 /**
  * Is this failure worth retrying the same request for?
  *
@@ -54,9 +52,26 @@ type TreeEntry = {
   type: "blob";
 } & ({ content: string; sha?: never } | { sha: string; content?: never });
 
-/** Attempts, then backoff delays between them. */
+/** Attempt ceiling for `withRetry`. */
 const COMMIT_MAX_ATTEMPTS = 3;
 
+/**
+ * Exponential backoff with jitter, so retries are never instant and a
+ * rate-limited batch does not hammer in lockstep.
+ *
+ * Both retry loops call this BETWEEN attempts only, so a three-attempt
+ * loop waits twice — roughly 500ms then 1s. The loops used to sleep at
+ * the tail of every iteration including the last, so each exhausted retry
+ * spent a further ~2s (the `attempt = 2` delay) waiting before a throw the
+ * backoff could not have prevented. Two loops, so a commit that failed
+ * both ways paid it twice (#312).
+ */
+function backoffDelay(attempt: number): number {
+  return 2 ** attempt * 500 + Math.random() * 250;
+}
+
+/** Per-request budget for GitHub API calls; a stalled connection on
+ * mobile must surface as an error rather than hang a publish forever. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
@@ -258,7 +273,7 @@ export class GitHubApiGateway {
       } catch (error) {
         if (!isTransient(error)) throw error;
         lastError = error;
-        await this.sleep(2 ** i * 500 + Math.random() * 250);
+        if (i < COMMIT_MAX_ATTEMPTS - 1) await this.sleep(backoffDelay(i));
       }
     }
     throw lastError;
@@ -396,9 +411,7 @@ export class GitHubApiGateway {
         if (!collision && !isTransient(error)) throw error;
 
         lastError = error;
-        // Exponential backoff with jitter so retries are never instant
-        // and a rate-limited batch doesn't hammer in lockstep.
-        await this.sleep(2 ** i * 500 + Math.random() * 250);
+        if (i < maxRetries - 1) await this.sleep(backoffDelay(i));
       }
     }
 
