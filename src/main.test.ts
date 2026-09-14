@@ -28,7 +28,7 @@ function makePlugin() {
     { vault: {} } as never,
     {} as never,
   ) as ObsidianPublisher & PluginInternals;
-  plugin.app = { vault: {} };
+  plugin.app = { vault: {} } as never;
   plugin.data = {
     githubToken: "ghp_test",
     repoOwner: "o",

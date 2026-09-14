@@ -127,7 +127,13 @@ describe("GitHubApiGateway.commitFiles", () => {
 
     const treeCall = octokit.rest.git.createTree.mock.calls[0] as unknown[];
     const { tree } = treeCall[0] as {
-      tree: Array<{ path: string; content?: string; sha?: string }>;
+      tree: Array<{
+        path: string;
+        mode: string;
+        type: string;
+        content?: string;
+        sha?: string;
+      }>;
     };
     expect(tree).toEqual([
       { path: "a.md", mode: "100644", type: "blob", content: "one" },
@@ -157,7 +163,13 @@ describe("GitHubApiGateway.commitFiles", () => {
 
     const treeCall = octokit.rest.git.createTree.mock.calls[0] as unknown[];
     const { tree } = treeCall[0] as {
-      tree: Array<{ path: string; content?: string; sha?: string }>;
+      tree: Array<{
+        path: string;
+        mode: string;
+        type: string;
+        content?: string;
+        sha?: string;
+      }>;
     };
     expect(tree[0].content).toBe("text");
     expect(tree[0].sha).toBeUndefined();
@@ -400,9 +412,9 @@ describe("GitHubApiGateway.createBranchWithRetry", () => {
     octokit.rest.git.getRef.mockImplementation(async () => {
       throw new RequestError("Not Found", 404, {} as never);
     });
-    const error = await service
+    const error = (await service
       .createBranchWithRetry("publish", "main", 1)
-      .catch((e: Error) => e);
+      .catch((e: unknown) => e)) as Error;
     expect(error.message).toBe("Not Found");
     expect(error).toBeInstanceOf(RequestError);
   });
@@ -507,9 +519,9 @@ describe("fetchWithTimeout", () => {
       throw new DOMException("aborted", "AbortError");
     }) as unknown as typeof fetch;
 
-    const error = await fetchWithTimeout("https://example.test", {
+    const error = (await fetchWithTimeout("https://example.test", {
       signal: controller.signal,
-    }).catch((e: Error) => e);
+    }).catch((e: unknown) => e)) as Error;
 
     expect(error.message).not.toContain("timed out");
   });

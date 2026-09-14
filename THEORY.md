@@ -284,12 +284,15 @@ pair them back up. It is correct — `filter` and `map` both preserve order by s
 but the coupling is implicit, and a refactor that reorders, memoizes, or parallelizes either
 pass would misalign prose with its slot with no test failing loudly.
 
-**Seam discipline is inconsistent, and I read it as history rather than intent.**
-`GitHubApiGateway` takes an injectable `Sleep` so retry timing is testable, but `Publisher`
-constructs its own gateway with no injection point, so `publisher.test.ts` reaches in and
-overwrites a private field. Two different answers to the same testability question in adjacent
-files. I believe the `Sleep` seam arrived with retry and the gateway seam simply never was
-added, but that is inference.
+**Seam discipline was inconsistent, and the reading was history rather than intent.**
+`GitHubApiGateway` took an injectable `Sleep` so retry timing was testable, while `Publisher`
+constructed its own gateway with no injection point, so `publisher.test.ts` reached in and
+overwrote a private field — two different answers to the same testability question in adjacent
+files. Resolved in 1.10.0 (#311): `Publisher` now takes a fifth constructor argument defaulting
+to `new GitHubApiGateway(settings)`, matching the `Sleep` seam exactly. It is typed
+`PublishGateway`, a `Pick` of the four methods `Publisher` actually calls, because the class
+itself has private fields and is therefore nominal — no fake can satisfy it, so typing the
+parameter as the class would have moved the cast rather than removed it.
 
 **Image target collisions are only visible within one batch.** `targetPathOwners` is created
 per `prepareBatch` call, so two images that sanitize to the same target path are caught when

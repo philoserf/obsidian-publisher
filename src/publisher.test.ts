@@ -107,12 +107,13 @@ function makePublisher(
   settings: PublisherSettings,
   githubApiGateway?: ReturnType<typeof makeGitHubApiGateway>,
 ) {
-  const publisher = new Publisher(vault as never, settings);
-  if (githubApiGateway) {
-    // Replace the real GitHubApiGateway with our mock
-    (publisher as unknown as Record<string, unknown>).githubApiGateway =
-      githubApiGateway;
-  }
+  const publisher = new Publisher(
+    vault as never,
+    settings,
+    undefined,
+    undefined,
+    githubApiGateway,
+  );
   return {
     publisher,
     githubApiGateway: githubApiGateway ?? makeGitHubApiGateway(),
@@ -588,8 +589,13 @@ describe("Publisher.publishAll", () => {
     ]);
     const gh = makeGitHubApiGateway();
     const progress = mock((_done: number, _total: number) => {});
-    const publisher = new Publisher(vault as never, makeSettings(), progress);
-    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
+    const publisher = new Publisher(
+      vault as never,
+      makeSettings(),
+      progress,
+      undefined,
+      gh,
+    );
 
     await publisher.publishAll();
 
@@ -1072,8 +1078,8 @@ describe("Publisher candidate selection", () => {
       makeSettings(),
       undefined,
       cache as never,
+      gh,
     );
-    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
 
     const result = await publisher.publishAll();
 
@@ -1101,8 +1107,8 @@ describe("Publisher candidate selection", () => {
       makeSettings(),
       undefined,
       cache as never,
+      gh,
     );
-    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
 
     const result = await publisher.publishAll();
 
@@ -1127,8 +1133,8 @@ describe("Publisher candidate selection", () => {
       makeSettings(),
       undefined,
       cache as never,
+      gh,
     );
-    (publisher as unknown as Record<string, unknown>).githubApiGateway = gh;
 
     const result = await publisher.publishAll();
 

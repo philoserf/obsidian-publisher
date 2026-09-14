@@ -82,7 +82,7 @@ Wrap any new idempotent call in `this.withRetry(...)`. Its predicate `isTransien
 
 Tests use Bun's built-in runner (`bun:test`) with `describe`/`test`/`expect` API. Test files live alongside source in `src/` with `.test.ts` suffix. Mocks are consolidated in `src/test-preload.ts`, loaded via `bunfig.toml`.
 
-Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a no-op `sleep` so retry counts are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale. Reach for the level that matches what you are pinning.
+Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a no-op `sleep` so retry counts are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale, passing the fake as `Publisher`'s fifth constructor argument — typed `PublishGateway`, so the compiler checks it. Reach for the level that matches what you are pinning.
 
 `TESTING.md` is the test-policy doc — consult it when deciding where a new test belongs. Its rule: add the test at the layer that would have caught the bug, not the layer it surfaced at.
 
