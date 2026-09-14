@@ -204,6 +204,26 @@ three separate exits each remembering to rewrite one that was already wrong. Res
 that note's file entries, and `toResults` is the only place a `PublishResult` is made from
 one. The difference lives in a type instead of in two corrective helpers.
 
+### A publish is single-flight, and the flag lives on the plugin
+
+Obsidian will invoke a command again while the previous invocation's promise is still
+pending. Nothing stopped it until 1.10.0 (#307), so a second hotkey press — or a re-tap on a
+mobile toolbar button that had not visibly responded — ran the whole workflow again and
+produced two branches and two identical pull requests. Both then had to be cleaned up by
+hand, because the gateway has no delete path.
+
+The property is worth stating because it is not obvious where it belongs. `ObsidianPublisher`
+holds one `inFlight` promise covering **both** commands, since publishing the current note
+while a batch is committing has the same outcome as two batches. `Publisher` is deliberately
+left concurrently drivable: it is a pure orchestrator, `publisher.test.ts` drives it in
+parallel on purpose, and a guard there would have made the tests harder to write while
+protecting nothing the plugin does not already protect. The single shared `progress` notice is
+the second reason the flag sits on the plugin — two live batches would interleave counts into
+one field.
+
+The flag is cleared in a `finally`, so a publish that throws cannot wedge the plugin until
+reload. That is a case worth a test rather than an assumption; it has one.
+
 ### Retry is licensed by idempotency, and 422 is not a retry
 
 `withRetry` wraps every call inside `commitFiles`, and it is safe only because of a property

@@ -28,6 +28,42 @@ export default class ObsidianPublisher extends Plugin {
    * than stacking one toast per file. Cleared by endProgress(). */
   private progress?: Notice;
 
+  /** The publish currently running, if any. One flag covers both commands:
+   * publishing the current note while a batch is committing has the same
+   * duplicate-branch outcome as two batches. */
+  private inFlight?: Promise<void>;
+
+  /**
+   * Run a publish, or refuse if one is already running.
+   *
+   * Obsidian invokes a command again while the previous invocation's
+   * promise is still pending — a second hotkey press, or a tap on a mobile
+   * toolbar button that did not appear to respond because the network is
+   * slow. Each invocation used to run the full workflow, producing two
+   * branches and two identical pull requests, both of which had to be
+   * cleaned up by hand since the gateway has no delete path. Re-tapping is
+   * the natural response to a slow cellular publish, which is exactly the
+   * case this plugin exists for (#307).
+   *
+   * The guard belongs here rather than on `Publisher`, which stays a pure
+   * orchestrator the tests can drive concurrently. It also protects
+   * `this.progress`, a single field that two live batches would otherwise
+   * interleave counts into.
+   */
+  private async runExclusive(work: () => Promise<void>): Promise<void> {
+    if (this.inFlight) {
+      new Notice("A publish is already running");
+      return;
+    }
+    // Cleared in a finally so a thrown publish cannot wedge the plugin
+    // until reload.
+    const task = work().finally(() => {
+      this.inFlight = undefined;
+    });
+    this.inFlight = task;
+    await task;
+  }
+
   private createPublisher(): Publisher {
     const onProgress = (done: number, total: number) => {
       const message = `Prepared: ${done}/${total}`;
@@ -72,7 +108,7 @@ export default class ObsidianPublisher extends Plugin {
           return;
         }
 
-        await this.publishCurrentNote(file);
+        await this.runExclusive(() => this.publishCurrentNote(file));
       },
     });
 
@@ -80,7 +116,7 @@ export default class ObsidianPublisher extends Plugin {
       id: "publish-all-notes",
       name: "Publish all notes to GitHub",
       callback: async () => {
-        await this.publishAllNotes();
+        await this.runExclusive(() => this.publishAllNotes());
       },
     });
   }

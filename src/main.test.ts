@@ -428,3 +428,122 @@ describe("batch progress notices (#246)", () => {
     publish.mockRestore();
   });
 });
+
+// #307: both commands were async callbacks with no in-flight flag, so a
+// second hotkey press — or a tap on a mobile toolbar button that did not
+// appear to respond because the network was slow — ran the whole workflow
+// again. Two branches, two pull requests, identical content, and two
+// branches to clean up by hand since the gateway has no delete path.
+describe("concurrent publishes are refused (#307)", () => {
+  const gated = () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    return { gate, release: () => release() };
+  };
+
+  test("a second batch while one is in flight does not run", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const { gate, release } = gated();
+    const publish = spyOn(Publisher.prototype, "publishAll").mockImplementation(
+      async () => {
+        await gate;
+        return okBatch({ prUrl: "https://github.com/test/pr/1" });
+      },
+    );
+    publish.mockClear();
+
+    const first = runAll(plugin);
+    await runAll(plugin);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(shown().some((m) => m.includes("already running"))).toBe(true);
+
+    release();
+    await first;
+    validate.mockRestore();
+    publish.mockRestore();
+  });
+
+  // One flag covers both commands: publishing the current note while a
+  // batch is committing has the same duplicate-branch outcome.
+  test("a single-note publish during a batch does not run", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const { gate, release } = gated();
+    const all = spyOn(Publisher.prototype, "publishAll").mockImplementation(
+      async () => {
+        await gate;
+        return okBatch({});
+      },
+    );
+    const one = spyOn(Publisher.prototype, "publishNote").mockResolvedValue({
+      filePath: "a.md",
+      success: true,
+      warnings: [],
+    });
+
+    const first = runAll(plugin);
+    await runCurrent(plugin, { basename: "a", path: "a.md" });
+
+    expect(one).not.toHaveBeenCalled();
+
+    release();
+    await first;
+    validate.mockRestore();
+    all.mockRestore();
+    one.mockRestore();
+  });
+
+  test("the flag clears, so a later publish still runs", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const publish = spyOn(Publisher.prototype, "publishAll").mockResolvedValue(
+      okBatch({}),
+    );
+    publish.mockClear();
+
+    await runAll(plugin);
+    await runAll(plugin);
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    validate.mockRestore();
+    publish.mockRestore();
+  });
+
+  // The flag must clear on the failure path too, or one thrown publish
+  // wedges the plugin until reload.
+  test("a thrown publish still releases the flag", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const validate = spyOn(
+      Publisher.prototype,
+      "validateSettings",
+    ).mockReturnValue(null);
+    const publish = spyOn(Publisher.prototype, "publishAll")
+      .mockRejectedValueOnce(new Error("network died"))
+      .mockResolvedValue(okBatch({}));
+    publish.mockClear();
+
+    await runAll(plugin);
+    await runAll(plugin);
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    validate.mockRestore();
+    publish.mockRestore();
+  });
+});
