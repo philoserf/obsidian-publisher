@@ -287,6 +287,11 @@ export class NoteTransformer {
    * The callout header is recognized on the first line only, which is
    * where Obsidian requires it. The old `gm` regex could match one
    * mid-block.
+   *
+   * The Obsidian callout type passes through verbatim (lowercased) as the
+   * shortcode's first argument; per-type styling is the site-side
+   * template's job, and a reference implementation ships in
+   * `hugo-shortcodes/`.
    */
   private transformQuote(
     text: string,
@@ -445,25 +450,12 @@ export class NoteTransformer {
   }
 
   /**
-   * Strip Obsidian comments (%%...%%) including multiline
-   */
-
-  /**
    * Convert Obsidian highlight syntax (==text==) to HTML mark tags
    */
   private convertHighlights(content: string): string {
     return content.replace(/==((?!=).+?)==/g, "<mark>$1</mark>");
   }
 
-  /**
-   * Convert Obsidian callouts to configured shortcode tags, passing the
-   * Obsidian type through verbatim (lowercased). The site-side shortcode
-   * template handles per-type styling (shipped in hugo-shortcodes/).
-   */
-
-  /**
-   * Convert mermaid fenced code blocks to mermaid shortcodes
-   */
   /**
    * Rewrite a mermaid fence to its shortcode.
    *

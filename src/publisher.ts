@@ -85,10 +85,6 @@ function failedResults(
 }
 
 /**
- * Return a copy of results with every successful entry converted to a
- * failed one carrying the given error. Failures keep their original error.
- */
-/**
  * The only place a `PublishResult` is made from a `Prepared`, and so the
  * only place a publish outcome is decided.
  *
@@ -457,11 +453,6 @@ export class Publisher {
     });
   }
 
-  /**
-   * Commit prepared files to the target branch. On failure, returns the
-   * results with every successful entry marked failed plus the error
-   * message; on success (or nothing to commit) returns them unchanged.
-   */
   /** Commit, reporting only whether it landed. Turning that into publish
    * outcomes is `toResults`' job, not this one's. */
   private async commitPreparedBatch(
@@ -587,9 +578,6 @@ export class Publisher {
     });
   }
 
-  /**
-   * Validate settings before publishing
-   */
   /**
    * Delegates to `validatePublish`, which owns the question.
    *
