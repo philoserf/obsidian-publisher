@@ -13,7 +13,6 @@ mock.module("obsidian", () => ({
     static shown: Array<{ message: string; duration?: number }> = [];
     message: string;
     duration?: number;
-    hidden = false;
     constructor(message: string, duration?: number) {
       this.message = message;
       this.duration = duration;
@@ -23,19 +22,17 @@ mock.module("obsidian", () => ({
       this.message = message;
       return this;
     }
-    hide() {
-      this.hidden = true;
-    }
+    // Kept because main.ts:52 calls it; the tests observe dismissal
+    // through Notice.shown and the recorded durations, not through a flag.
+    hide() {}
   },
 
   debounce<T extends unknown[]>(cb: (...args: T) => unknown) {
-    // Tests don't exercise timing — invoke immediately.
-    // cancel is a no-op; run invokes the callback.
+    // Tests don't exercise timing — invoke immediately. `cancel` is a
+    // no-op and is live (main.ts:89, settings.ts:118); Obsidian's
+    // Debouncer also has `run`, which the plugin never calls.
     const fn = (...args: T): unknown => cb(...args);
     (fn as unknown as { cancel: () => void }).cancel = () => {};
-    (fn as unknown as { run: (...args: T) => unknown }).run = (
-      ...args: T
-    ): unknown => cb(...args);
     return fn;
   },
 
@@ -68,23 +65,15 @@ mock.module("obsidian", () => ({
 
   PluginSettingTab: class PluginSettingTab {},
 
-  Setting: class Setting {
-    setName() {
-      return this;
-    }
-    setDesc() {
-      return this;
-    }
-    addText() {
-      return this;
-    }
-    addTextArea() {
-      return this;
-    }
-    addButton() {
-      return this;
-    }
-  },
+  // Bare on purpose: settings.ts imports Setting as a value at module top
+  // level (#264), but no test calls PublisherSettingTab.display(), so its
+  // builder methods were never invoked. A mock method no test reaches
+  // claims the settings UI is exercised when it is not.
+  //
+  // If you add a test that drives display() against a container stub —
+  // #314 collapses the onChange normalizers and is the likely reason to —
+  // restore the chainable no-ops along with it.
+  Setting: class Setting {},
 }));
 
 mock.module("@octokit/rest", () => ({
