@@ -266,12 +266,12 @@ export class PublisherSettingTab extends PluginSettingTab {
     this.save = debounce(() => this.plugin.saveSettings(), 500, true);
   }
 
-  hide(): void {
+  override hide(): void {
     this.save.cancel();
     void this.plugin.saveSettings();
   }
 
-  display(): void {
+  override display(): void {
     const { containerEl } = this;
     containerEl.empty();
     const settings = this.plugin.settings;

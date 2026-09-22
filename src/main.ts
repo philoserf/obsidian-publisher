@@ -88,7 +88,7 @@ export default class ObsidianPublisher extends Plugin {
     this.progress = undefined;
   }
 
-  async onload() {
+  override async onload() {
     await this.loadSettings();
     this.publisher = this.createPublisher();
 
@@ -120,7 +120,7 @@ export default class ObsidianPublisher extends Plugin {
     });
   }
 
-  onunload() {
+  override onunload() {
     this.settingTab?.save.cancel();
     void this.saveSettings();
   }
