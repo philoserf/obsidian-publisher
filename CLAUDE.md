@@ -95,7 +95,7 @@ Single-file bundle via Bun: entry `src/main.ts` to output `main.js`. Externals: 
 
 ### Version and Release
 
-Use the `obsidian-gate` then `obsidian-ship` skills — do not tag by hand. `obsidian-ship` sets `disable-model-invocation`, so it cannot be called via `Skill`; ask the user to run `/obsidian-ship`. `obsidian-ship` follows a prep-PR pattern: the version bump, CHANGELOG, and walkthrough ship as one PR, and the tag is applied after merge. Never use `bun version` / `npm version`, which auto-tag immediately and skip that step.
+Use the `release-gate` then `release-ship` skills — do not tag by hand. `release-ship` sets `disable-model-invocation`, so it cannot be called via `Skill`; ask the user to run `/release-ship`. `release-ship` follows a prep-PR pattern: the version bump, CHANGELOG, and walkthrough ship as one PR, and the tag is applied after merge. Never use `bun version` / `npm version`, which auto-tag immediately and skip that step.
 
 ## Code Style
 

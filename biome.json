@@ -10,9 +10,7 @@
       "src/**/*.ts",
       "src/**/*.js",
       "*.json",
-      "scripts/**/*.ts",
       "version-bump.ts",
-      "build.ts",
       "deploy.ts"
     ],
     "ignoreUnknown": true
