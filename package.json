@@ -7,8 +7,8 @@
   "license": "MIT",
   "scripts": {
     "audit": "bun audit --audit-level=critical",
-    "dev": "bun run build.ts --watch",
-    "build": "bun run check && bun run build.ts",
+    "dev": "bun build src/main.ts --outdir . --format cjs --external obsidian --external electron --sourcemap=linked --watch",
+    "build": "bun run check && bun build src/main.ts --outdir . --format cjs --external obsidian --external electron --minify",
     "check": "bun run typecheck && biome check .",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
@@ -18,7 +18,7 @@
     "version": "bun run version-bump.ts",
     "test": "bun test",
     "verify:docs": "uvx showboat verify WALKTHROUGH.md",
-    "deploy": "bun run deploy.ts"
+    "deploy": "bun run build && bun run deploy.ts"
   },
   "dependencies": {
     "@octokit/request-error": "^7.1.2",
