@@ -1,5 +1,7 @@
 # Obsidian Publisher
 
+![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen.svg)
+
 Publish [Obsidian](https://obsidian.md/) notes to GitHub for [Hugo](https://gohugo.io/) processing. Tailored for [philoserf.com](https://philoserf.com).
 
 ## You probably shouldn't install this
