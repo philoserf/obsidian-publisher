@@ -10,7 +10,7 @@ The current next step for this repo is tracked in the workspace backlog at `../N
 
 `THEORY.md` carries the design rationale behind the invariants this file summarizes — read it before changing the publish set, the slug rule, or the error-narrowing seam. `README.md` holds the full Obsidian-to-Hugo transformation table.
 
-`WALKTHROUGH.md` is **generated, and regenerated once per release — not per PR.** Run the `code-walkthrough` skill after all the work for a release has landed; do not hand-edit it, and do not regenerate it because one PR moved a function it quotes. `bun run verify:docs` belongs to the release gate for the same reason: wiring it into CI would fail on every PR that touches a quoted function and would pressure exactly the per-PR regeneration this rule rules out. Note also what a green verify does and does not mean — it re-executes the code blocks and never reads the prose around them, so a deleted function leaves the narrative describing something that is gone while verify still passes (#328).
+`WALKTHROUGH.md` is **generated, and regenerated once per release — not per PR.** Run the `code-walkthrough` skill after all the work for a release has landed; do not hand-edit it, and do not regenerate it because one PR moved a function it quotes.
 
 ## Development Commands
 
@@ -18,7 +18,6 @@ The current next step for this repo is tracked in the workspace backlog at `../N
 bun test src/note-transformer.test.ts   # Run a single test file
 bun test -t "wikilink"                  # Run tests whose name matches a substring
 bun run check        # typecheck + biome check (run before committing)
-bun run verify:docs  # re-run WALKTHROUGH.md's code blocks (release gate only)
 bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
 ```
 
@@ -47,7 +46,7 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 - **`note-transformer.ts`** — The transform chain: code-fence protection, wikilinks, images, note embeds, callouts, mermaid, highlights, comments, slug/filename sanitization, alias urlization
 - **`schema.ts`** — Frontmatter split, the `status: publish` gate, and required-field validation
 - **`notices.ts`** — Pure formatting of user-visible notice text; no Obsidian calls
-- **`settings.ts`** — Plugin settings UI with GitHub connection test. The YAML seam has no recovery path: input that does not parse to an object yields `{}`, which the additional-frontmatter control notices and reports. Do not add a salvage parser — the one that existed was the only way a value the user never wrote could reach a commit (#319). Every field has **one** normalizer, called by both the settings control and `parseSettings` — the load path used to validate types while the control repaired values, so all nine fields could disagree about what a bad value is (#314). Add a field in one place. Whether a configuration is _usable_ lives beside them too: `validateConnection` (token, owner, name) and `validatePublish` (those plus the two directories, derived from the first rather than restating it). The field sets differ on purpose — a connection test must not demand a content directory — but the vocabulary is one, "… is required" (#318). `sanitizePath` validates rather than subtracts, for the same reason: removing characters can synthesize the value being removed, and `.~./posts` used to become `../posts` (#313). It rejects whole (returning `""`, which `validateSettings` turns into a failed publish) rather than repairing, and deliberately does not restrict which characters a path may contain
+- **`settings.ts`** — Plugin settings UI with GitHub connection test. The YAML seam has no recovery path: input that does not parse to an object yields `{}`, which the additional-frontmatter control notices and reports. Do not add a salvage parser — it is the one way a value the user never wrote could reach a commit. Every field has **one** normalizer, called by both the settings control and `parseSettings`, so the load path and the control cannot disagree about what a bad value is. Add a field in one place. Whether a configuration is _usable_ lives beside them too: `validateConnection` (token, owner, name) and `validatePublish` (those plus the two directories, derived from the first rather than restating it). The field sets differ on purpose — a connection test must not demand a content directory — but the vocabulary is one, "… is required". `sanitizePath` validates rather than subtracts, for the same reason: removing characters can synthesize the value being removed (stripping `.~` from `.~./posts` leaves `../posts`). It rejects whole (returning `""`, which `validateSettings` turns into a failed publish) rather than repairing, and deliberately does not restrict which characters a path may contain
 - **`slug.ts`** — The one slug rule and its three shapes: `slugify` (heading anchors), `sanitizeSlug` (page slugs, with the `untitled` fallback), `sanitizeFilename` (committed filenames)
 
 ### Publishing Workflow
@@ -67,7 +66,7 @@ Every publish (single note or batch) creates a timestamped branch (`publish/2026
 
 Add new methods to `github-api-gateway.ts` using Octokit, and use `this.settings.repoOwner` / `this.settings.repoName`.
 
-Error handling goes through `rethrowWithPrefix`: a `RequestError` passes through **untouched** so its status survives for the caller, and only a generic `Error` gets a descriptive prefix. Wrapping a `RequestError` was bug #242 — it destroyed the status and silently disabled retry.
+Error handling goes through `rethrowWithPrefix`: a `RequestError` passes through **untouched** so its status survives for the caller, and only a generic `Error` gets a descriptive prefix. Wrapping a `RequestError` would destroy the status and silently disable retry.
 
 Wrap any new idempotent call in `this.withRetry(...)`. Its predicate `isTransient` covers 429, 5xx, and 403 only when the response looks rate-limit shaped (a `retry-after` header, or `x-ratelimit-remaining: 0`) — a bare 403 is usually a missing scope, and retrying it just burns attempts. `422` is deliberately excluded: on branch creation it means the name is taken, which `createBranchWithRetry` resolves by generating a **different** name, not by repeating the same request. Both loops back off through `backoffDelay(attempt)` and call it **between** attempts only — never after the last, which is dead wait before a throw the backoff cannot prevent.
 
