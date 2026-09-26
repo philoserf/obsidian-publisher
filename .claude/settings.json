@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(task check *)",
       "Bash(claude mcp list *)",
       "mcp__apple-eventkit__calendar_list_events"
     ]
