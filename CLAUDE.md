@@ -15,18 +15,9 @@ The current next step for this repo is tracked in the workspace backlog at `../N
 ## Development Commands
 
 ```bash
-bun install          # Install dependencies
-bun run dev          # Watch mode build with source maps
-bun run build        # Production build (runs check first)
-bun test             # Run all tests
 bun test src/note-transformer.test.ts   # Run a single test file
 bun test -t "wikilink"                  # Run tests whose name matches a substring
-bun run typecheck    # Type checking only (tsc --noEmit)
-bun run lint         # Biome check (lint + format verify)
-bun run lint:fix     # Biome check --write
-bun run format       # Biome format --write
 bun run check        # typecheck + biome check (run before committing)
-bun run audit        # bun audit (critical vulnerabilities)
 bun run verify:docs  # re-run WALKTHROUGH.md's code blocks (release gate only)
 bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
 ```
@@ -56,7 +47,7 @@ All GitHub operations must use the REST API through Octokit. Never use local Git
 - **`note-transformer.ts`** — The transform chain: code-fence protection, wikilinks, images, note embeds, callouts, mermaid, highlights, comments, slug/filename sanitization, alias urlization
 - **`schema.ts`** — Frontmatter split, the `status: publish` gate, and required-field validation
 - **`notices.ts`** — Pure formatting of user-visible notice text; no Obsidian calls
-- **`settings.ts`** — Plugin settings UI with GitHub connection test. The YAML seam has no recovery path: input that does not parse to an object yields `{}`, which the additional-frontmatter control notices and reports. Do not add a salvage parser — the one that existed was the only way a value the user never wrote could reach a commit (#319). Every field has **one** normalizer, called by both the settings control and `parseSettings` — the load path used to validate types while the control repaired values, so all nine fields could disagree about what a bad value is (#314). Add a field in one place. Whether a configuration is *usable* lives beside them too: `validateConnection` (token, owner, name) and `validatePublish` (those plus the two directories, derived from the first rather than restating it). The field sets differ on purpose — a connection test must not demand a content directory — but the vocabulary is one, "… is required" (#318). `sanitizePath` validates rather than subtracts, for the same reason: removing characters can synthesize the value being removed, and `.~./posts` used to become `../posts` (#313). It rejects whole (returning `""`, which `validateSettings` turns into a failed publish) rather than repairing, and deliberately does not restrict which characters a path may contain
+- **`settings.ts`** — Plugin settings UI with GitHub connection test. The YAML seam has no recovery path: input that does not parse to an object yields `{}`, which the additional-frontmatter control notices and reports. Do not add a salvage parser — the one that existed was the only way a value the user never wrote could reach a commit (#319). Every field has **one** normalizer, called by both the settings control and `parseSettings` — the load path used to validate types while the control repaired values, so all nine fields could disagree about what a bad value is (#314). Add a field in one place. Whether a configuration is _usable_ lives beside them too: `validateConnection` (token, owner, name) and `validatePublish` (those plus the two directories, derived from the first rather than restating it). The field sets differ on purpose — a connection test must not demand a content directory — but the vocabulary is one, "… is required" (#318). `sanitizePath` validates rather than subtracts, for the same reason: removing characters can synthesize the value being removed, and `.~./posts` used to become `../posts` (#313). It rejects whole (returning `""`, which `validateSettings` turns into a failed publish) rather than repairing, and deliberately does not restrict which characters a path may contain
 - **`slug.ts`** — The one slug rule and its three shapes: `slugify` (heading anchors), `sanitizeSlug` (page slugs, with the `untitled` fallback), `sanitizeFilename` (committed filenames)
 - **`types.ts`** — `PublisherSettings`, `PublishResult` (a `PublishSuccess`/`PublishFailure` union), `BatchPublishResult`, `ProcessedContent`, `PublishWarning`, `DEFAULT_SETTINGS`, `errorMessage()`
 
@@ -66,7 +57,7 @@ Every publish (single note or batch) creates a timestamped branch (`publish/2026
 
 ### Content Transformations
 
-- **Code is opaque, and the document has two levels.** `splitCodeSegments` resolves four competing delimiters in one left-to-right pass by earliest start — a fence at line start, a blockquote run at line start, an inline backtick run, and `%%` — yielding `prose`, `code`, `comment` and `quote` segments. Only prose runs the transform chain, so nothing inside a fence or an inline code span is rewritten; a `comment` segment is dropped at assembly and contributes no images. A `quote` is a **container**: its interior is unscanned, and the callout pass strips the markers and re-enters the pipeline recursively, which is what lets a fence nest inside a callout. Splitting is lossless across every kind and has a test. Mermaid is the one transform that runs over *code* segments, reading the `info` string the scanner already parsed rather than re-matching the fence
+- **Code is opaque, and the document has two levels.** `splitCodeSegments` resolves four competing delimiters in one left-to-right pass by earliest start — a fence at line start, a blockquote run at line start, an inline backtick run, and `%%` — yielding `prose`, `code`, `comment` and `quote` segments. Only prose runs the transform chain, so nothing inside a fence or an inline code span is rewritten; a `comment` segment is dropped at assembly and contributes no images. A `quote` is a **container**: its interior is unscanned, and the callout pass strips the markers and re-enters the pipeline recursively, which is what lets a fence nest inside a callout. Splitting is lossless across every kind and has a test. Mermaid is the one transform that runs over _code_ segments, reading the `info` string the scanner already parsed rather than re-matching the fence
 - **Wikilinks:** `[[Page Name]]` to `[Page Name](/posts/page-name/)`, `[[Page|Custom]]` to `[Custom](/posts/page-name/)` — but **only when the target slug is in the publish set**; otherwise the link degrades to bare display text. The `/posts/` prefix derives from `contentDir`. A same-page `[[#Heading]]` needs no publish-set lookup and always emits `[Heading](#heading)`. A path-qualified target (`[[folder/Page]]`) has its directory dropped before the slug lookup, because `buildPublishSet` keys on `file.basename` — but the **display text keeps the path the author wrote**, so a degraded link reads as it did in the vault
 - **Images:** `![[image.png]]` to `![image.png](/images/image.png)`. A path-qualified embed resolves through `buildFilesByPathSuffix`, which indexes every suffix of every vault path the way Obsidian's shortest-unique-path resolution does; the committed name and URL come from the basename, so `![[pic.png]]` and `![[folder/pic.png]]` are one image. `targetPathOwners` is keyed on the resolved `TFile.path` for that reason — keying it on the reference text makes two spellings of one file look like a target collision. One function, `convertEmbeds`, handles both arms of `![[...]]` — an image extension makes it an image, anything else is a note embed. The pipe is read differently on each side: an image caption is every segment after the first pipe (minus a trailing bare size), a note embed's display text is only the second
 - **One slug rule everywhere.** Page slugs, committed filenames and heading anchors all run the same `slugify()`: NFC-normalize, lowercase, keep Unicode letters, digits, underscore, whitespace and hyphen, whitespace to hyphens, collapse runs, trim edges. So `Rōnin…` keeps its macron while `Report Q3.2026` still becomes `report-q32026` (a dot is punctuation, not a letter). `sanitizeSlug` adds the `untitled` fallback that a filename needs and an anchor does not, so a heading anchor calls `slugify` directly; `sanitizeFilename` also lowercases the extension. All three live in `slug.ts`, which is the rule's owner — change it there, not in a caller. Keeping the three unified is load-bearing — `buildPublishSet` slugifies while `detectFilenameCollisions` sanitizes filenames, so if they diverge a link resolves against a name that was never committed
@@ -83,7 +74,7 @@ Wrap any new idempotent call in `this.withRetry(...)`. Its predicate `isTransien
 
 ### Testing
 
-Tests use Bun's built-in runner (`bun:test`) with `describe`/`test`/`expect` API. Test files live alongside source in `src/` with `.test.ts` suffix. Mocks are consolidated in `src/test-preload.ts`, loaded via `bunfig.toml`.
+Mocks are consolidated in `src/test-preload.ts`, loaded via `bunfig.toml`.
 
 Octokit is mocked at three different levels on purpose. The preload `mock.module`s `@octokit/rest` and `@octokit/request-error` globally; `github-api-gateway.test.ts` then builds a **real** `GitHubApiGateway` and overwrites its private `octokit` field with a fake, injecting a recording `sleep` mock so retry counts — and the number of backoffs between them — are asserted without waiting; only `publisher.test.ts` mocks the gateway wholesale, passing the fake as `Publisher`'s fifth constructor argument — typed `PublishGateway`, so the compiler checks it. Reach for the level that matches what you are pinning.
 
@@ -91,7 +82,7 @@ Octokit is mocked at three different levels on purpose. The preload `mock.module
 
 ### Build
 
-Single-file bundle via Bun: entry `src/main.ts` to output `main.js`. Externals: `obsidian`, `electron`. Bundled: `@octokit/rest` and `@octokit/request-error`. `main.js` is committed, and CI fails if a rebuild moves it — rebuild before committing any source change.
+`main.js` is committed, and CI fails if a rebuild moves it — rebuild before committing any source change.
 
 ### Version and Release
 
