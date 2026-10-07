@@ -5,6 +5,7 @@ import {
   legacyGithubToken,
   PublisherSettingTab,
   parseSettings,
+  SUGGESTED_TOKEN_NAME,
 } from "./settings";
 import {
   type BatchPublishResult,
@@ -17,7 +18,7 @@ import {
 /** Secret IDs for the migrated token. The generic one lets another plugin
  * that needs a GitHub token pick it from the keychain; the plugin-specific
  * one is used only when the generic one already holds a different token. */
-const SHARED_TOKEN_ID = "github-token";
+const SHARED_TOKEN_ID = SUGGESTED_TOKEN_NAME;
 const OWN_TOKEN_ID = "obsidian-publisher-github-token";
 
 /** A GitHub PR URL takes longer than the default ~5s to read on a phone. */

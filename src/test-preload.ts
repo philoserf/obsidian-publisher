@@ -55,7 +55,13 @@ mock.module("obsidian", () => ({
     }
   },
 
-  PluginSettingTab: class PluginSettingTab {},
+  // The real constructor keeps the app; the token row reads its keychain.
+  PluginSettingTab: class PluginSettingTab {
+    app: unknown;
+    constructor(app?: unknown) {
+      this.app = app;
+    }
+  },
 
   // Chainable no-ops: the token row's render callback builds one, though
   // no test runs render — the tab is tested as definition data.
