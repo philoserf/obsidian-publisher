@@ -1,6 +1,6 @@
 # Obsidian Publisher Walkthrough
 
-*2026-09-14T01:37:08Z by Showboat 0.6.1*
+_2026-09-14T01:37:08Z by Showboat 0.6.1_
 <!-- showboat-id: 66daa7d5-e222-461b-830c-07fe0bcd9548 -->
 
 ## What this is
@@ -50,9 +50,9 @@ note-transformer     -> schema slug types
 github-api-gateway   -> types
 settings             -> github-api-gateway main schema types
 schema               -> types
-slug                 -> 
+slug                 ->
 notices              -> types
-types                -> 
+types                ->
 ```
 
 `types.ts` and `slug.ts` are leaves — nothing they depend on can change
@@ -65,7 +65,7 @@ Two edges repay a second look.
 `settings.ts -> main.ts` is a **type-only** import (`import type
 ObsidianPublisher from "./main"`), and `main.ts` imports `settings.ts` back.
 TypeScript erases it at build time, so the bundle is fine and the cycle is
-not real. A future *value* import from `main.ts` into `settings.ts` would
+not real. A future _value_ import from `main.ts` into `settings.ts` would
 make it real.
 
 `publisher.ts -> settings.ts` exists for exactly one function,
@@ -319,7 +319,7 @@ export function sanitizePath(value: string): string {
 ```
 
 Nothing is removed. The previous version removed `..`, then `~`, then edge
-slashes — and a sanitizer that removes characters can *synthesize* the
+slashes — and a sanitizer that removes characters can _synthesize_ the
 value it was written to remove. `.~./posts` became `../posts`: stripping
 `..` left `.~./`, and stripping `~` closed the gap. `..././` became `./.`,
 and `a/....//b` left an empty segment no later step removed (#313).
@@ -329,7 +329,7 @@ written or rejected whole. Rejection returns `""`, which routes into
 `validatePublish` and fails the publish loudly rather than publishing
 somewhere odd.
 
-It is deliberately *not* an allowlist of permitted characters: a space and
+It is deliberately _not_ an allowlist of permitted characters: a space and
 a non-ASCII letter are both legitimate in a Hugo content directory, and
 narrowing what a path may contain is a separate decision from fixing the
 reconstruction bug.
@@ -465,7 +465,7 @@ handful marked for publish, and Obsidian already keeps a parsed
 the cache parsed the frontmatter and it carries no publish flag.
 
 Everything else has to be read. A cold cache returns nothing, and —
-critically — `metadataCache` reports *malformed* frontmatter as simply
+critically — `metadataCache` reports _malformed_ frontmatter as simply
 absent. Trusting "no frontmatter" as "not publishable" would silently skip
 every note whose YAML is broken, which is the one case the read path exists
 to surface.
@@ -797,7 +797,7 @@ and their scope is the point:
   what is being published without being told.
 - **`imageReadCache`** and **`targetPathOwners`** make cross-note
   deduplication and collision detection batch concerns rather than per-note
-  ones. Two notes referencing the same image read it once; two *different*
+  ones. Two notes referencing the same image read it once; two _different_
   images that sanitize to one target path produce a warning rather than a
   silent overwrite.
 
@@ -867,7 +867,7 @@ sed -n '/^  async publishNote/,/^  }$/p' src/publisher.ts
   }
 ```
 
-Frontmatter *validation* is deliberately absent here — that is
+Frontmatter _validation_ is deliberately absent here — that is
 `prepareBatch`'s sole responsibility. The parse and publish-flag checks
 above only gate entry into the workflow, so there is exactly one place that
 decides whether a note's `title` and `date` are acceptable.
@@ -924,7 +924,7 @@ See [Other Note](/posts/other-note/) and Missing Note.
 Uses <mark>marks</mark> and ![pic.png](/images/pic.png).
 {{< /callout >}}
 
-Hidden: 
+Hidden:
 ```
 
 Seven separate behaviors in that one output, and each is a section below:
@@ -964,7 +964,7 @@ blockquote run at line start, an inline backtick run, and `%%`.
 
 Running it on a body that contains all four at once:
 
-```bash
+````bash
 bun --preload ./src/test-preload.ts -e '
 import { splitCodeSegments } from "./src/note-transformer.ts";
 
@@ -986,9 +986,9 @@ for (const s of splitCodeSegments(body)) {
 const rejoined = splitCodeSegments(body).map((s) => s.text).join("");
 console.log("lossless:", rejoined === body);
 '
-```
+````
 
-```output
+````output
 prose    "Text with "
 code     "`code`"
 prose    " and "
@@ -998,7 +998,7 @@ code     "```js\nlet x = %% not a comment %%;\n```\n"
 prose    "\n"
 quote    "> [!note] Title\n> Body line."
 lossless: true
-```
+````
 
 Two things in that output are load-bearing.
 
@@ -1009,7 +1009,7 @@ arrives at that `%%` as a candidate. Mermaid's own `%%` comment syntax is
 what pins this in the test suite.
 
 And the split is **lossless**: concatenating every segment's text
-reproduces the input exactly. That is what lets `comment` be a *kind*
+reproduces the input exactly. That is what lets `comment` be a _kind_
 rather than a deletion — the scanner stays a pure partition, and dropping
 comments becomes an assembly decision made later.
 
@@ -1091,7 +1091,7 @@ sed -n '/^    if (body\[pos\] === "`") {/,/^    pos++;$/p' src/note-transformer.
     pos++;
 ```
 
-Note that both branches only consume when they find a *pair*. An unmatched
+Note that both branches only consume when they find a _pair_. An unmatched
 backtick or an unclosed `%%` falls through to `pos++` and stays prose.
 
 ### Spans stop at a blank line
@@ -1131,7 +1131,7 @@ works.
 
 The blank-line limit is the interesting part. CommonMark matches a code
 span within a paragraph, and admitting `\n\s*\n` let two unmatched
-backticks in *different paragraphs* pair up — exempting everything between
+backticks in _different paragraphs_ pair up — exempting everything between
 them from the entire transform chain, comments included (#305). A stray
 backtick in a note is common; silently disabling every transform for the
 next three paragraphs is not a failure anyone would connect to it.
@@ -1171,7 +1171,7 @@ sed -n '/private transformBody(/,/^  }$/p' src/note-transformer.ts
   }
 ```
 
-Images are collected per level, from prose only, *before* any transform
+Images are collected per level, from prose only, _before_ any transform
 rewrites the `![[...]]` syntax out of existence. A quote's images are
 collected by its own recursion; a comment's are never collected at all,
 which is what makes a reference hidden inside `%% %%` never queued for
@@ -1225,7 +1225,7 @@ it the scanner emits quote/fence/quote and the callout fragments across
 three segments, so only the text above the fence converts — a defect a
 local fix could not reach (#303). Watch it work:
 
-```bash
+````bash
 bun --preload ./src/test-preload.ts -e '
 import { NoteTransformer } from "./src/note-transformer.ts";
 import { DEFAULT_SETTINGS } from "./src/types.ts";
@@ -1244,7 +1244,7 @@ const body = [
 const t = new NoteTransformer(DEFAULT_SETTINGS);
 console.log(t.processFromSplit({}, body, "n.md", new Set(["target"])).content);
 '
-```
+````
 
 ````output
 {{< callout tip "Nested" >}}
@@ -1259,7 +1259,7 @@ After the fence, with a [Target](/posts/target/) link.
 ````
 
 The fence survived intact, the bare `>` lines became paragraph breaks, and
-the wikilink *after* the fence still resolved — all three of which the flat
+the wikilink _after_ the fence still resolved — all three of which the flat
 model got wrong.
 
 Two details in the marker strip are worth naming. The pattern is
@@ -1361,7 +1361,7 @@ This used to be two methods, each a full pass that matched every embed and
 returned half of them verbatim. That forced them to agree about
 classification forever, with the dependency recorded only in two comments
 pointing at each other — and made the second one's image guard
-*unreachable*, since the first had already consumed every image embed
+_unreachable_, since the first had already consumed every image embed
 (#301).
 
 The pipe is read differently on each side, which is the one asymmetry
@@ -1542,7 +1542,7 @@ the post really used — `/posts/dna-as-remix-culture/` — was left dead.
 `sanitizeSlug` and `postsUrlPath` are reused deliberately: they are what
 generated those URLs in the first place, so reusing them is what makes the
 redirect land. A value that already names a path is left alone, checked
-*before* slugifying since `sanitizeSlug` strips `/`.
+_before_ slugifying since `sanitizeSlug` strips `/`.
 
 This is also why `aliases` is deliberately absent from the default
 `strippedFrontmatterFields`. Hugo reads it as the redirect list, so
@@ -1665,7 +1665,7 @@ punctuation strip rather than losing the combining mark and flattening to
 `e`.
 
 The three shapes differ only in what they add. `sanitizeSlug` adds the
-`untitled` fallback a *name* needs and an anchor does not — an empty anchor
+`untitled` fallback a _name_ needs and an anchor does not — an empty anchor
 is simply no anchor, but an empty filename is not a file — so a heading
 anchor calls `slugify` directly. `sanitizeFilename` preserves the
 extension and **lowercases it**: leaving it alone made `photo.PNG` and
@@ -1679,7 +1679,7 @@ diverge a link resolves against a name that was never committed. And the
 blast radius of changing the rule is renamed live files — which the gateway
 has no delete path to clean up.
 
-One operation deliberately stays *outside* the rule:
+One operation deliberately stays _outside_ the rule:
 
 ```bash
 sed -n '/^export function vaultBasename/,/^}$/p' src/slug.ts
@@ -1694,13 +1694,13 @@ export function vaultBasename(reference: string): string {
 
 Obsidian writes a reference path-qualified when the bare basename would be
 ambiguous, and unconditionally when the vault's "New link format" is set to
-an absolute or relative path. The directory is *addressing* — how to find
+an absolute or relative path. The directory is _addressing_ — how to find
 the file — while the publish set, the committed filename and the URL are
 all keyed on the name.
 
 Folding it into `slugify` would be wrong: the slug rule strips `/` as
 punctuation, so `folder/Note` slugified to `foldernote` and matched nothing
-(#308). Stripping the directory *before* the rule is a different operation
+(#308). Stripping the directory _before_ the rule is a different operation
 from the rule itself, and an alias like `some/path` still runs the plain
 rule.
 
@@ -1737,7 +1737,7 @@ shortest-unique-path resolution works: `a/b/pic.png` is reachable as
 Keying on the basename alone was #308 — a path-qualified reference never
 matched, so the note published with a broken image URL and nothing
 uploaded. Bare-basename lookups are unchanged by the fix: the shortest
-suffix *is* the basename, and it still maps to every file with that name,
+suffix _is_ the basename, and it still maps to every file with that name,
 so an ambiguous reference still reports a collision.
 
 ```bash
@@ -1831,7 +1831,7 @@ failures** — the note still publishes:
 - **Not found** — no vault file matches the reference.
 - **Ambiguous** — more than one file matches, so uploading either would be
   a guess.
-- **Target collision** — two *different* files whose names sanitize to the
+- **Target collision** — two _different_ files whose names sanitize to the
   same target path. Uploading both means one silently overwrites the other.
 - **Unreadable** — `readBinary` threw. This one reports the same
   `image-failed` kind as "not found", because from the note's side the
@@ -1902,8 +1902,7 @@ sed -n '/Text goes inline/,/^      }$/p' src/github-api-gateway.ts
 ```
 
 Markdown goes **inline** as a tree entry's `content`, so GitHub writes the
-blob as part of `createTree`. A 167-note batch is one request rather than
-167. Binary has no encoding parameter on a tree entry, so images still need
+blob as part of `createTree`. A 167-note batch is one request rather than 167. Binary has no encoding parameter on a tree entry, so images still need
 a base64 blob of their own — which is the one place the file count drives
 the request count.
 
@@ -1947,7 +1946,7 @@ the caller. Only a generic `Error` gets a descriptive prefix. Wrapping a
 `RequestError` was bug #242: it destroyed the status and silently disabled
 every retry downstream, because the retry predicate reads `error.status`.
 
-`validateConnection` is the deliberate exception — it does *not* use this
+`validateConnection` is the deliberate exception — it does _not_ use this
 helper, because its message is user-facing guidance in the settings
 connection test, and a bare "Not Found" helps nobody.
 
@@ -1974,7 +1973,7 @@ export function isTransient(error: unknown): boolean {
 it both for secondary rate limiting and for "token lacks scope" — so it
 only counts when the response looks rate-limit shaped: a `retry-after`
 header, or `x-ratelimit-remaining: 0`. Otherwise a genuine permission error
-would burn every attempt before surfacing, which is slow *and* misleading.
+would burn every attempt before surfacing, which is slow _and_ misleading.
 
 **422 is deliberately absent.** On branch creation it means "ref already
 exists", which is resolved by trying a **different** name rather than
@@ -2014,7 +2013,7 @@ both ways paid it twice. A three-attempt loop now waits twice — roughly
 500ms then 1s, plus jitter so a rate-limited batch does not hammer in
 lockstep.
 
-`sleep` is injectable, which is how the suite asserts attempt counts *and*
+`sleep` is injectable, which is how the suite asserts attempt counts _and_
 the number of backoffs between them without waiting.
 
 ### Branch names collide by design
@@ -2065,7 +2064,7 @@ sed -n '/generateBranchName(prefix/,/^  }$/p' src/github-api-gateway.ts; echo; s
 The branch name is an ISO-8601 timestamp with `:` and `.` replaced by `-`,
 so two publishes in the same second collide. That is a 422, and this loop
 is the one place 422 is treated as retryable — because the retry uses a
-*different* name (`-1`, `-2`), not the same request again.
+_different_ name (`-1`, `-2`), not the same request again.
 
 The two conditions are read separately for that reason: a collision gets a
 new name, and `isTransient` covers the failures worth repeating the same
@@ -2225,7 +2224,7 @@ if this code ever runs over input the user did not author.
 
 **The `settings.ts` ↔ `main.ts` cycle is type-only.** `settings.ts` needs
 `ObsidianPublisher` only as a type, TypeScript erases the import, and the
-bundle works. A future *value* import from `main.ts` into `settings.ts`
+bundle works. A future _value_ import from `main.ts` into `settings.ts`
 would make the cycle real.
 
 ## Regenerating this document
@@ -2240,7 +2239,7 @@ fail on every pull request that touches a quoted function, which is
 pressure toward exactly the per-PR regeneration this rule rejects.
 
 Know what a green verify does and does not mean. It re-runs the code blocks
-and never reads the prose around them, so a *deleted* function leaves the
+and never reads the prose around them, so a _deleted_ function leaves the
 narrative describing something that is gone while verify still passes — a
 `sed` range matching nothing yields empty output rather than wrong output.
 Issue #328 has the measurements.
