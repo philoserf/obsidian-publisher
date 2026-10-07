@@ -2,7 +2,7 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import { Publisher } from "./publisher";
 import {
   DEFAULT_SETTINGS,
-  type PublisherSettings,
+  type PublishConfig,
   type PublishWarning,
 } from "./types";
 
@@ -27,9 +27,7 @@ date: 2026-01-01
 ---
 Check ![[photo.png]]`;
 
-function makeSettings(
-  overrides: Partial<PublisherSettings> = {},
-): PublisherSettings {
+function makeSettings(overrides: Partial<PublishConfig> = {}): PublishConfig {
   return {
     ...DEFAULT_SETTINGS,
     githubToken: "ghp_test",
@@ -104,7 +102,7 @@ function makeGitHubApiGateway() {
 // Helper to inject mock github service into publisher
 function makePublisher(
   vault: ReturnType<typeof makeVault>,
-  settings: PublisherSettings,
+  settings: PublishConfig,
   githubApiGateway?: ReturnType<typeof makeGitHubApiGateway>,
 ) {
   const publisher = new Publisher(

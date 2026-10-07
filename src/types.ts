@@ -2,8 +2,10 @@
  * Plugin settings interface
  */
 export interface PublisherSettings {
-  /** GitHub personal access token */
-  githubToken: string;
+  /** ID of the GitHub token in Obsidian's secret storage (Settings →
+   * Keychain) — never the token itself, which data.json would hold in
+   * plaintext and Obsidian Sync would copy to every device (#352) */
+  githubTokenSecret: string;
   /** Repository owner (username or organization) */
   repoOwner: string;
   /** Repository name */
@@ -30,7 +32,7 @@ export interface PublisherSettings {
  * Default settings values
  */
 export const DEFAULT_SETTINGS: PublisherSettings = {
-  githubToken: "",
+  githubTokenSecret: "",
   repoOwner: "",
   repoName: "",
   contentDir: "content/posts",
@@ -52,6 +54,13 @@ export const DEFAULT_SETTINGS: PublisherSettings = {
   calloutShortcodeName: "callout",
   mermaidShortcodeName: "mermaid",
 };
+
+/**
+ * Settings with the GitHub token resolved out of secret storage. Built in
+ * one place, `ObsidianPublisher.publishConfig()`, at the moment it is
+ * needed, and never persisted.
+ */
+export type PublishConfig = PublisherSettings & { githubToken: string };
 
 /**
  * Processed content result

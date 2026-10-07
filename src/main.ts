@@ -1,13 +1,24 @@
 import { Notice, Plugin, type TFile } from "obsidian";
 import { formatBatchNotice, formatWarnings } from "./notices";
 import { Publisher } from "./publisher";
-import { PublisherSettingTab, parseSettings } from "./settings";
+import {
+  legacyGithubToken,
+  PublisherSettingTab,
+  parseSettings,
+} from "./settings";
 import {
   type BatchPublishResult,
   errorMessage,
+  type PublishConfig,
   type PublisherSettings,
   type PublishWarning,
 } from "./types";
+
+/** Secret IDs for the migrated token. The generic one lets another plugin
+ * that needs a GitHub token pick it from the keychain; the plugin-specific
+ * one is used only when the generic one already holds a different token. */
+const SHARED_TOKEN_ID = "github-token";
+const OWN_TOKEN_ID = "obsidian-publisher-github-token";
 
 /** A GitHub PR URL takes longer than the default ~5s to read on a phone. */
 const PR_NOTICE_DURATION_MS = 10_000;
@@ -20,8 +31,6 @@ function notifyWarnings(warnings: PublishWarning[]): void {
 
 export default class ObsidianPublisher extends Plugin {
   declare settings: PublisherSettings;
-  private settingTab?: PublisherSettingTab;
-  private publisher!: Publisher;
 
   /** The batch progress notice, held so it can be updated in place rather
    * than stacking one toast per file. Cleared by endProgress(). */
@@ -74,10 +83,25 @@ export default class ObsidianPublisher extends Plugin {
 
     return new Publisher(
       this.app.vault,
-      this.settings,
+      this.publishConfig(),
       onProgress,
       this.app.metadataCache,
     );
+  }
+
+  /**
+   * The settings with the token read out of secret storage. Read at the
+   * moment of use, never cached: the token can change in Settings → Keychain
+   * without this plugin's settings changing at all. An unset or missing
+   * secret resolves to "", which validation reports as "GitHub token is
+   * required".
+   */
+  publishConfig(): PublishConfig {
+    const id = this.settings.githubTokenSecret;
+    return {
+      ...this.settings,
+      githubToken: (id && this.app.secretStorage.getSecret(id)) || "",
+    };
   }
 
   /** Dismiss the progress notice. Called from a finally, not from the
@@ -90,11 +114,8 @@ export default class ObsidianPublisher extends Plugin {
 
   override async onload() {
     await this.loadSettings();
-    this.publisher = this.createPublisher();
 
-    // Register settings tab
-    this.settingTab = new PublisherSettingTab(this.app, this);
-    this.addSettingTab(this.settingTab);
+    this.addSettingTab(new PublisherSettingTab(this.app, this));
 
     // Register commands
     this.addCommand({
@@ -120,28 +141,38 @@ export default class ObsidianPublisher extends Plugin {
     });
   }
 
-  override onunload() {
-    this.settingTab?.save.cancel();
-    void this.saveSettings();
-  }
-
+  /**
+   * Load settings, moving a plaintext token from before #352 into secret
+   * storage. Idempotent: once saved, data.json holds no `githubToken` and
+   * this does nothing. If an ID is already set — another device migrated
+   * first and Sync brought its data.json — the plaintext is only dropped.
+   * Secrets do not sync, so that device enters the token once by hand.
+   */
   async loadSettings() {
     const data = await this.loadData();
     this.settings = parseSettings(data);
+    const legacy = legacyGithubToken(data);
+    if (!legacy) return;
+    if (!this.settings.githubTokenSecret) {
+      const { secretStorage } = this.app;
+      const shared = secretStorage.getSecret(SHARED_TOKEN_ID);
+      const id =
+        shared === null || shared === legacy ? SHARED_TOKEN_ID : OWN_TOKEN_ID;
+      secretStorage.setSecret(id, legacy);
+      this.settings.githubTokenSecret = id;
+    }
+    await this.saveData(this.settings);
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
-    // Publisher captures settings (and its GitHub client's token) at
-    // construction; rebuild so changes take effect without a reload.
-    this.publisher = this.createPublisher();
   }
 
   /**
    * Publish the current note
    */
   private async publishCurrentNote(file: TFile) {
-    const publisher = this.publisher;
+    const publisher = this.createPublisher();
     const validationError = publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);
@@ -180,7 +211,7 @@ export default class ObsidianPublisher extends Plugin {
    * Publish all notes with status: publish
    */
   private async publishAllNotes() {
-    const publisher = this.publisher;
+    const publisher = this.createPublisher();
     const validationError = publisher.validateSettings();
     if (validationError) {
       new Notice(`Cannot publish: ${validationError}`);

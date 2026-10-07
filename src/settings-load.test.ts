@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseSettings } from "./settings";
+import { legacyGithubToken, parseSettings } from "./settings";
 import { DEFAULT_SETTINGS } from "./types";
 
 describe("parseSettings", () => {
@@ -15,7 +15,7 @@ describe("parseSettings", () => {
 
   test("preserves valid fields", () => {
     const result = parseSettings({
-      githubToken: "ghp_abc",
+      githubTokenSecret: "github-token",
       repoOwner: "me",
       repoName: "site",
       contentDir: "content/blog",
@@ -25,7 +25,7 @@ describe("parseSettings", () => {
       baseBranch: "trunk",
       prLabels: ["chore", "publish"],
     });
-    expect(result.githubToken).toBe("ghp_abc");
+    expect(result.githubTokenSecret).toBe("github-token");
     expect(result.repoOwner).toBe("me");
     expect(result.repoName).toBe("site");
     expect(result.contentDir).toBe("content/blog");
@@ -38,11 +38,11 @@ describe("parseSettings", () => {
 
   test("falls back when string field has wrong type", () => {
     const result = parseSettings({
-      githubToken: 42,
+      githubTokenSecret: 42,
       repoOwner: null,
       repoName: ["array"],
     });
-    expect(result.githubToken).toBe(DEFAULT_SETTINGS.githubToken);
+    expect(result.githubTokenSecret).toBe(DEFAULT_SETTINGS.githubTokenSecret);
     expect(result.repoOwner).toBe(DEFAULT_SETTINGS.repoOwner);
     expect(result.repoName).toBe(DEFAULT_SETTINGS.repoName);
   });
@@ -102,12 +102,12 @@ describe("parseSettings", () => {
 
   test("preserves valid fields when other fields are corrupted", () => {
     const result = parseSettings({
-      githubToken: "ghp_valid",
+      githubTokenSecret: "valid-id",
       prLabels: "broken",
       repoOwner: 42,
       baseBranch: "develop",
     });
-    expect(result.githubToken).toBe("ghp_valid");
+    expect(result.githubTokenSecret).toBe("valid-id");
     expect(result.baseBranch).toBe("develop");
     expect(result.prLabels).toEqual(DEFAULT_SETTINGS.prLabels);
     expect(result.repoOwner).toBe(DEFAULT_SETTINGS.repoOwner);
@@ -115,13 +115,13 @@ describe("parseSettings", () => {
 
   test("ignores unknown fields", () => {
     const result = parseSettings({
-      githubToken: "ghp_x",
+      githubTokenSecret: "x",
       legacyField: "value",
       anotherUnknown: { deep: true },
     });
     expect(result).not.toHaveProperty("legacyField");
     expect(result).not.toHaveProperty("anotherUnknown");
-    expect(result.githubToken).toBe("ghp_x");
+    expect(result.githubTokenSecret).toBe("x");
   });
 
   test("parseSettings accepts strippedFrontmatterFields as string array", () => {
@@ -283,5 +283,26 @@ describe("the load path applies the same normalizer as the UI (#314)", () => {
       mermaidShortcodeName: "mermaid",
     });
     expect(parseSettings(settings)).toEqual(settings);
+  });
+});
+
+// #352: the token moved to secret storage. parseSettings is what
+// saveSettings persists, so a plaintext token surviving it would be written
+// straight back to data.json.
+describe("the plaintext token does not survive a load (#352)", () => {
+  test("parseSettings drops a legacy githubToken", () => {
+    const result = parseSettings({ githubToken: "ghp_secret", repoName: "r" });
+    expect(result).not.toHaveProperty("githubToken");
+    expect(JSON.stringify(result)).not.toContain("ghp_secret");
+  });
+
+  test("legacyGithubToken reads it once, for the migration", () => {
+    expect(legacyGithubToken({ githubToken: "ghp_secret" })).toBe("ghp_secret");
+  });
+
+  test("legacyGithubToken is empty when there is nothing to move", () => {
+    expect(legacyGithubToken({})).toBe("");
+    expect(legacyGithubToken({ githubToken: 42 })).toBe("");
+    expect(legacyGithubToken(null)).toBe("");
   });
 });

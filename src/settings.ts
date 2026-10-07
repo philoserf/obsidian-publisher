@@ -1,11 +1,10 @@
 import {
   type App,
-  type Debouncer,
-  debounce,
   Notice,
   PluginSettingTab,
   parseYaml,
-  Setting,
+  SecretComponent,
+  type SettingDefinitionItem,
   stringifyYaml,
 } from "obsidian";
 import { GitHubApiGateway } from "./github-api-gateway";
@@ -14,6 +13,7 @@ import { REQUIRED_FRONTMATTER_FIELDS } from "./schema";
 import {
   DEFAULT_SETTINGS,
   errorMessage,
+  type PublishConfig,
   type PublisherSettings,
 } from "./types";
 
@@ -141,7 +141,7 @@ export function parseFrontmatter(text: string): Record<string, unknown> {
  * need a content directory, and requiring one would block the button whose
  * whole job is telling the user their token works.
  */
-export function validateConnection(settings: PublisherSettings): string | null {
+export function validateConnection(settings: PublishConfig): string | null {
   if (!settings.githubToken) return "GitHub token is required";
   if (!settings.repoOwner || !settings.repoName) {
     return "Repository owner and name are required";
@@ -161,7 +161,7 @@ export function validateConnection(settings: PublisherSettings): string | null {
  * One vocabulary now: "… is required". A field added to `PublisherSettings`
  * that publishing needs goes here, and there is no second place to forget.
  */
-export function validatePublish(settings: PublisherSettings): string | null {
+export function validatePublish(settings: PublishConfig): string | null {
   const connection = validateConnection(settings);
   if (connection) return connection;
   if (!settings.contentDir) return "Content directory is required";
@@ -215,7 +215,13 @@ export function parseSettings(data: unknown): PublisherSettings {
     typeof value === "string" ? value : fallback;
 
   return {
-    githubToken: str(d.githubToken, DEFAULT_SETTINGS.githubToken),
+    // Only the secret's ID. A plaintext `githubToken` from before #352 is
+    // never carried into the result; `legacyGithubToken` reads it once so
+    // loadSettings can move it into secret storage.
+    githubTokenSecret: str(
+      d.githubTokenSecret,
+      DEFAULT_SETTINGS.githubTokenSecret,
+    ),
     repoOwner:
       typeof d.repoOwner === "string"
         ? sanitizeGitHubOwner(d.repoOwner)
@@ -256,240 +262,207 @@ export function parseSettings(data: unknown): PublisherSettings {
   };
 }
 
+/** The plaintext token a pre-#352 data.json carried, or "" when there is none. */
+export function legacyGithubToken(data: unknown): string {
+  return isPlainObject(data) && typeof data.githubToken === "string"
+    ? data.githubToken
+    : "";
+}
+
 export class PublisherSettingTab extends PluginSettingTab {
   plugin: ObsidianPublisher;
-  readonly save: Debouncer<[], Promise<void>>;
 
   constructor(app: App, plugin: ObsidianPublisher) {
     super(app, plugin);
     this.plugin = plugin;
-    this.save = debounce(() => this.plugin.saveSettings(), 500, true);
   }
 
-  override hide(): void {
-    this.save.cancel();
-    void this.plugin.saveSettings();
-  }
-
-  override display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
+  /** Three fields are not strings but are edited as text. */
+  override getControlValue(key: string): unknown {
     const settings = this.plugin.settings;
-    const save = this.save;
-
-    containerEl.createEl("h2", { text: "Obsidian Publisher Settings" });
-
-    this.addTextSetting(containerEl, {
-      name: "GitHub Personal Access Token",
-      desc: "Create a fine-grained token at github.com/settings/tokens scoped to your target repo, with contents:write and pull_requests:write — every publish opens a pull request, so contents:write alone will commit and then fail. Token is stored in plugin data (unencrypted).",
-      placeholder: "ghp_xxxxxxxxxxxx",
-      getValue: () => settings.githubToken,
-      onChange: (value) => {
-        settings.githubToken = value;
-        save();
-      },
-      inputType: "password",
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Repository Owner",
-      desc: "GitHub username or organization name",
-      placeholder: "username",
-      getValue: () => settings.repoOwner,
-      onChange: (value) => {
-        settings.repoOwner = sanitizeGitHubOwner(value);
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Repository Name",
-      desc: "Name of the Hugo repository",
-      placeholder: "my-blog",
-      getValue: () => settings.repoName,
-      onChange: (value) => {
-        settings.repoName = sanitizeRepoName(value);
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Content Directory",
-      desc: "Path to Hugo content directory (e.g., 'content/posts')",
-      placeholder: "content/posts",
-      getValue: () => settings.contentDir,
-      onChange: (value) => {
-        settings.contentDir = sanitizePath(value);
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Image Directory",
-      desc: "Path to Hugo static images directory (e.g., 'static/images')",
-      placeholder: "static/images",
-      getValue: () => settings.imageDir,
-      onChange: (value) => {
-        settings.imageDir = sanitizePath(value);
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Base Branch",
-      desc: "Branch to create pull requests against (e.g., 'main', 'master')",
-      placeholder: "main",
-      getValue: () => settings.baseBranch,
-      onChange: (value) => {
-        settings.baseBranch = normalizeBaseBranch(value);
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Pull Request Labels",
-      desc: "Comma-separated labels to add to pull requests",
-      placeholder: "chore",
-      getValue: () => settings.prLabels.join(", "),
-      onChange: (value) => {
-        settings.prLabels = splitFieldsInput(value);
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Callout Shortcode Name",
-      desc: "Hugo shortcode name used for Obsidian callouts. Ship hugo-shortcodes/callout.html in your theme to match.",
-      placeholder: "callout",
-      getValue: () => settings.calloutShortcodeName,
-      onChange: (value) => {
-        settings.calloutShortcodeName = normalizeShortcodeName(
-          value,
-          DEFAULT_SETTINGS.calloutShortcodeName,
-        );
-        save();
-      },
-    });
-
-    this.addTextSetting(containerEl, {
-      name: "Mermaid Shortcode Name",
-      desc: "Hugo shortcode name used for mermaid code fences.",
-      placeholder: "mermaid",
-      getValue: () => settings.mermaidShortcodeName,
-      onChange: (value) => {
-        settings.mermaidShortcodeName = normalizeShortcodeName(
-          value,
-          DEFAULT_SETTINGS.mermaidShortcodeName,
-        );
-        save();
-      },
-    });
-
-    containerEl.createEl("h3", { text: "Frontmatter Field Stripping" });
-    containerEl.createEl("p", {
-      text: "Comma-separated list of frontmatter fields to remove when publishing. Default: status, lastmod, cssclass, cssclasses, position, created, modified. Note: aliases is not stripped — Hugo uses it to emit redirects from a note's previous titles.",
-      cls: "setting-item-description",
-    });
-
-    new Setting(containerEl).addTextArea((text) => {
-      // Track previously seen required fields so the Notice fires only when
-      // a required field first appears in the input, not on every keystroke
-      // that follows.
-      let lastBlocked = new Set<string>(
-        requiredFieldsIn(settings.strippedFrontmatterFields),
-      );
-      text
-        .setPlaceholder("status, lastmod, cssclasses")
-        .setValue(settings.strippedFrontmatterFields.join(", "))
-        .onChange((value) => {
-          const raw = splitFieldsInput(value);
-          const blocked = requiredFieldsIn(raw);
-          const newlyBlocked = blocked.filter((f) => !lastBlocked.has(f));
-          settings.strippedFrontmatterFields = filterRequiredFields(raw);
-          if (newlyBlocked.length > 0) {
-            new Notice(
-              `Cannot strip required frontmatter field${newlyBlocked.length > 1 ? "s" : ""}: ${newlyBlocked.join(", ")}. Required for publishing; ignored.`,
-            );
-          }
-          lastBlocked = new Set(blocked);
-          save();
-        });
-      text.inputEl.rows = 3;
-      text.inputEl.cols = 50;
-    });
-
-    containerEl.createEl("h3", { text: "Additional Frontmatter" });
-    containerEl.createEl("p", {
-      text: "Add custom frontmatter fields (one per line, format: key: value)",
-      cls: "setting-item-description",
-    });
-
-    new Setting(containerEl).addTextArea((text) => {
-      // Non-empty input that yields no fields is silently discarded
-      // otherwise: a line without a colon is valid YAML (a plain string),
-      // so it never throws, it just isn't an object. Track the last state
-      // so the Notice fires when the input first goes bad, not on every
-      // keystroke after.
-      let lastRejected = false;
-      text
-        .setPlaceholder("author: Your Name\ntags: [obsidian]")
-        .setValue(serializeFrontmatter(settings.frontmatterTemplate))
-        .onChange((value) => {
-          const parsed = parseFrontmatter(value);
-          const rejected =
-            value.trim().length > 0 && Object.keys(parsed).length === 0;
-          settings.frontmatterTemplate = parsed;
-          if (rejected && !lastRejected) {
-            new Notice(
-              "Additional frontmatter must be 'key: value' lines; input ignored.",
-            );
-          }
-          lastRejected = rejected;
-          save();
-        });
-      text.inputEl.rows = 6;
-      text.inputEl.cols = 50;
-    });
-
-    new Setting(containerEl)
-      .setName("Test GitHub Connection")
-      .setDesc("Verify that your GitHub credentials and repository are valid")
-      .addButton((button) =>
-        button.setButtonText("Test Connection").onClick(async () => {
-          await this.testConnection();
-        }),
-      );
+    switch (key) {
+      case "prLabels":
+        return settings.prLabels.join(", ");
+      case "strippedFrontmatterFields":
+        return settings.strippedFrontmatterFields.join(", ");
+      case "frontmatterTemplate":
+        return serializeFrontmatter(settings.frontmatterTemplate);
+      default:
+        return settings[key as keyof PublisherSettings];
+    }
   }
 
-  private addTextSetting(
-    containerEl: HTMLElement,
-    config: {
-      name: string;
-      desc: string;
-      placeholder: string;
-      getValue: () => string;
-      onChange: (value: string) => void;
-      inputType?: "text" | "password";
-    },
-  ): void {
-    new Setting(containerEl)
-      .setName(config.name)
-      .setDesc(config.desc)
-      .addText((text) => {
-        text
-          .setPlaceholder(config.placeholder)
-          .setValue(config.getValue())
-          .onChange(config.onChange);
-        if (config.inputType === "password") {
-          text.inputEl.setAttribute("type", "password");
-        }
-      });
+  /**
+   * Every control writes through `parseSettings`, the path a reload takes,
+   * so the value a control stores is the value a reload would produce and
+   * the field's one normalizer is the only one. The default implementation
+   * would store the raw input.
+   */
+  override async setControlValue(key: string, value: unknown): Promise<void> {
+    const text = typeof value === "string" ? value : "";
+    let decoded: unknown = value;
+    if (key === "prLabels" || key === "strippedFrontmatterFields") {
+      decoded = splitFieldsInput(text);
+    } else if (key === "frontmatterTemplate") {
+      decoded = parseFrontmatter(text);
+    }
+    this.plugin.settings = parseSettings({
+      ...this.plugin.settings,
+      [key]: decoded,
+    });
+    await this.plugin.saveSettings();
+  }
+
+  override getSettingDefinitions(): SettingDefinitionItem[] {
+    // `validate` rejects an edit inline and stores nothing; parseSettings
+    // still normalizes on load, since validate never repairs stored data.
+    const path = (value: string) =>
+      value.trim() && !sanitizePath(value)
+        ? "A path cannot contain '.' or '..' segments, or '~'."
+        : undefined;
+    const shortcode = (value: string) =>
+      value.trim() && !normalizeShortcodeName(value, "")
+        ? "Letters, digits, '_' and '-' only."
+        : undefined;
+
+    return [
+      {
+        type: "group",
+        heading: "GitHub",
+        items: [
+          {
+            name: "GitHub token",
+            desc: "A fine-grained token scoped to the site repository, with contents:write and pull_requests:write — every publish opens a pull request, so contents:write alone commits and then fails. Kept in Obsidian's keychain on this device; only its name is saved with the plugin's settings, so each device that publishes needs it chosen once.",
+            // No declarative secret control exists, so this row is drawn by
+            // hand and saves by hand.
+            render: (setting) => {
+              new SecretComponent(this.app, setting.controlEl)
+                .setValue(this.plugin.settings.githubTokenSecret)
+                .onChange(async (id) => {
+                  this.plugin.settings.githubTokenSecret = id;
+                  await this.plugin.saveSettings();
+                });
+            },
+          },
+          {
+            name: "Repository owner",
+            desc: "GitHub username or organization name.",
+            control: {
+              type: "text",
+              key: "repoOwner",
+              placeholder: "username",
+            },
+          },
+          {
+            name: "Repository name",
+            desc: "Name of the Hugo repository.",
+            control: { type: "text", key: "repoName", placeholder: "my-blog" },
+          },
+          {
+            name: "Base branch",
+            desc: "Branch to open pull requests against.",
+            control: { type: "text", key: "baseBranch", placeholder: "main" },
+          },
+          {
+            name: "Pull request labels",
+            desc: "Comma-separated labels to add to pull requests.",
+            control: { type: "text", key: "prLabels", placeholder: "chore" },
+          },
+          {
+            name: "Test connection",
+            desc: "Check that the token can reach the repository.",
+            action: () => void this.testConnection(),
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Hugo",
+        items: [
+          {
+            name: "Content directory",
+            desc: "Path to the Hugo content directory.",
+            control: {
+              type: "text",
+              key: "contentDir",
+              placeholder: "content/posts",
+              validate: path,
+            },
+          },
+          {
+            name: "Image directory",
+            desc: "Path to the Hugo static images directory.",
+            control: {
+              type: "text",
+              key: "imageDir",
+              placeholder: "static/images",
+              validate: path,
+            },
+          },
+          {
+            name: "Callout shortcode name",
+            desc: "Hugo shortcode used for Obsidian callouts. Ship hugo-shortcodes/callout.html in your theme to match.",
+            control: {
+              type: "text",
+              key: "calloutShortcodeName",
+              placeholder: "callout",
+              validate: shortcode,
+            },
+          },
+          {
+            name: "Mermaid shortcode name",
+            desc: "Hugo shortcode used for mermaid code fences.",
+            control: {
+              type: "text",
+              key: "mermaidShortcodeName",
+              placeholder: "mermaid",
+              validate: shortcode,
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Frontmatter",
+        items: [
+          {
+            name: "Fields to strip",
+            desc: "Comma-separated frontmatter fields removed when publishing. aliases is not stripped: Hugo uses it to emit redirects from a note's previous titles.",
+            control: {
+              type: "textarea",
+              key: "strippedFrontmatterFields",
+              placeholder: "status, lastmod, cssclasses",
+              validate: (value) => {
+                const blocked = requiredFieldsIn(splitFieldsInput(value));
+                return blocked.length > 0
+                  ? `Cannot strip ${blocked.join(", ")}: publishing requires ${blocked.length > 1 ? "them" : "it"}.`
+                  : undefined;
+              },
+            },
+          },
+          {
+            name: "Additional frontmatter",
+            desc: "Fields added to every published note, as YAML 'key: value' lines.",
+            control: {
+              type: "textarea",
+              key: "frontmatterTemplate",
+              placeholder: "author: Your Name\ntags: [obsidian]",
+              validate: (value) =>
+                value.trim() &&
+                Object.keys(parseFrontmatter(value)).length === 0
+                  ? "Must be YAML 'key: value' lines."
+                  : undefined,
+            },
+          },
+        ],
+      },
+    ];
   }
 
   private async testConnection(): Promise<void> {
-    const settings = this.plugin.settings;
+    const config = this.plugin.publishConfig();
 
-    const validationError = validateConnection(settings);
+    const validationError = validateConnection(config);
     if (validationError) {
       new Notice(validationError);
       return;
@@ -497,7 +470,7 @@ export class PublisherSettingTab extends PluginSettingTab {
 
     try {
       new Notice("Testing GitHub connection...");
-      const github = new GitHubApiGateway(settings);
+      const github = new GitHubApiGateway(config);
       await github.validateConnection();
       new Notice("✓ Connection successful! Repository is accessible.");
     } catch (error) {

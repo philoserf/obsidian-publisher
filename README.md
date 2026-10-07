@@ -52,7 +52,7 @@ Wikilinks and note embeds only resolve to URLs for notes in the **current publis
 ### Settings worth knowing
 
 - **Stripped frontmatter fields.** Removed from published notes; defaults to `status`, `lastmod`, `cssclass`, `cssclasses`, `position`, `created`, `modified`. `aliases` is deliberately _not_ in that list — stripping it would suppress the redirects above.
-- **Frontmatter template.** Fields injected into every published note, without overriding what the note already sets. Input that is not `key: value` lines is ignored with a notice rather than half-parsed — a partial recovery was the one way a value you never wrote could reach a commit.
+- **Frontmatter template.** Fields injected into every published note, without overriding what the note already sets. Input that is not `key: value` lines is rejected in the settings field, and nothing is stored, rather than half-parsed — a partial recovery was the one way a value you never wrote could reach a commit.
 - **Shortcode names.** `callout` and `mermaid` by default; change them to match your theme.
 - **`contentDir` / `imageDir`.** Destination paths in the site repo; the URL prefix in the table above is derived from `contentDir`. A path with a `.` or `..` segment, or a `~` anywhere in it, is rejected whole rather than repaired — the publish then fails with "… is required" instead of quietly writing somewhere else. Surrounding whitespace and edge slashes are still normalized away; what is never done is stripping the *dangerous* parts, because removing them can construct the thing being removed (`.~./posts` used to become `../posts`).
 
@@ -69,8 +69,9 @@ Because the destination filename follows that same rule, **renaming a note renam
 This plugin requires a GitHub Personal Access Token (PAT) to publish content.
 
 - **Use a fine-grained token** scoped to your target repository with `contents:write` and `pull_requests:write` permissions. Avoid classic tokens with broad `repo` scope.
-- **Token storage:** The token is stored in Obsidian's plugin data file (`data.json`) as plaintext. This is an Obsidian platform constraint — there is no encrypted storage API. Anyone with file system access to your vault can read the token.
-- **Recommendations:** Use a token scoped to a single repository. On shared devices, be aware that the token is accessible on disk.
+- **Token storage:** The token is kept in Obsidian's keychain (Settings → Keychain), which encrypts it with the operating system's secure storage; the plugin's `data.json` holds only the secret's name. Obsidian does not sync keychain secrets, so choose or enter the token once on each device you publish from. Requires Obsidian 1.13.0.
+- **Upgrading:** A plaintext token left in `data.json` by an earlier version is moved into the keychain on the first load and removed from `data.json`. Because that change syncs, every other device needs the token entered once.
+- **Recommendations:** Use a token scoped to a single repository.
 
 ## Alternatives
 

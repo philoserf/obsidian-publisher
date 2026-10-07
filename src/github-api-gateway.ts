@@ -1,10 +1,6 @@
 import { RequestError } from "@octokit/request-error";
 import { Octokit } from "@octokit/rest";
-import {
-  errorMessage,
-  type PublisherSettings,
-  type PublishWarning,
-} from "./types";
+import { errorMessage, type PublishConfig, type PublishWarning } from "./types";
 
 /**
  * Rethrow from an Octokit call site with a consistent narrowing:
@@ -112,8 +108,7 @@ export async function fetchWithTimeout(
 }
 
 /** Pause between retry attempts. Injectable so tests assert attempt
- * counts without sleeping — same trade as the debounce stub in
- * test-preload.ts ("Tests don't exercise timing"). */
+ * counts without sleeping. */
 export type Sleep = (ms: number) => Promise<void>;
 
 const realSleep: Sleep = (ms) =>
@@ -121,10 +116,10 @@ const realSleep: Sleep = (ms) =>
 
 export class GitHubApiGateway {
   private octokit: Octokit;
-  private settings: PublisherSettings;
+  private settings: PublishConfig;
   private sleep: Sleep;
 
-  constructor(settings: PublisherSettings, sleep: Sleep = realSleep) {
+  constructor(settings: PublishConfig, sleep: Sleep = realSleep) {
     this.settings = settings;
     this.sleep = sleep;
     this.octokit = new Octokit({
