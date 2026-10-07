@@ -6,7 +6,6 @@ import {
   PublisherSettingTab,
   parseFrontmatter,
   parseSettings,
-  parseStrippedFieldsInput,
   requiredFieldsIn,
   sanitizeGitHubOwner,
   sanitizePath,
@@ -210,47 +209,6 @@ describe("parseFrontmatter rejects non-object YAML", () => {
 
   test("valid key: value still parses", () => {
     expect(parseFrontmatter("author: Mark")).toEqual({ author: "Mark" });
-  });
-});
-
-describe("parseStrippedFieldsInput", () => {
-  test("parses simple comma-separated list", () => {
-    expect(parseStrippedFieldsInput("status,lastmod,cssclass")).toEqual([
-      "status",
-      "lastmod",
-      "cssclass",
-    ]);
-  });
-
-  test("trims whitespace around each field", () => {
-    expect(
-      parseStrippedFieldsInput(" status , lastmod ,  , cssclass "),
-    ).toEqual(["status", "lastmod", "cssclass"]);
-  });
-
-  test("filters out empty segments from trailing/double commas", () => {
-    expect(parseStrippedFieldsInput("status,,lastmod,")).toEqual([
-      "status",
-      "lastmod",
-    ]);
-  });
-
-  test("returns empty array for empty string", () => {
-    expect(parseStrippedFieldsInput("")).toEqual([]);
-  });
-
-  test("returns empty array for whitespace-only input", () => {
-    expect(parseStrippedFieldsInput("   ,  ,   ")).toEqual([]);
-  });
-
-  test("filters out required frontmatter fields (title, date)", () => {
-    expect(
-      parseStrippedFieldsInput("status, date, lastmod, title, cssclass"),
-    ).toEqual(["status", "lastmod", "cssclass"]);
-  });
-
-  test("returns empty array when only required fields are given", () => {
-    expect(parseStrippedFieldsInput("title, date")).toEqual([]);
   });
 });
 

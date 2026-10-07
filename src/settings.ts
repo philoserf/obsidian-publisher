@@ -102,10 +102,6 @@ export function splitFieldsInput(value: string): string[] {
     .filter((f) => f.length > 0);
 }
 
-export function parseStrippedFieldsInput(value: string): string[] {
-  return filterRequiredFields(splitFieldsInput(value));
-}
-
 export function filterRequiredFields(fields: string[]): string[] {
   return fields.filter((f) => !REQUIRED_SET.has(f));
 }
