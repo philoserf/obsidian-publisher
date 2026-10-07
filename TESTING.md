@@ -22,7 +22,7 @@ This is not a replacement for tests — it's the path for catching integration-l
 
 ## What we test
 
-- **The slug rule.** `slug.ts`'s three exports, in `slug.test.ts`: Unicode preservation, NFC normalization, the `untitled` fallback, and that a filename and a page slug agree on the same input. These are the rule's own tests; fixtures that drive it *through* the transform chain stay in `note-transformer.test.ts`.
+- **The slug rule.** `slug.ts`'s three exports, in `slug.test.ts`: Unicode preservation, NFC normalization, the `untitled` fallback, and that a filename and a page slug agree on the same input. These are the rule's own tests; fixtures that drive it _through_ the transform chain stay in `note-transformer.test.ts`.
 - **Pure transforms.** `NoteTransformer` methods: wikilink conversion, image conversion, callout/mermaid shortcode emission, comment/highlight handling, code-fence and inline-code protection, and alias urlization. This is the largest file in the suite by a wide margin — more than twice the next. Inputs are strings, outputs are strings — the test shape matches the code shape.
 - **Schema and validation.** `splitFrontmatter`, `hasPublishFlag`, `validateFrontmatter`. Every required-field and CRLF-line-ending fixture from past bugs is pinned.
 - **Settings persistence.** `parseSettings` against every corruption shape we've seen or can imagine: wrong type, missing key, empty/whitespace, and that fallbacks copy rather than alias `DEFAULT_SETTINGS`. Since #314 it also pins that the load path and the settings control agree per field — a value stored by the control must survive a reload unchanged, which is the property that catches a field added to only one side.
@@ -32,7 +32,7 @@ This is not a replacement for tests — it's the path for catching integration-l
 
 ## What we don't test, and why
 
-- **Real GitHub API.** No PAT in CI, no iOS CI at all, and the API would make the suite flaky and slow. The seam is narrow (`GitHubApiGateway`, eight public methods; `Publisher` depends on four of them, named as `PublishGateway`) and Octokit is a well-tested library. Note this is a claim about the *network*, not the class: `github-api-gateway.test.ts` exercises the real gateway against a fake octokit in 34 tests. It is `publisher.test.ts` that mocks the gateway wholesale.
+- **Real GitHub API.** No PAT in CI, no iOS CI at all, and the API would make the suite flaky and slow. The seam is narrow (`GitHubApiGateway`, eight public methods; `Publisher` depends on four of them, named as `PublishGateway`) and Octokit is a well-tested library. Note this is a claim about the _network_, not the class: `github-api-gateway.test.ts` exercises the real gateway against a fake octokit in 34 tests. It is `publisher.test.ts` that mocks the gateway wholesale.
 - **Obsidian runtime behavior.** The plugin imports Obsidian types but the test preload mocks them. We cannot test that Obsidian correctly dispatches a command, fires a file-change event, or renders a `Notice` — only that our code calls the right APIs with the right arguments. Obsidian is the integration layer; the author's daily use is its test.
 - **Hugo build output.** The plugin emits markdown and shortcodes; whether Hugo renders them correctly is the site's problem. `hugo-shortcodes/` ships reference templates for the callout and mermaid shortcodes, but no test asserts against a real Hugo build.
 - **Snapshot tests.** Deliberately avoided. Snapshots lock in implementation details and rot on refactor. Where an output shape matters, the test asserts on it directly.
