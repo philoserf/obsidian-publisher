@@ -437,7 +437,7 @@ describe("batch progress notices (#246)", () => {
     NoticeMock.shown.length = 0;
     progressOf(plugin)?.(1, 2);
 
-    expect(NoticeMock.shown[0].duration).toBe(0);
+    expect(NoticeMock.shown[0]?.duration).toBe(0);
   });
 
   // The teardown must not hang off `done === total`: if preparation throws

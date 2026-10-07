@@ -10,9 +10,10 @@ mock.module("obsidian", () => ({
   // implements the setMessage/hide pair the real Notice has
   // (obsidian.d.ts:4643, :4649).
   Notice: class Notice {
-    static shown: Array<{ message: string; duration?: number }> = [];
+    static shown: Array<{ message: string; duration?: number | undefined }> =
+      [];
     message: string;
-    duration?: number;
+    duration: number | undefined;
     constructor(message: string, duration?: number) {
       this.message = message;
       this.duration = duration;
@@ -78,7 +79,7 @@ mock.module("@octokit/request-error", () => ({
   // header-gated 403 branch, which reads response.headers.
   RequestError: class RequestError extends Error {
     status: number;
-    response?: { headers?: Record<string, string> };
+    response: { headers?: Record<string, string> } | undefined;
     constructor(
       message: string,
       statusCode: number,

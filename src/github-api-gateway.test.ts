@@ -173,10 +173,10 @@ describe("GitHubApiGateway.commitFiles", () => {
         sha?: string;
       }>;
     };
-    expect(tree[0].content).toBe("text");
-    expect(tree[0].sha).toBeUndefined();
-    expect(tree[1].sha).toBe("blob-sha");
-    expect(tree[1].content).toBeUndefined();
+    expect(tree[0]?.content).toBe("text");
+    expect(tree[0]?.sha).toBeUndefined();
+    expect(tree[1]?.sha).toBe("blob-sha");
+    expect(tree[1]?.content).toBeUndefined();
   });
 
   // Every call in commitFiles is idempotent, so a transient failure is

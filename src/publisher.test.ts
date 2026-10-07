@@ -301,7 +301,7 @@ Hello`;
     const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
     const entries = commitCall[0] as Array<{ path: string }>;
     expect(entries).toHaveLength(2);
-    expect(entries[1].path).toBe("static/images/photo.png");
+    expect(entries[1]?.path).toBe("static/images/photo.png");
   });
 
   test("returns empty warnings on clean publish", async () => {
@@ -348,7 +348,7 @@ Hello`;
     const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
     const entries = commitCall[0] as Array<{ path: string }>;
     expect(entries).toHaveLength(1);
-    expect(entries[0].path).toBe("content/posts/post.md");
+    expect(entries[0]?.path).toBe("content/posts/post.md");
   });
 
   test("reports image-collision warning with paths sorted", async () => {
@@ -384,7 +384,7 @@ Hello`;
     const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
     const entries = commitCall[0] as Array<{ path: string }>;
     expect(entries).toHaveLength(1);
-    expect(entries[0].path).toBe("content/posts/post.md");
+    expect(entries[0]?.path).toBe("content/posts/post.md");
   });
 
   test("emits one warning when same image referenced twice in a note", async () => {
@@ -413,7 +413,7 @@ First ![[photo.png]] and again ![[photo.png]]`;
     const result = await publisher.publishNote(makeTFile("post.md") as never);
 
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0].kind).toBe("image-collision");
+    expect(result.warnings[0]?.kind).toBe("image-collision");
   });
 });
 
@@ -575,7 +575,7 @@ describe("Publisher.publishAll", () => {
     expect(result.error).toContain("PR creation failed");
     expect(result.successful).toBe(0);
     expect(result.failed).toBe(1);
-    expect(result.results[0].success).toBe(false);
+    expect(result.results[0]?.success).toBe(false);
     expect(gh.deleteBranch).toHaveBeenCalled();
   });
 
@@ -676,7 +676,7 @@ Also ![[photo.png]]`;
       e.path.startsWith("static/images/"),
     );
     expect(imagePaths).toHaveLength(1);
-    expect(imagePaths[0].path).toBe("static/images/photo.png");
+    expect(imagePaths[0]?.path).toBe("static/images/photo.png");
   });
 
   test("surfaces target-path collision when different sources sanitize to same target", async () => {
@@ -721,7 +721,7 @@ Has ![[a.png]]`;
       e.path.startsWith("static/images/"),
     );
     expect(imagePaths).toHaveLength(1);
-    expect(imagePaths[0].path).toBe("static/images/a.png");
+    expect(imagePaths[0]?.path).toBe("static/images/a.png");
   });
 
   test("surfaces read failures as per-file failed results", async () => {
@@ -1112,8 +1112,8 @@ describe("Publisher candidate selection", () => {
 
     expect(vault.read).toHaveBeenCalledTimes(1);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].success).toBe(false);
-    expect(result.results[0].error).toContain("Malformed frontmatter");
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toContain("Malformed frontmatter");
   });
 
   // Obsidian populates metadataCache asynchronously. A publish fired before

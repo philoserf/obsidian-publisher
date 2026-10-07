@@ -1305,7 +1305,7 @@ describe("code is opaque to the transform chain", () => {
     expect(segments.map((seg) => seg.text).join("")).toBe(
       "prose\n```\nnever closed",
     );
-    expect(segments[0].kind).toBe("prose");
+    expect(segments[0]?.kind).toBe("prose");
   });
 
   test("splitting is lossless", () => {

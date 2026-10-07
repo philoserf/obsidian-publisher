@@ -1,5 +1,5 @@
 import { parseYaml } from "obsidian";
-import { errorMessage } from "./types";
+import { captured, errorMessage } from "./types";
 
 export const REQUIRED_FRONTMATTER_FIELDS = ["title", "date"] as const;
 
@@ -19,7 +19,7 @@ export function splitFrontmatter(content: string): {
   const match = content.match(FRONTMATTER_REGEX);
   if (!match) return { frontmatter: {}, body: content };
   try {
-    const parsed = parseYaml(match[1]);
+    const parsed = parseYaml(captured(match, 1));
     const frontmatter =
       typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
         ? (parsed as Frontmatter)
