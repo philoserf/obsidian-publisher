@@ -210,9 +210,10 @@ answer here is almost always no — and that answer would be wrong in a sibling 
 **Obsidian** is the runtime and is entirely mocked in tests. The plugin can be verified to
 call the right APIs with the right arguments and nothing more; whether Obsidian dispatches a
 command, populates `metadataCache`, or renders a `Notice` is untested by construction. The
-mock is deliberately only as wide as the code reaches — `Setting`'s builder methods are
-absent, which is a standing claim that `PublisherSettingTab.display()` has no test. Adding
-one means restoring them in the same change.
+mock is deliberately only as wide as the code reaches. The settings tab is declarative, so
+its rows are tested as data; the one row that builds UI, the token row's `render` callback, is
+never run, and `SecretComponent` is a chainable no-op. That is a standing claim that the token
+row has no test. Adding one means widening the mock in the same change.
 
 The `metadataCache` prefilter is the one place this seam leaks into logic. Only one answer
 from the cache is safe to trust — it parsed the frontmatter and there is no publish flag —
@@ -242,8 +243,19 @@ URLs start failing, read the site's config before debugging the transformer.
 
 **The settings file** is a seam because it is the one place data crosses a process boundary
 and comes back changed by nobody. `parseSettings` answers two questions per field — absent or
-wrong type falls back, present but unnormalized runs the same normalizer the UI runs — and
-that pairing is the invariant. A field added to only one side is the bug class (#314).
+wrong type falls back, present but unnormalized runs the field's one normalizer — and that
+pairing is the invariant. A field normalized on only one side was the bug class (#314). Since
+2.0.0 the tab cannot reintroduce it: every control writes through `setControlValue`, which
+runs `parseSettings` on the edited settings, so the tab has no normalizers of its own.
+
+What crosses this seam is also narrower than the settings. The GitHub token lives in
+Obsidian's keychain, and `data.json` holds only its secret's ID (#352). The token is joined
+in by `publishConfig()` at the moment of use, producing a `PublishConfig` — the only type the
+gateway, `Publisher` and the two validators accept, and one nothing passes to `saveData`. The
+type split is what keeps a resolved token from reaching a file Obsidian Sync copies to every
+device. Keychain values are device-local while the ID syncs, so a second device holds a name
+its keychain lacks; the token row's description says so rather than leaving the user at a
+blank "token is required".
 
 **Between the transformer and the publisher** there is a seam worth knowing about because it
 is enforced only incidentally. The image URL written into the markdown and the path the image
@@ -255,10 +267,10 @@ collision test whose subject is something else entirely. Rewrite that test with 
 fixtures and the coupling silently stops being checked. It deserves a direct test of its own,
 the way `slug.test.ts` directly pins the slug/filename agreement.
 
-**The standing documents are themselves a seam, and only two of the three are
-checked.** `WALKTHROUGH.md` is regenerated once per release and `bun run verify:docs`
-re-executes its code blocks at the release gate; `THEORY.md` is regenerated once per
-release. Nothing re-executes prose, so a claim in any of them can go false silently — which
+**The standing documents are themselves a seam, and none of the three is checked.**
+`WALKTHROUGH.md` and `THEORY.md` are regenerated once per release; the walkthrough's quoted
+snippets are verbatim at that moment and nothing re-checks them after. Nothing re-executes
+prose, so a claim in any of them can go false silently — which
 has happened twice (#254, #328) and, until `af727dd`, a third time in `TESTING.md`, the one
 document that had no cadence at all. Its rule now is to be re-read whenever a test file is
 added or removed, that being the event that drifts it. Treat all three as code that no
@@ -271,8 +283,9 @@ or a segment kind to the scanner, and the two-level model carries it — provide
 first which level it belongs to and whether the split stays lossless.
 
 It absorbs new **settings** well, now that each has one normalizer. Add the field to
-`PublisherSettings`, give it a default, write one normalizer, call it from `parseSettings`
-and the control. There is no second place to forget.
+`PublisherSettings`, give it a default, write one normalizer, call it from `parseSettings`,
+and add a row to `getSettingDefinitions()`. The row needs no normalizer of its own, because
+the tab writes through `parseSettings`. There is no second place to forget.
 
 It absorbs new **warning kinds** well. The union in `types.ts` is discriminated and
 `notices.ts` is pure formatting, so the compiler will walk you to every site.

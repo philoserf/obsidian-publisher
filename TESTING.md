@@ -4,7 +4,7 @@ Policy doc for what this repo tests, what it doesn't, and why. Written for a fut
 
 ## Current state
 
-- 390 tests across 9 files, one runner (`bun test`), one assertion shape (`describe`/`test`/`expect` from `bun:test`). `bun test` prints the live total, which is the number that rots fastest; the **file** count is the one worth noticing, because adding a test file is the trigger to re-read this document.
+- 401 tests across 9 files, one runner (`bun test`), one assertion shape (`describe`/`test`/`expect` from `bun:test`). `bun test` prints the live total, which is the number that rots fastest; the **file** count is the one worth noticing, because adding a test file is the trigger to re-read this document.
 - Tests live beside source in `src/` as `*.test.ts`. Fixtures are inline strings in the test files.
 - Shared mocks live in `src/test-preload.ts` (loaded via `bunfig.toml`). `parseYaml`/`stringifyYaml` delegate to the real `yaml` package, so nested mappings and multi-line strings round-trip. The Obsidian surface is mocked only as far as the code touches it, but that is further than "pretend to exist": `Notice` records what it showed and implements `setMessage`/`hide`, and `Plugin` carries `app`/`addCommand`/`addSettingTab`/`loadData`/`saveData` so `main.test.ts` can drive `onload()`; tests give `app` a map-backed `secretStorage`. Read "as far as the code touches it" strictly — a method no test reaches is a claim that something is exercised when it is not (#302). The settings tab is declarative, so `settings.test.ts` tests `getSettingDefinitions()` and the control-value overrides as data; the token row's `render` callback, the one piece that builds UI, is not run, and `SecretComponent` is a chainable no-op.
 - **`spyOn(Class.prototype, …)` stacks call counts across tests in a `describe`, even after `mockRestore()`.** A `toHaveBeenCalledTimes(2)` written against a fresh-looking spy came back `5` and then `7` while writing #307's fixtures. Call `mockClear()` immediately after each `spyOn` when the assertion is about counts, or it is measuring the whole file rather than the test.
@@ -59,10 +59,10 @@ Re-read this file whenever a test file is added or removed. That is the event th
 invalidated it last time: `settings-load.test.ts` arrived with #314 and the counts above sat
 wrong until a theory pass recounted them.
 
-Unlike its two siblings this document has no mechanical check and cannot easily have one.
-`WALKTHROUGH.md` is regenerated once per release and `bun run verify:docs` re-executes its
-code blocks at the release gate; `THEORY.md` is regenerated once per release. Nothing
-re-executes prose. So this is a convention, stated here because an unstated one is what let
+Like its two siblings this document has no mechanical check and cannot easily have one.
+`WALKTHROUGH.md` and `THEORY.md` are regenerated once per release, and that regeneration —
+reading source and prose side by side — is the only check either gets. Nothing re-executes
+prose. So this is a convention, stated here because an unstated one is what let
 the drift happen — and the same failure class already cost `THEORY.md` (#254) and
 `WALKTHROUGH.md` (#328) a regeneration each.
 
