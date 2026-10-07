@@ -103,8 +103,9 @@ export interface PublishSuccess {
   error?: undefined;
   /** Non-fatal conditions noticed during publish; always present, [] when none */
   warnings: PublishWarning[];
-  /** URL to the pull request if created (single-file PR workflow only) */
-  prUrl?: string;
+  /** URL to the pull request if created (single-file PR workflow only);
+   * absent and undefined both mean no URL */
+  prUrl?: string | undefined;
 }
 
 export interface PublishFailure {
@@ -130,12 +131,27 @@ export interface BatchPublishResult {
   failed: number;
   /** Individual results */
   results: PublishResult[];
-  /** URL to the pull request if created */
-  prUrl?: string;
-  /** Batch-level failure (e.g. commitFiles or PR creation threw) */
-  error?: string;
+  /** URL to the pull request if created; absent and undefined both mean none */
+  prUrl?: string | undefined;
+  /** Batch-level failure (e.g. commitFiles or PR creation threw); absent and
+   * undefined both mean none */
+  error?: string | undefined;
   /** Batch-level non-fatal conditions (e.g. PR label apply failed); always present, [] when none */
   warnings: PublishWarning[];
+}
+
+/**
+ * A capture group the pattern makes mandatory. TypeScript types every group as
+ * possibly undefined, but a group outside any optional part always takes part
+ * in a match — so a miss means the pattern was edited, and this fails loudly
+ * rather than letting `undefined` flow on.
+ */
+export function captured(match: RegExpMatchArray, group: number): string {
+  const value = match[group];
+  if (value === undefined) {
+    throw new Error(`capture group ${group} did not take part in the match`);
+  }
+  return value;
 }
 
 /**

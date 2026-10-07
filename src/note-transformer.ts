@@ -2,6 +2,7 @@ import { stringifyYaml } from "obsidian";
 import type { Frontmatter } from "./schema";
 import { sanitizeFilename, sanitizeSlug, slugify, vaultBasename } from "./slug";
 import {
+  captured,
   errorMessage,
   type ProcessedContent,
   type PublisherSettings,
@@ -86,7 +87,7 @@ export function splitCodeSegments(body: string): Segment[] {
 
       const open = line.match(FENCE_OPEN);
       if (open) {
-        const marker = open[2];
+        const marker = captured(open, 2);
         // CommonMark: the closing fence uses the same character, is at
         // least as long, and carries nothing but whitespace.
         const closer = new RegExp(
@@ -105,7 +106,7 @@ export function splitCodeSegments(body: string): Segment[] {
         segments.push({
           kind: "code",
           text: body.slice(pos, cursor),
-          info: open[3],
+          info: captured(open, 3),
         });
         proseStart = cursor;
         pos = cursor;
@@ -304,7 +305,10 @@ export class NoteTransformer {
 
     // `\r?$` so a CRLF note's title does not carry its carriage return
     // into the shortcode attribute.
-    const header = stripped[0].match(/^\[!([\w-]+)\][-+]?(?: (.+))?\r?$/);
+    // split always yields at least one line, so stripped[0] is never missing.
+    const header = (stripped[0] ?? "").match(
+      /^\[!([\w-]+)\][-+]?(?: (.+))?\r?$/,
+    );
 
     if (!header) {
       const inner = this.transformBody(stripped.join("\n"), publishSet, images);
@@ -317,7 +321,7 @@ export class NoteTransformer {
     }
 
     const name = this.settings.calloutShortcodeName;
-    const calloutType = header[1].toLowerCase();
+    const calloutType = captured(header, 1).toLowerCase();
     const title = header[2];
     const titleAttr = title
       ? ` "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
@@ -482,14 +486,13 @@ export class NoteTransformer {
    * Returns the display alt (or undefined if only a bare size was given).
    */
   private parseImageSuffix(raw: string): { name: string; alt?: string } {
-    const parts = raw.split("|");
-    const name = parts[0];
-    if (parts.length === 1) return { name };
+    // split always yields at least one part, so `name` is always present.
+    const [name = "", ...rest] = raw.split("|");
+    if (rest.length === 0) return { name };
 
     const SIZE = /^\d+(x\d+)?$/;
-    const rest = parts.slice(1);
     // Drop trailing bare-size segments (tolerate incidental whitespace)
-    while (rest.length > 0 && SIZE.test(rest[rest.length - 1].trim())) {
+    while (SIZE.test(rest.at(-1)?.trim() ?? "")) {
       rest.pop();
     }
     if (rest.length === 0) return { name };
@@ -505,7 +508,7 @@ export class NoteTransformer {
 
     let match = embedRegex.exec(content);
     while (match !== null) {
-      const name = this.parseImageSuffix(match[1]).name;
+      const name = this.parseImageSuffix(captured(match, 1)).name;
       if (IMAGE_EXTENSIONS.test(name)) {
         images.push(name);
       }

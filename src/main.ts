@@ -34,12 +34,12 @@ export default class ObsidianPublisher extends Plugin {
 
   /** The batch progress notice, held so it can be updated in place rather
    * than stacking one toast per file. Cleared by endProgress(). */
-  private progress?: Notice;
+  private progress: Notice | undefined;
 
   /** The publish currently running, if any. One flag covers both commands:
    * publishing the current note while a batch is committing has the same
    * duplicate-branch outcome as two batches. */
-  private inFlight?: Promise<void>;
+  private inFlight: Promise<void> | undefined;
 
   /**
    * Run a publish, or refuse if one is already running.

@@ -144,10 +144,12 @@ function flattenEntries(prepared: Prepared[]): FileEntry[] {
 
 function buildBatchResult(
   results: PublishResult[],
+  // `| undefined`: callers pass values computed as possibly absent, and
+  // absent and undefined mean the same here.
   extras: {
-    error?: string;
-    prUrl?: string;
-    warnings?: PublishWarning[];
+    error?: string | undefined;
+    prUrl?: string | undefined;
+    warnings?: PublishWarning[] | undefined;
   } = {},
 ): BatchPublishResult {
   const successful = results.filter((r) => r.success).length;
@@ -168,7 +170,7 @@ function summarizeReadFailures(
   readFailures: PublishResult[],
 ): string | undefined {
   if (readFailures.length === 0) return undefined;
-  if (readFailures.length === 1) return readFailures[0].error;
+  if (readFailures.length === 1) return readFailures[0]?.error;
   return `Failed to read ${readFailures.length} files`;
 }
 
@@ -177,8 +179,8 @@ export class Publisher {
   private settings: PublishConfig;
   private noteTransformer: NoteTransformer;
   private githubApiGateway: PublishGateway;
-  private onProgress?: ProgressCallback;
-  private metadataCache?: MetadataCache;
+  private onProgress: ProgressCallback | undefined;
+  private metadataCache: MetadataCache | undefined;
 
   constructor(
     vault: Vault,
@@ -327,7 +329,9 @@ export class Publisher {
         continue;
       }
 
-      const sourceFile = matches[0];
+      // Both early continues above leave exactly one match.
+      const [sourceFile] = matches;
+      if (!sourceFile) continue;
       // The committed name comes from the file, not from the spelling the
       // author used: `![[pic.png]]` and `![[folder/pic.png]]` name one
       // image and must land on one target path, matching the URL the
