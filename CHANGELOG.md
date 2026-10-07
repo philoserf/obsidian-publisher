@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0
+
+**Requires Obsidian 1.13.0** (previously 1.0.0). The keychain token and the declarative settings tab both depend on APIs that version introduced.
+
+### Changed
+
+- **The GitHub token lives in Obsidian's keychain, not in `data.json`.** The plugin's settings now store only the _name_ of a keychain secret; the token itself is read from Settings → Keychain at the moment you publish, so changing it there takes effect without a restart. On first load, an existing plaintext token is moved into the keychain as `github-token` (or `obsidian-publisher-github-token`, if another plugin already keeps a different token under that name) and removed from `data.json` (#352, #355)
+- **Each device needs the token entered once.** The secret's name syncs with the plugin's settings, but keychain values stay on the device that stored them. The token row now says which secret it uses and, when this device's keychain lacks it, tells you to add it under that name in Settings → Keychain (#359)
+- **The settings tab is rebuilt on Obsidian's declarative settings API.** Rows are grouped under GitHub, Hugo and Frontmatter. Invalid input — stripping a required field, Additional Frontmatter that is not `key: value`, an escaping path, an invalid shortcode name — is now rejected inline and nothing is stored, where previously it was filtered or stored as empty with a notice. Each change is saved immediately rather than debounced (#353, #355)
+
+### Internal
+
+- Build, CI, release and Dependabot workflows adopted from the plugin template: `bun build --watch` replaces the hand-rolled watcher, `deploy` always rebuilds first, the release workflow checks the tag against all three version files, and Dependabot PRs rebuild `main.js` (#343, #354)
+- TypeScript tightened to the workspace standard — `noImplicitOverride`, `isolatedModules`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` — with each new site answered by a guard or a reason rather than a `!` (#346, #345, #358)
+- Markdown formatting is declared with prettier and checked in `bun run check` (#341, #357)
+- Removed `parseStrippedFieldsInput`, which only its tests called (#356); dependency patch bumps (#344, #351, #360)
+- `WALKTHROUGH.md` is regenerated in the `code-walkthrough` skill's current form: quoted snippets labelled by file and symbol rather than executable Showboat blocks. The `verify:docs` script, which re-ran those blocks, is removed. `THEORY.md` and `TESTING.md` are brought current for the keychain and declarative-tab changes
+
 ## 1.10.1
 
 ### Fixed

@@ -1,8 +1,5 @@
 # Obsidian Publisher Walkthrough
 
-_2026-09-14T01:37:08Z by Showboat 0.6.1_
-<!-- showboat-id: 66daa7d5-e222-461b-830c-07fe0bcd9548 -->
-
 ## What this is
 
 Obsidian Publisher is an Obsidian plugin that publishes notes from a vault
@@ -39,11 +36,13 @@ Nine source modules in `src/`, each owning one thing. The dependency
 direction is worth reading before the code, because it explains where a
 decision is allowed to live.
 
+Transcript of a command run while authoring this document — nothing re-runs it:
+
 ```bash
 for f in main publisher note-transformer github-api-gateway settings schema slug notices types; do printf "%-20s -> %s\n" "$f" "$(grep -oE "from \"\./[a-z-]+\"" src/$f.ts | sed "s/from \".\///;s/\"//" | sort -u | paste -sd" " -)"; done
 ```
 
-```output
+```text
 main                 -> notices publisher settings types
 publisher            -> github-api-gateway note-transformer schema settings slug types
 note-transformer     -> schema slug types
@@ -77,22 +76,18 @@ a one-line delegation kept only because callers already hold a `Publisher`.
 
 ## Entry point
 
-`main.ts` is the Obsidian `Plugin` subclass. `onload` does four things:
-load and normalize settings, build the `Publisher`, register the settings
-tab, and register the two commands.
+`main.ts` is the Obsidian `Plugin` subclass. `onload` does three things:
+load and normalize settings, register the settings tab, and register the
+two commands. It does **not** build a `Publisher` — each command builds its
+own, for a reason the next sections reach.
 
-```bash
-sed -n '/^  async onload/,/^  }$/p' src/main.ts
-```
+`src/main.ts` — `onload`
 
-```output
-  async onload() {
+```ts
+  override async onload() {
     await this.loadSettings();
-    this.publisher = this.createPublisher();
 
-    // Register settings tab
-    this.settingTab = new PublisherSettingTab(this.app, this);
-    this.addSettingTab(this.settingTab);
+    this.addSettingTab(new PublisherSettingTab(this.app, this));
 
     // Register commands
     this.addCommand({
@@ -128,11 +123,9 @@ Both route through `runExclusive`.
 
 ### A publish is single-flight
 
-```bash
-sed -n '/private async runExclusive/,/^  }$/p' src/main.ts
-```
+`src/main.ts` — `runExclusive`
 
-```output
+```ts
   private async runExclusive(work: () => Promise<void>): Promise<void> {
     if (this.inFlight) {
       new Notice("A publish is already running");
@@ -167,13 +160,50 @@ interleave counts into.
 `this.inFlight` is cleared in a `finally`, so a publish that throws cannot
 wedge the plugin until reload.
 
-### The progress notice is one toast, updated in place
+### The token is read at the moment of use
 
-```bash
-sed -n '/private createPublisher/,/^  }$/p' src/main.ts
+The GitHub token is not a setting. `PublisherSettings` — the shape that
+`saveData` writes to `data.json` — holds only `githubTokenSecret`, the
+_name_ of a secret in Obsidian's keychain (Settings → Keychain). The token
+itself is joined in by one method:
+
+`src/main.ts` — `publishConfig`
+
+```ts
+  publishConfig(): PublishConfig {
+    const id = this.settings.githubTokenSecret;
+    return {
+      ...this.settings,
+      githubToken: (id && this.app.secretStorage.getSecret(id)) || "",
+    };
+  }
 ```
 
-```output
+`src/types.ts` — `PublishConfig`
+
+```ts
+export type PublishConfig = PublisherSettings & { githubToken: string };
+```
+
+The split is enforced by types, not by care. `PublishConfig` is the only
+type the gateway, `Publisher`, `validateConnection` and `validatePublish`
+accept, and nothing that holds one is ever passed to `saveData` — so a
+resolved token has no route back into `data.json`, which Obsidian Sync
+would otherwise copy, in plaintext, to every device.
+
+An unset ID and a secret this device does not have both resolve to `""`,
+and validation reports both as "GitHub token is required". There is no
+third state to handle downstream.
+
+The method is called fresh by every command and by the connection test,
+never cached. The token lives in an external store and can change in
+Settings → Keychain without this plugin's settings changing at all, so a
+client built at load would keep using the old token until restart. That is
+why `onload` builds no `Publisher`, and why each command builds its own:
+
+`src/main.ts` — `createPublisher`
+
+```ts
   private createPublisher(): Publisher {
     const onProgress = (done: number, total: number) => {
       const message = `Prepared: ${done}/${total}`;
@@ -185,16 +215,23 @@ sed -n '/private createPublisher/,/^  }$/p' src/main.ts
 
     return new Publisher(
       this.app.vault,
-      this.settings,
+      this.publishConfig(),
       onProgress,
       this.app.metadataCache,
     );
   }
 ```
 
-Duration `0` means the notice stays up until something hides it. A
-per-file toast would otherwise bury the summary, the PR URL and every
-warning under a stack of "Prepared: 43/167".
+`Publisher` and its `GitHubApiGateway` capture the config at construction —
+the gateway hands the token to Octokit in its constructor — so building
+them per command is what makes "read at the moment of use" true.
+
+### The progress notice is one toast, updated in place
+
+The same method carries the progress callback. Duration `0` means the
+notice stays up until something hides it. A per-file toast would otherwise
+bury the summary, the PR URL and every warning under a stack of "Prepared:
+43/167".
 
 That makes dismissal a correctness concern rather than a tidiness one.
 `endProgress()` is called from a `finally` around `publishAll`, not from
@@ -202,57 +239,76 @@ the progress tick: if preparation throws part-way through, the tick never
 reaches `done === total`, and a duration-0 notice would stay on screen
 forever.
 
-`saveSettings` rebuilds the `Publisher` rather than mutating it. Both
-`Publisher` and its `GitHubApiGateway` capture settings at construction —
-the gateway hands the token to Octokit in its constructor — so a changed
-token would otherwise not take effect until the vault reloaded.
+### Moving a plaintext token into the keychain
+
+Before 2.0.0 the token sat in `data.json` as `githubToken`. `loadSettings`
+moves it, once:
+
+`src/main.ts` — `loadSettings`
+
+```ts
+  async loadSettings() {
+    const data = await this.loadData();
+    this.settings = parseSettings(data);
+    const legacy = legacyGithubToken(data);
+    if (!legacy) return;
+    if (!this.settings.githubTokenSecret) {
+      const { secretStorage } = this.app;
+      const shared = secretStorage.getSecret(SHARED_TOKEN_ID);
+      const id =
+        shared === null || shared === legacy ? SHARED_TOKEN_ID : OWN_TOKEN_ID;
+      secretStorage.setSecret(id, legacy);
+      this.settings.githubTokenSecret = id;
+    }
+    await this.saveData(this.settings);
+  }
+```
+
+The migration lives here rather than in `parseSettings`, which stays pure:
+`parseSettings` never carries a `githubToken` into its result, and
+`legacyGithubToken` is the one reader of the old field.
+
+Three cases fall out of it. With no plaintext token there is nothing to do,
+and that is every load after the first save — so the migration is
+idempotent. With a plaintext token and no ID, the token goes into the
+keychain under the generic `github-token`, unless another plugin already
+keeps a _different_ token there, in which case it uses
+`obsidian-publisher-github-token` rather than overwrite it. With a
+plaintext token **and** an ID — another device migrated first and Sync
+brought its `data.json` — the plaintext is simply dropped.
+
+That last case is the one the user feels. Keychain values do not sync; only
+the name in `data.json` does. A second device ends up pointing at a secret
+it does not have, and enters the token once by hand. The settings tab's
+token row is built to say so.
 
 ## Settings
 
-`settings.ts` holds the settings UI, but the part that matters is not the
+`settings.ts` holds the settings tab, but the part that matters is not the
 UI. It is that **every field has exactly one normalizer, called from both
-sides** — the settings control's `onChange` and the load path.
+sides** — the settings tab and the load path.
 
-```bash
-sed -n '/^export function parseSettings/,/^}$/p' src/settings.ts
-```
+`src/settings.ts` — `parseSettings`
 
-```output
+```ts
 export function parseSettings(data: unknown): PublisherSettings {
   const d = isPlainObject(data) ? data : {};
   const str = (value: unknown, fallback: string) =>
     typeof value === "string" ? value : fallback;
 
   return {
-    githubToken: str(d.githubToken, DEFAULT_SETTINGS.githubToken),
+    // Only the secret's ID. A plaintext `githubToken` from before #352 is
+    // never carried into the result; `legacyGithubToken` reads it once so
+    // loadSettings can move it into secret storage.
+    githubTokenSecret: str(
+      d.githubTokenSecret,
+      DEFAULT_SETTINGS.githubTokenSecret,
+    ),
     repoOwner:
       typeof d.repoOwner === "string"
         ? sanitizeGitHubOwner(d.repoOwner)
         : DEFAULT_SETTINGS.repoOwner,
-    repoName:
-      typeof d.repoName === "string"
-        ? sanitizeRepoName(d.repoName)
-        : DEFAULT_SETTINGS.repoName,
-    contentDir:
-      typeof d.contentDir === "string"
-        ? sanitizePath(d.contentDir)
-        : DEFAULT_SETTINGS.contentDir,
-    imageDir:
-      typeof d.imageDir === "string"
-        ? sanitizePath(d.imageDir)
-        : DEFAULT_SETTINGS.imageDir,
-    frontmatterTemplate: isPlainObject(d.frontmatterTemplate)
-      ? d.frontmatterTemplate
-      : { ...DEFAULT_SETTINGS.frontmatterTemplate },
-    strippedFrontmatterFields: filterRequiredFields(
-      Array.isArray(d.strippedFrontmatterFields) &&
-        d.strippedFrontmatterFields.every((v) => typeof v === "string")
-        ? (d.strippedFrontmatterFields as string[])
-        : DEFAULT_SETTINGS.strippedFrontmatterFields,
-    ),
-    baseBranch: normalizeBaseBranch(
-      str(d.baseBranch, DEFAULT_SETTINGS.baseBranch),
-    ),
+    ...
     prLabels: normalizePrLabels(d.prLabels),
     calloutShortcodeName: normalizeShortcodeName(
       str(d.calloutShortcodeName, ""),
@@ -268,24 +324,22 @@ export function parseSettings(data: unknown): PublisherSettings {
 
 Each field answers two questions here. **Absent or the wrong type** falls
 back to the default, so one corrupted field cannot wipe a configuration.
-**Present but unnormalized** runs the same function the settings control
-runs, so the value a reload produces is the value the control would have
-stored.
+**Present but unnormalized** runs the field's normalizer —
+`sanitizeGitHubOwner`, `sanitizePath`, `normalizeBaseBranch` and the rest —
+so the value a reload produces is the value an edit would have stored.
 
-Previously the load path answered only the first question and the control
-only the second, so all nine fields could disagree about what a bad value
-is. A persisted `../escape` survived untouched; `  main  ` kept its
-spaces; `[]` labels came back as the default (#314). Adding a field here is
-what keeps the two sides from drifting again — there is no second place to
+Previously the load path answered only the first question and the controls
+only the second, so every field could disagree about what a bad value is.
+A persisted `../escape` survived untouched; `  main  ` kept its spaces;
+`[]` labels came back as the default (#314). Adding a field here is what
+keeps the two sides from drifting again — there is no second place to
 forget.
 
 `normalizePrLabels` shows the shape of the fix:
 
-```bash
-sed -n '/^export function normalizePrLabels/,/^}$/p' src/settings.ts
-```
+`src/settings.ts` — `normalizePrLabels`
 
-```output
+```ts
 export function normalizePrLabels(value: unknown): string[] {
   if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
     return [...DEFAULT_SETTINGS.prLabels];
@@ -299,13 +353,113 @@ thing a user may want, and replacing `[]` with the default meant clearing
 the field never stuck across a reload. Only a value that is not a string
 array at all falls back.
 
-### A path is validated, not sanitized
+### The tab writes through the load path
 
-```bash
-sed -n '/^export function sanitizePath/,/^}$/p' src/settings.ts
+The tab is declarative: `getSettingDefinitions()` returns rows grouped under
+GitHub, Hugo and Frontmatter, and most rows are a `control` bound to a
+settings key. Left to its default, a declarative control stores whatever
+was typed — which would bypass every normalizer above. The tab overrides
+the write instead:
+
+`src/settings.ts` — `PublisherSettingTab.setControlValue`
+
+```ts
+  override async setControlValue(key: string, value: unknown): Promise<void> {
+    const text = typeof value === "string" ? value : "";
+    let decoded: unknown = value;
+    if (key === "prLabels" || key === "strippedFrontmatterFields") {
+      decoded = splitFieldsInput(text);
+    } else if (key === "frontmatterTemplate") {
+      decoded = parseFrontmatter(text);
+    }
+    this.plugin.settings = parseSettings({
+      ...this.plugin.settings,
+      [key]: decoded,
+    });
+    await this.plugin.saveSettings();
+  }
 ```
 
-```output
+Every edit is decoded from text into the stored shape, merged into the
+current settings, and run through `parseSettings` — the same function a
+reload calls. So "one normalizer per field" holds by construction: the tab
+has no normalizers of its own to drift. `getControlValue` is the inverse
+for the three fields that are not strings but are edited as text — the two
+lists joined with `, `, the frontmatter template serialized to YAML.
+
+Each change is saved as it is made; nothing is debounced.
+
+Normalizing is not the same as accepting. A row's `validate` runs first and
+rejects bad input inline, in which case **nothing is stored**:
+
+`src/settings.ts` — `PublisherSettingTab.getSettingDefinitions`
+
+```ts
+    // `validate` rejects an edit inline and stores nothing; parseSettings
+    // still normalizes on load, since validate never repairs stored data.
+    const path = (value: string) =>
+      value.trim() && !sanitizePath(value)
+        ? "A path cannot contain '.' or '..' segments, or '~'."
+        : undefined;
+    const shortcode = (value: string) =>
+      value.trim() && !normalizeShortcodeName(value, "")
+        ? "Letters, digits, '_' and '-' only."
+        : undefined;
+```
+
+The validators are phrased in terms of the normalizers — a path is bad
+exactly when `sanitizePath` rejects it — so the two cannot disagree about
+what is acceptable. The same holds for the Frontmatter group: stripping
+`title` or `date` is refused because `requiredFieldsIn` finds them, and
+Additional Frontmatter is refused when `parseFrontmatter` yields an empty
+object from non-empty text.
+
+### The token row is drawn by hand
+
+One row is not a `control`. There is no declarative secret control, so the
+GitHub token row uses `render` and draws a `SecretComponent`, which lets
+the user pick or create a keychain secret and stores only its ID:
+
+`src/settings.ts` — `PublisherSettingTab.getSettingDefinitions`
+
+```ts
+            render: (setting) => {
+              new SecretComponent(this.app, setting.controlEl)
+                .setValue(this.plugin.settings.githubTokenSecret)
+                .onChange(async (id) => {
+                  this.plugin.settings.githubTokenSecret = id;
+                  await this.plugin.saveSettings();
+                  // Re-render so the description reports the new secret.
+                  this.update();
+                });
+            },
+```
+
+The row's description is where the second-device problem gets answered.
+The plugin's settings and Settings → Keychain are separate screens, and a
+synced ID can name a secret this device's keychain lacks:
+
+`src/settings.ts` — `tokenStatus`
+
+```ts
+export function tokenStatus(id: string, onDevice: readonly string[]): string {
+  if (!id) {
+    return `Choose or create a keychain secret holding your GitHub token. Naming it "${SUGGESTED_TOKEN_NAME}" lets other plugins use the same token.`;
+  }
+  return onDevice.includes(id)
+    ? `Uses the keychain secret "${id}".`
+    : `This device's keychain has no secret named "${id}". Add your token in Settings → Keychain under that name, or choose another secret here.`;
+}
+```
+
+The tab passes it `secretStorage.listSecrets()` — names only. Nothing in
+the tab reads a secret's value; only `publishConfig` does.
+
+### A path is validated, not sanitized
+
+`src/settings.ts` — `sanitizePath`
+
+```ts
 export function sanitizePath(value: string): string {
   const segments = value
     .trim()
@@ -325,7 +479,9 @@ value it was written to remove. `.~./posts` became `../posts`: stripping
 and `a/....//b` left an empty segment no later step removed (#313).
 
 No ordering of removals fixes that, so a path is either acceptable as
-written or rejected whole. Rejection returns `""`, which routes into
+written or rejected whole. In the tab, rejection is the `path` validator
+above, and the edit is refused. On load — a `data.json` edited by hand, or
+written by an older version — rejection returns `""`, which routes into
 `validatePublish` and fails the publish loudly rather than publishing
 somewhere odd.
 
@@ -336,20 +492,22 @@ reconstruction bug.
 
 ### One statement of what a usable configuration is
 
-```bash
-sed -n '/^export function validateConnection(/,/^}$/p' src/settings.ts; echo; sed -n '/^export function validatePublish(/,/^}$/p' src/settings.ts
-```
+`src/settings.ts` — `validateConnection`
 
-```output
-export function validateConnection(settings: PublisherSettings): string | null {
+```ts
+export function validateConnection(settings: PublishConfig): string | null {
   if (!settings.githubToken) return "GitHub token is required";
   if (!settings.repoOwner || !settings.repoName) {
     return "Repository owner and name are required";
   }
   return null;
 }
+```
 
-export function validatePublish(settings: PublisherSettings): string | null {
+`src/settings.ts` — `validatePublish`
+
+```ts
+export function validatePublish(settings: PublishConfig): string | null {
   const connection = validateConnection(settings);
   if (connection) return connection;
   if (!settings.contentDir) return "Content directory is required";
@@ -357,6 +515,9 @@ export function validatePublish(settings: PublisherSettings): string | null {
   return null;
 }
 ```
+
+Both take a `PublishConfig`, because the first thing either asks about is
+the resolved token.
 
 `validatePublish` derives from `validateConnection` rather than restating
 its two checks. The field sets differ on purpose — a connection test must
@@ -367,12 +528,12 @@ knowledge. It used to be stated twice, in two modules, in two vocabularies
 that the user met in the same settings session (#318). One vocabulary now:
 "… is required".
 
-The YAML seam in the additional-frontmatter control has no recovery path
-by design. Input that does not parse to an object yields `{}`, which the
-control notices and reports. The salvage parser that used to exist —
-splitting on the first colon per line — was the one path that could put a
-value the user never wrote into a commit: `author: [unclosed` became
-`{ author: "[unclosed" }`, non-empty, so no notice fired (#319).
+The YAML seam in the Additional Frontmatter row has no recovery path by
+design. Input that does not parse to an object yields `{}`, which the row's
+validator rejects. The salvage parser that used to exist — splitting on the
+first colon per line — was the one path that could put a value the user
+never wrote into a commit: `author: [unclosed` became
+`{ author: "[unclosed" }`, non-empty, so nothing objected (#319).
 
 ## Following a publish
 
@@ -382,11 +543,9 @@ of it.
 
 ### Finding the candidates without reading the vault twice
 
-```bash
-sed -n '/private async getPublishableFiles/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `getPublishableFiles`
 
-```output
+```ts
   private async getPublishableFiles(): Promise<{
     files: PublishableFile[];
     readFailures: PublishResult[];
@@ -446,11 +605,9 @@ never saw the file, and silent loss is the worse trade.
 
 Before any of that, a cheap rejection:
 
-```bash
-sed -n '/private isDefinitelyNotPublishable/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `isDefinitelyNotPublishable`
 
-```output
+```ts
   private isDefinitelyNotPublishable(file: TFile): boolean {
     if (!this.metadataCache) return false;
     const cache = this.metadataCache.getFileCache(file);
@@ -472,11 +629,9 @@ to surface.
 
 ### Refusing to publish two notes onto one path
 
-```bash
-sed -n '/private detectFilenameCollisions/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `detectFilenameCollisions`
 
-```output
+```ts
   private detectFilenameCollisions(
     files: Array<{ file: TFile }>,
   ): Array<{ filename: string; paths: string[] }> {
@@ -510,11 +665,9 @@ message is stable across runs.
 
 ### The workflow both commands share
 
-```bash
-sed -n '/private async runPublishWorkflow/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `runPublishWorkflow`
 
-```output
+```ts
   private async runPublishWorkflow(
     opts: WorkflowOpts,
   ): Promise<BatchPublishResult> {
@@ -554,11 +707,9 @@ than inferring it from an empty array, which is ambiguous.
 
 ### A prepared note is not a published note
 
-```bash
-sed -n '/^type Prepared =/,/warnings: PublishWarning\[\] };$/p' src/publisher.ts
-```
+`src/publisher.ts` — `Prepared`
 
-```output
+```ts
 type Prepared =
   | {
       filePath: string;
@@ -587,11 +738,9 @@ note dissolves that rather than reordering two statements.
 
 Converting the one into the other happens in exactly one place:
 
-```bash
-sed -n '/^function toResults/,/^}$/p' src/publisher.ts
-```
+`src/publisher.ts` — `toResults`
 
-```output
+```ts
 function toResults(
   prepared: Prepared[],
   commitError?: { error: unknown; prefix?: string },
@@ -630,11 +779,9 @@ to remember to rewrite a value that was already wrong.
 
 The entries that actually reach the commit come from the successes only:
 
-```bash
-sed -n '/^function flattenEntries/,/^}$/p' src/publisher.ts
-```
+`src/publisher.ts` — `flattenEntries`
 
-```output
+```ts
 function flattenEntries(prepared: Prepared[]): FileEntry[] {
   const byPath = new Map<string, string | ArrayBuffer>();
   for (const p of prepared) {
@@ -655,11 +802,9 @@ same bytes.
 
 ### Commit, then open the PR
 
-```bash
-sed -n '/private async commitAndOpenPr/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `commitAndOpenPr`
 
-```output
+```ts
   private async commitAndOpenPr(
     branchName: string,
     prepared: Prepared[],
@@ -715,11 +860,9 @@ error, which is the one the user needs.
 
 ### Preparing the batch
 
-```bash
-sed -n '/private async prepareBatch/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `prepareBatch`
 
-```output
+```ts
   private async prepareBatch(files: PublishableFile[]): Promise<Prepared[]> {
     const prepared: Prepared[] = [];
     const filesByPathSuffix = this.buildFilesByPathSuffix();
@@ -818,11 +961,9 @@ watching progress, not results.
 `publishNote` reads the file, splits its frontmatter, checks the publish
 flag, and then hands a one-element list to the same workflow:
 
-```bash
-sed -n '/^  async publishNote/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `publishNote`
 
-```output
+```ts
   async publishNote(file: TFile): Promise<PublishResult> {
     let content: string;
     try {
@@ -881,6 +1022,8 @@ batch-level `prUrl` and warnings onto it.
 Everything below is easier to follow after seeing it run, so here it is
 running — the real module, on a real note, with default settings:
 
+Transcript of a command run while authoring this document — nothing re-runs it:
+
 ```bash
 bun --preload ./src/test-preload.ts -e '
 import { NoteTransformer } from "./src/note-transformer.ts";
@@ -910,7 +1053,7 @@ console.log(out.content);
 '
 ```
 
-```output
+```text
 filename: demo-note.md
 images:   ["pic.png"]
 ---
@@ -946,11 +1089,9 @@ Seven separate behaviors in that one output, and each is a section below:
 
 Everything starts with splitting the body into segments.
 
-```bash
-sed -n '/^type Segment = {/,/^};$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `Segment`
 
-```output
+```ts
 type Segment = {
   kind: "prose" | "code" | "comment" | "quote";
   text: string;
@@ -963,6 +1104,8 @@ left-to-right pass, by earliest start position: a fence at line start, a
 blockquote run at line start, an inline backtick run, and `%%`.
 
 Running it on a body that contains all four at once:
+
+Transcript of a command run while authoring this document — nothing re-runs it:
 
 ````bash
 bun --preload ./src/test-preload.ts -e '
@@ -988,7 +1131,7 @@ console.log("lossless:", rejoined === body);
 '
 ````
 
-````output
+````text
 prose    "Text with "
 code     "`code`"
 prose    " and "
@@ -1016,14 +1159,12 @@ comments becomes an assembly decision made later.
 The fence branch requires a CommonMark-conformant closer — same character,
 at least as long:
 
-```bash
-sed -n '/const open = line.match(FENCE_OPEN);/,/^      }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `splitCodeSegments`
 
-```output
+```ts
       const open = line.match(FENCE_OPEN);
       if (open) {
-        const marker = open[2];
+        const marker = captured(open, 2);
         // CommonMark: the closing fence uses the same character, is at
         // least as long, and carries nothing but whitespace.
         const closer = new RegExp(
@@ -1042,7 +1183,7 @@ sed -n '/const open = line.match(FENCE_OPEN);/,/^      }$/p' src/note-transforme
         segments.push({
           kind: "code",
           text: body.slice(pos, cursor),
-          info: open[3],
+          info: captured(open, 3),
         });
         proseStart = cursor;
         pos = cursor;
@@ -1060,11 +1201,9 @@ comment wrapping a fenced block is never paired and publishes verbatim
 after`` regresses — the span opens first, so the `%%` stays literal, which
 is what Obsidian itself does.
 
-```bash
-sed -n '/^    if (body\[pos\] === "`") {/,/^    pos++;$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `splitCodeSegments`
 
-```output
+```ts
     if (body[pos] === "`") {
       const span = matchSpan(body, pos);
       if (span !== null) {
@@ -1096,11 +1235,9 @@ backtick or an unclosed `%%` falls through to `pos++` and stays prose.
 
 ### Spans stop at a blank line
 
-```bash
-sed -n '/^function matchSpan/,/^}$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `matchSpan`
 
-```output
+```ts
 function matchSpan(text: string, start: number): number | null {
   let runEnd = start;
   while (text[runEnd] === "`") runEnd++;
@@ -1143,11 +1280,9 @@ segment's interior is deliberately left unscanned by the scanner. The
 callout pass strips the markers and **re-enters the pipeline
 recursively**:
 
-```bash
-sed -n '/private transformBody(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `transformBody`
 
-```output
+```ts
   private transformBody(
     body: string,
     publishSet: Set<string>,
@@ -1177,11 +1312,9 @@ collected by its own recursion; a comment's are never collected at all,
 which is what makes a reference hidden inside `%% %%` never queued for
 upload.
 
-```bash
-sed -n '/private transformQuote(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `transformQuote`
 
-```output
+```ts
   private transformQuote(
     text: string,
     publishSet: Set<string>,
@@ -1193,7 +1326,10 @@ sed -n '/private transformQuote(/,/^  }$/p' src/note-transformer.ts
 
     // `\r?$` so a CRLF note's title does not carry its carriage return
     // into the shortcode attribute.
-    const header = stripped[0].match(/^\[!([\w-]+)\][-+]?(?: (.+))?\r?$/);
+    // split always yields at least one line, so stripped[0] is never missing.
+    const header = (stripped[0] ?? "").match(
+      /^\[!([\w-]+)\][-+]?(?: (.+))?\r?$/,
+    );
 
     if (!header) {
       const inner = this.transformBody(stripped.join("\n"), publishSet, images);
@@ -1206,7 +1342,7 @@ sed -n '/private transformQuote(/,/^  }$/p' src/note-transformer.ts
     }
 
     const name = this.settings.calloutShortcodeName;
-    const calloutType = header[1].toLowerCase();
+    const calloutType = captured(header, 1).toLowerCase();
     const title = header[2];
     const titleAttr = title
       ? ` "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
@@ -1224,6 +1360,8 @@ The recursion is what lets a fenced block nest inside a callout. Without
 it the scanner emits quote/fence/quote and the callout fragments across
 three segments, so only the text above the fence converts — a defect a
 local fix could not reach (#303). Watch it work:
+
+Transcript of a command run while authoring this document — nothing re-runs it:
 
 ````bash
 bun --preload ./src/test-preload.ts -e '
@@ -1246,7 +1384,7 @@ console.log(t.processFromSplit({}, body, "n.md", new Set(["target"])).content);
 '
 ````
 
-````output
+````text
 {{< callout tip "Nested" >}}
 Before the fence.
 
@@ -1276,11 +1414,9 @@ blockquote.
 
 ### Mermaid reads what the scanner already parsed
 
-```bash
-sed -n '/private convertMermaid(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `convertMermaid`
 
-```output
+```ts
   private convertMermaid(segment: Segment): string {
     if (segment.info === undefined) return segment.text;
     if (segment.info.trim().split(/\s+/)[0] !== "mermaid") return segment.text;
@@ -1308,11 +1444,9 @@ which is how it is excluded in one line rather than by a separate guard.
 Obsidian writes `![[...]]` for both images and note embeds, so there is one
 pass with one classification:
 
-```bash
-sed -n '/private convertEmbeds(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `convertEmbeds`
 
-```output
+```ts
   private convertEmbeds(content: string, publishSet: Set<string>): string {
     const imageUrl = this.imageUrlPath();
     const postsUrl = this.postsUrlPath();
@@ -1378,11 +1512,9 @@ degraded to plain text.
 
 ### Links resolve only into the publish set
 
-```bash
-sed -n '/private convertWikilinks(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `convertWikilinks`
 
-```output
+```ts
   private convertWikilinks(content: string, publishSet: Set<string>): string {
     const urlPath = this.postsUrlPath();
     return content.replace(
@@ -1426,6 +1558,8 @@ Three cases worth calling out:
 
 Here is the degradation and the path-qualified case together:
 
+Transcript of a command run while authoring this document — nothing re-runs it:
+
 ```bash
 bun --preload ./src/test-preload.ts -e '
 import { NoteTransformer } from "./src/note-transformer.ts";
@@ -1452,7 +1586,7 @@ for (const c of cases) {
 '
 ```
 
-```output
+```text
 [[Target]]               -> [Target](/posts/target/)
 [[Target|Custom text]]   -> [Custom text](/posts/target/)
 [[Target#Some Heading]]  -> [Target#Some Heading](/posts/target/#some-heading)
@@ -1468,6 +1602,8 @@ for (const c of cases) {
 Frontmatter processing does three things: strip the configured fields,
 merge template fields **without overriding** what the note already has, and
 urlize `aliases`.
+
+Transcript of a command run while authoring this document — nothing re-runs it:
 
 ```bash
 bun --preload ./src/test-preload.ts -e '
@@ -1493,7 +1629,7 @@ console.log(t.processFromSplit(fm, "Body.", "n.md", new Set()).content);
 '
 ```
 
-```output
+```text
 ---
 title: DNA as Remix Culture
 date: 2026-09-13
@@ -1513,11 +1649,9 @@ the template does not override a field the note already carries — while
 
 The aliases are the interesting part:
 
-```bash
-sed -n '/private urlizeAliases(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `urlizeAliases`
 
-```output
+```ts
   private urlizeAliases(value: unknown): unknown {
     const urlize = (entry: unknown): unknown => {
       if (typeof entry !== "string") return entry;
@@ -1550,11 +1684,9 @@ stripping it would discard every redirect the publisher emits.
 
 Assembly is the last step, and it fails loudly:
 
-```bash
-sed -n '/private assembleDocument(/,/^  }$/p' src/note-transformer.ts
-```
+`src/note-transformer.ts` — `assembleDocument`
 
-```output
+```ts
   private assembleDocument(
     frontmatter: Record<string, unknown>,
     body: string,
@@ -1586,11 +1718,9 @@ a failed batch.
 `slug.ts` is the smallest module and the one with the widest blast radius.
 One rule, three shapes.
 
-```bash
-sed -n '/^export function slugify/,/^}$/p' src/slug.ts; echo; sed -n '/^export function sanitizeSlug/,/^}$/p' src/slug.ts; echo; sed -n '/^export function sanitizeFilename/,/^}$/p' src/slug.ts
-```
+`src/slug.ts` — `slugify`
 
-```output
+```ts
 export function slugify(value: string): string {
   return value
     .normalize("NFC")
@@ -1601,11 +1731,19 @@ export function slugify(value: string): string {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
+```
 
+`src/slug.ts` — `sanitizeSlug`
+
+```ts
 export function sanitizeSlug(value: string): string {
   return slugify(value) || "untitled";
 }
+```
 
+`src/slug.ts` — `sanitizeFilename`
+
+```ts
 export function sanitizeFilename(filename: string): string {
   const lastDotIndex = filename.lastIndexOf(".");
   const hasExtension = lastDotIndex > 0 && lastDotIndex < filename.length - 1;
@@ -1627,6 +1765,8 @@ export function sanitizeFilename(filename: string): string {
 NFC-normalize, lowercase, keep Unicode letters, digits, underscore,
 whitespace and hyphen, whitespace to hyphens, collapse runs, trim edges:
 
+Transcript of a command run while authoring this document — nothing re-runs it:
+
 ```bash
 bun -e '
 import { slugify, sanitizeSlug, sanitizeFilename } from "./src/slug.ts";
@@ -1641,7 +1781,7 @@ for (const f of ["My Photo.PNG", "Report Q3.2026.md", "README"]) {
 '
 ```
 
-```output
+```text
 slugify         "Rōnin at Dusk"    -> "rōnin-at-dusk"
 slugify         "Report Q3.2026"   -> "report-q32026"
 slugify         "Café"             -> "café"
@@ -1681,11 +1821,9 @@ has no delete path to clean up.
 
 One operation deliberately stays _outside_ the rule:
 
-```bash
-sed -n '/^export function vaultBasename/,/^}$/p' src/slug.ts
-```
+`src/slug.ts` — `vaultBasename`
 
-```output
+```ts
 export function vaultBasename(reference: string): string {
   const slash = reference.lastIndexOf("/");
   return slash === -1 ? reference : reference.slice(slash + 1);
@@ -1710,11 +1848,9 @@ A note names its images the way the author typed them. Turning that into
 bytes to upload is `resolveImages`, and the index it reads is built once
 per batch:
 
-```bash
-sed -n '/private buildFilesByPathSuffix/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `buildFilesByPathSuffix`
 
-```output
+```ts
   private buildFilesByPathSuffix(): Map<string, TFile[]> {
     const map = new Map<string, TFile[]>();
     for (const f of this.vault.getFiles()) {
@@ -1740,11 +1876,9 @@ uploaded. Bare-basename lookups are unchanged by the fix: the shortest
 suffix _is_ the basename, and it still maps to every file with that name,
 so an ambiguous reference still reports a collision.
 
-```bash
-sed -n '/private async resolveImages/,/^  }$/p' src/publisher.ts
-```
+`src/publisher.ts` — `resolveImages`
 
-```output
+```ts
   private async resolveImages(
     imageNames: string[],
     filesByPathSuffix: Map<string, TFile[]>,
@@ -1779,7 +1913,9 @@ sed -n '/private async resolveImages/,/^  }$/p' src/publisher.ts
         continue;
       }
 
-      const sourceFile = matches[0];
+      // Both early continues above leave exactly one match.
+      const [sourceFile] = matches;
+      if (!sourceFile) continue;
       // The committed name comes from the file, not from the spelling the
       // author used: `![[pic.png]]` and `![[folder/pic.png]]` name one
       // image and must land on one target path, matching the URL the
@@ -1861,11 +1997,9 @@ never a git command.
 
 ### One tree, one commit
 
-```bash
-sed -n '/Text goes inline/,/^      }$/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `commitFiles`
 
-```output
+```ts
       // Text goes inline: GitHub writes the blob as part of createTree,
       // so a 167-note batch is one request instead of 167. Binary has no
       // encoding parameter on a tree entry, so images still need a
@@ -1908,11 +2042,9 @@ the request count.
 
 The type enforces the either/or:
 
-```bash
-sed -n '/^type TreeEntry = {/,/^} & (/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `TreeEntry`
 
-```output
+```ts
 type TreeEntry = {
   path: string;
   mode: "100644";
@@ -1929,11 +2061,9 @@ regardless of how many notes are in the batch.
 
 ### Errors narrow in exactly one place
 
-```bash
-sed -n '/^function rethrowWithPrefix/,/^}$/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `rethrowWithPrefix`
 
-```output
+```ts
 function rethrowWithPrefix(error: unknown, prefix: string): never {
   if (error instanceof RequestError) throw error;
   if (error instanceof Error) throw new Error(`${prefix}: ${error.message}`);
@@ -1952,11 +2082,9 @@ connection test, and a bare "Not Found" helps nobody.
 
 ### What is worth retrying
 
-```bash
-sed -n '/^export function isTransient/,/^}$/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `isTransient`
 
-```output
+```ts
 export function isTransient(error: unknown): boolean {
   if (!(error instanceof RequestError)) return false;
   if (error.status === 429 || error.status >= 500) return true;
@@ -1981,11 +2109,9 @@ repeating the same request; elsewhere it is a hard validation error, and
 `updateRef` is non-forced so a 422 there is a non-fast-forward that
 retrying cannot fix.
 
-```bash
-sed -n '/private async withRetry/,/^  }$/p' src/github-api-gateway.ts; echo; sed -n '/^function backoffDelay/,/^}$/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `withRetry`
 
-```output
+```ts
   private async withRetry<T>(operation: () => Promise<T>): Promise<T> {
     let lastError: unknown;
     for (let i = 0; i < COMMIT_MAX_ATTEMPTS; i++) {
@@ -1999,7 +2125,11 @@ sed -n '/private async withRetry/,/^  }$/p' src/github-api-gateway.ts; echo; sed
     }
     throw lastError;
   }
+```
 
+`src/github-api-gateway.ts` — `backoffDelay`
+
+```ts
 function backoffDelay(attempt: number): number {
   return 2 ** attempt * 500 + Math.random() * 250;
 }
@@ -2018,11 +2148,9 @@ the number of backoffs between them without waiting.
 
 ### Branch names collide by design
 
-```bash
-sed -n '/generateBranchName(prefix/,/^  }$/p' src/github-api-gateway.ts; echo; sed -n '/async createBranchWithRetry/,/^  }$/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `generateBranchName`
 
-```output
+```ts
   generateBranchName(prefix = "publish"): string {
     const timestamp = new Date()
       .toISOString()
@@ -2030,7 +2158,11 @@ sed -n '/generateBranchName(prefix/,/^  }$/p' src/github-api-gateway.ts; echo; s
       .slice(0, -5);
     return `${prefix}/${timestamp}`;
   }
+```
 
+`src/github-api-gateway.ts` — `createBranchWithRetry`
+
+```ts
   async createBranchWithRetry(
     basePrefix: string,
     baseBranch = "main",
@@ -2072,11 +2204,9 @@ request for.
 
 ### A stalled request must not hang a publish
 
-```bash
-sed -n '/^export async function fetchWithTimeout/,/^}$/p' src/github-api-gateway.ts
-```
+`src/github-api-gateway.ts` — `fetchWithTimeout`
 
-```output
+```ts
 export async function fetchWithTimeout(
   url: RequestInfo | URL,
   init?: RequestInit,
@@ -2121,11 +2251,9 @@ primary artifact, and a missing `chore` label is not worth discarding it.
 `notices.ts` is pure formatting — no Obsidian calls, which is what makes it
 directly testable.
 
-```bash
-sed -n '/^export function formatBatchNotice/,/^}$/p' src/notices.ts
-```
+`src/notices.ts` — `formatBatchNotice`
 
-```output
+```ts
 export function formatBatchNotice(result: BatchPublishResult): string {
   if (result.error) return `✗ Failed to publish: ${result.error}`;
   if (result.total === 0) return "No publishable notes found";
@@ -2154,18 +2282,20 @@ URL takes a moment to read on a phone.
 
 ## Verifying the whole thing
 
+Transcript of a command run while authoring this document — nothing re-runs it:
+
 ```bash
 grep -c 'test(' src/*.test.ts | sort -t: -k2 -rn
 ```
 
-```output
+```text
 src/note-transformer.test.ts:140
-src/settings.test.ts:56
+src/settings.test.ts:59
 src/publisher.test.ts:54
+src/settings-load.test.ts:36
 src/github-api-gateway.test.ts:34
-src/settings-load.test.ts:33
 src/schema.test.ts:28
-src/main.test.ts:23
+src/main.test.ts:28
 src/slug.test.ts:11
 src/notices.test.ts:11
 ```
@@ -2183,11 +2313,9 @@ it surfaced at.
 
 That typed argument is the reason `PublishGateway` exists:
 
-```bash
-sed -n '/^export type PublishGateway/,/^>;$/p' src/publisher.ts
-```
+`src/publisher.ts` — `PublishGateway`
 
-```output
+```ts
 export type PublishGateway = Pick<
   GitHubApiGateway,
   "commitFiles" | "createBranchWithRetry" | "createPullRequest" | "deleteBranch"
@@ -2203,12 +2331,14 @@ Test files are typechecked, which was not always true: they were excluded
 from `tsc`, so every cast, fake and stub in the suite was decorative
 (#320).
 
+Transcript of a command run while authoring this document — nothing re-runs it:
+
 ```bash
 grep -A2 'include' tsconfig.json
 ```
 
-```output
-  "include": ["src/**/*.ts", "build.ts", "deploy.ts", "version-bump.ts"]
+```text
+  "include": ["src/**/*.ts", "deploy.ts", "version-bump.ts"]
 }
 ```
 
@@ -2233,24 +2363,25 @@ would make the cycle real.
 regenerated **once per release, after all the work has landed** — not per
 pull request. Do not hand-edit it.
 
-`bun run verify:docs` re-executes every code block and diffs the captured
-output. It belongs to the release gate rather than CI: run in CI it would
-fail on every pull request that touches a quoted function, which is
-pressure toward exactly the per-PR regeneration this rule rejects.
+Each snippet is labelled with a file and a symbol rather than a line range,
+so the label still points at the right code after an unrelated edit above
+it. Every snippet is a verbatim quote of the source at the release it was
+regenerated for, with `...` marking an elided middle. The transcripts are
+output pasted in at authoring time; nothing re-runs them.
 
-Know what a green verify does and does not mean. It re-runs the code blocks
-and never reads the prose around them, so a _deleted_ function leaves the
-narrative describing something that is gone while verify still passes — a
-`sed` range matching nothing yields empty output rather than wrong output.
-Issue #328 has the measurements.
+Nothing checks this document between releases. Until 2.0.0 it was an
+executable Showboat document, and `bun run verify:docs` re-ran its blocks —
+but a re-run never read the prose, so a deleted function left the
+narrative describing something that was gone while verify still passed
+(#328). Its replacement is the release-time read: the regeneration reads
+the source and the prose side by side and corrects the prose.
 
-The same blind spot covers the source's own doc comments, and this
-regeneration turned up six of them: four sites carrying two consecutive
-block comments where the newer one had been added below the stale one, and
-two orphaned blocks whose functions no longer existed at all. The sharpest
-stated `commitPreparedBatch`'s pre-#309 contract directly above a signature
-that contradicted it. Corrected in `12e6612`; nothing in the toolchain
-could have reported them.
+This regeneration found the prose behind the code in three places, all
+from the 2.0.0 settings work, and corrected each in place: `onload` was
+said to build the `Publisher`, `saveSettings` to rebuild it when the token
+changed, and the validators to accept `PublisherSettings`. All three
+predate the keychain move, which builds the `Publisher` per command from a
+`PublishConfig`.
 
 ## Companion documents
 
@@ -2263,3 +2394,12 @@ This one deliberately does not duplicate them:
 - `TESTING.md` — where a new test belongs, and why Octokit is mocked at
   three levels.
 - `CLAUDE.md` — the working conventions and the invariants in brief.
+
+## Index
+
+| #   | Severity | Issue                                                                                             | Primary location                 |
+| --- | -------- | ------------------------------------------------------------------------------------------------- | -------------------------------- |
+| 1   | medium   | Entry point and settings prose predated the keychain move — corrected in place                    | `src/main.ts`, `src/settings.ts` |
+| 2   | low      | `verify:docs` described in `TESTING.md` and `THEORY.md` after it was removed — corrected in place | `TESTING.md`, `THEORY.md`        |
+
+**Total: 2 findings, both corrected in place; none filed (0 critical, 0 high, 1 medium, 1 low)**
