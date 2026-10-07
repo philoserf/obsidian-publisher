@@ -258,6 +258,26 @@ export function parseSettings(data: unknown): PublisherSettings {
   };
 }
 
+/** The name a new token is suggested under. Generic on purpose, so another
+ * plugin that needs a GitHub token can pick the same secret. */
+export const SUGGESTED_TOKEN_NAME = "github-token";
+
+/**
+ * What the token row says about the secret it points at. The plugin row and
+ * Settings → Keychain are separate screens, and the secret's name syncs with
+ * data.json while its value stays on the device that stored it — so on a
+ * second device the row holds a name the keychain does not have, and nothing
+ * else says what to call the secret. Reads names only, never values.
+ */
+export function tokenStatus(id: string, onDevice: readonly string[]): string {
+  if (!id) {
+    return `Choose or create a keychain secret holding your GitHub token. Naming it "${SUGGESTED_TOKEN_NAME}" lets other plugins use the same token.`;
+  }
+  return onDevice.includes(id)
+    ? `Uses the keychain secret "${id}".`
+    : `This device's keychain has no secret named "${id}". Add your token in Settings → Keychain under that name, or choose another secret here.`;
+}
+
 /** The plaintext token a pre-#352 data.json carried, or "" when there is none. */
 export function legacyGithubToken(data: unknown): string {
   return isPlainObject(data) && typeof data.githubToken === "string"
@@ -328,7 +348,10 @@ export class PublisherSettingTab extends PluginSettingTab {
         items: [
           {
             name: "GitHub token",
-            desc: "A fine-grained token scoped to the site repository, with contents:write and pull_requests:write — every publish opens a pull request, so contents:write alone commits and then fails. Kept in Obsidian's keychain on this device; only its name is saved with the plugin's settings, so each device that publishes needs it chosen once.",
+            desc: `${tokenStatus(
+              this.plugin.settings.githubTokenSecret,
+              this.app.secretStorage.listSecrets(),
+            )} Use a fine-grained token scoped to the site repository, with contents:write and pull_requests:write — every publish opens a pull request, so contents:write alone commits and then fails. Keychain secrets stay on the device that stores them; only the name syncs.`,
             // No declarative secret control exists, so this row is drawn by
             // hand and saves by hand.
             render: (setting) => {
@@ -337,6 +360,8 @@ export class PublisherSettingTab extends PluginSettingTab {
                 .onChange(async (id) => {
                   this.plugin.settings.githubTokenSecret = id;
                   await this.plugin.saveSettings();
+                  // Re-render so the description reports the new secret.
+                  this.update();
                 });
             },
           },

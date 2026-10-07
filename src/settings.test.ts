@@ -11,6 +11,7 @@ import {
   sanitizePath,
   sanitizeRepoName,
   serializeFrontmatter,
+  tokenStatus,
   validateConnection,
 } from "./settings";
 import { DEFAULT_SETTINGS, type PublishConfig } from "./types";
@@ -242,7 +243,10 @@ describe("PublisherSettingTab", () => {
     const saveSettings = mock(() => Promise.resolve());
     const plugin = { settings, saveSettings } as unknown as ObsidianPublisher;
     return {
-      tab: new PublisherSettingTab({} as App, plugin),
+      tab: new PublisherSettingTab(
+        { secretStorage: { listSecrets: () => [] } } as unknown as App,
+        plugin,
+      ),
       plugin,
       saveSettings,
     };
@@ -396,5 +400,25 @@ describe("parseFrontmatter rejects malformed YAML the same way (#319)", () => {
       author: "Mark",
       tags: ["obsidian"],
     });
+  });
+});
+
+// The row and Settings → Keychain are separate screens, and only the secret's
+// name syncs — so the row has to say what the secret is called.
+describe("tokenStatus", () => {
+  test("suggests the shared name when nothing is chosen", () => {
+    expect(tokenStatus("", [])).toContain('"github-token"');
+  });
+
+  test("names the secret when this device has it", () => {
+    expect(tokenStatus("github-token", ["github-token"])).toBe(
+      'Uses the keychain secret "github-token".',
+    );
+  });
+
+  test("says what to add when this device does not", () => {
+    const status = tokenStatus("github-token", ["anthropic-api-key"]);
+    expect(status).toContain('no secret named "github-token"');
+    expect(status).toContain("Settings → Keychain");
   });
 });
