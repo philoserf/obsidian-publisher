@@ -27,15 +27,6 @@ mock.module("obsidian", () => ({
     hide() {}
   },
 
-  debounce<T extends unknown[]>(cb: (...args: T) => unknown) {
-    // Tests don't exercise timing — invoke immediately. `cancel` is a
-    // no-op and is live (main.ts:89, settings.ts:118); Obsidian's
-    // Debouncer also has `run`, which the plugin never calls.
-    const fn = (...args: T): unknown => cb(...args);
-    (fn as unknown as { cancel: () => void }).cancel = () => {};
-    return fn;
-  },
-
   // main.ts evaluates `class ObsidianPublisher extends Plugin` at module
   // load, and main.test.ts drives onload(), so this needs the surface that
   // onload/onunload actually touch: app, addCommand, addSettingTab,
@@ -65,15 +56,16 @@ mock.module("obsidian", () => ({
 
   PluginSettingTab: class PluginSettingTab {},
 
-  // Bare on purpose: settings.ts imports Setting as a value at module top
-  // level (#264), but no test calls PublisherSettingTab.display(), so its
-  // builder methods were never invoked. A mock method no test reaches
-  // claims the settings UI is exercised when it is not.
-  //
-  // If you add a test that drives display() against a container stub —
-  // #314 collapses the onChange normalizers and is the likely reason to —
-  // restore the chainable no-ops along with it.
-  Setting: class Setting {},
+  // Chainable no-ops: the token row's render callback builds one, though
+  // no test runs render — the tab is tested as definition data.
+  SecretComponent: class SecretComponent {
+    setValue() {
+      return this;
+    }
+    onChange() {
+      return this;
+    }
+  },
 }));
 
 mock.module("@octokit/rest", () => ({

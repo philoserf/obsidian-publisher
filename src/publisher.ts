@@ -12,7 +12,7 @@ import { sanitizeFilename, sanitizeSlug, vaultBasename } from "./slug";
 import {
   type BatchPublishResult,
   errorMessage,
-  type PublisherSettings,
+  type PublishConfig,
   type PublishResult,
   type PublishWarning,
 } from "./types";
@@ -174,7 +174,7 @@ function summarizeReadFailures(
 
 export class Publisher {
   private vault: Vault;
-  private settings: PublisherSettings;
+  private settings: PublishConfig;
   private noteTransformer: NoteTransformer;
   private githubApiGateway: PublishGateway;
   private onProgress?: ProgressCallback;
@@ -182,7 +182,7 @@ export class Publisher {
 
   constructor(
     vault: Vault,
-    settings: PublisherSettings,
+    settings: PublishConfig,
     onProgress?: ProgressCallback,
     metadataCache?: MetadataCache,
     githubApiGateway: PublishGateway = new GitHubApiGateway(settings),

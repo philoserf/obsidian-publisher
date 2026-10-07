@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { RequestError } from "@octokit/request-error";
 import { fetchWithTimeout, GitHubApiGateway } from "./github-api-gateway";
-import type { PublisherSettings } from "./types";
+import type { PublishConfig } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
-function makeSettings(
-  overrides: Partial<PublisherSettings> = {},
-): PublisherSettings {
+function makeSettings(overrides: Partial<PublishConfig> = {}): PublishConfig {
   return {
     ...DEFAULT_SETTINGS,
     githubToken: "ghp_test",

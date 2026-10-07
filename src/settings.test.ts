@@ -1,10 +1,11 @@
-import { describe, expect, mock, spyOn, test } from "bun:test";
-import type { App } from "obsidian";
+import { describe, expect, mock, test } from "bun:test";
+import type { App, SettingDefinition, SettingDefinitionGroup } from "obsidian";
 import type ObsidianPublisher from "./main";
 import {
   normalizeShortcodeName,
   PublisherSettingTab,
   parseFrontmatter,
+  parseSettings,
   parseStrippedFieldsInput,
   requiredFieldsIn,
   sanitizeGitHubOwner,
@@ -13,11 +14,9 @@ import {
   serializeFrontmatter,
   validateConnection,
 } from "./settings";
-import { DEFAULT_SETTINGS, type PublisherSettings } from "./types";
+import { DEFAULT_SETTINGS, type PublishConfig } from "./types";
 
-function makeSettings(
-  overrides: Partial<PublisherSettings> = {},
-): PublisherSettings {
+function makeSettings(overrides: Partial<PublishConfig> = {}): PublishConfig {
   return {
     ...DEFAULT_SETTINGS,
     githubToken: "ghp_test",
@@ -279,15 +278,115 @@ describe("requiredFieldsIn", () => {
   });
 });
 
-describe("PublisherSettingTab.hide", () => {
-  test("cancels pending debounced save and flushes immediately", () => {
+// The tab is data (#353), so it is tested as data: no DOM, no Obsidian.
+describe("PublisherSettingTab", () => {
+  function makeTab(settings = parseSettings({ repoName: "site" })) {
     const saveSettings = mock(() => Promise.resolve());
-    const plugin = { saveSettings } as unknown as ObsidianPublisher;
-    const tab = new PublisherSettingTab({} as App, plugin);
-    const cancelSpy = spyOn(tab.save, "cancel");
-    tab.hide();
-    expect(cancelSpy).toHaveBeenCalled();
-    expect(saveSettings).toHaveBeenCalled();
+    const plugin = { settings, saveSettings } as unknown as ObsidianPublisher;
+    return {
+      tab: new PublisherSettingTab({} as App, plugin),
+      plugin,
+      saveSettings,
+    };
+  }
+
+  function rows(tab: PublisherSettingTab): SettingDefinition[] {
+    return tab
+      .getSettingDefinitions()
+      .flatMap(
+        (g) =>
+          ((g as SettingDefinitionGroup).items ?? []) as SettingDefinition[],
+      );
+  }
+
+  function control(tab: PublisherSettingTab, key: string) {
+    for (const r of rows(tab)) {
+      if ("control" in r && r.control?.key === key) return r.control;
+    }
+    throw new Error(`no control for ${key}`);
+  }
+
+  async function validate(
+    tab: PublisherSettingTab,
+    key: string,
+    value: string,
+  ) {
+    const c = control(tab, key);
+    if (c.type !== "text" && c.type !== "textarea") throw new Error(key);
+    return (await c.validate?.(value)) || undefined;
+  }
+
+  test("binds every persisted field but the token to a control", () => {
+    const { tab } = makeTab();
+    const keys = rows(tab).flatMap((r) =>
+      "control" in r && r.control ? [r.control.key] : [],
+    );
+    expect(keys.sort()).toEqual(
+      Object.keys(DEFAULT_SETTINGS)
+        .filter((k) => k !== "githubTokenSecret")
+        .sort(),
+    );
+  });
+
+  test("the token is a rendered secret row, not an auto-saved control", () => {
+    const { tab } = makeTab();
+    const token = rows(tab).find((r) => r.name === "GitHub token");
+    expect(token && "render" in token).toBe(true);
+  });
+
+  test("test connection is an action row", () => {
+    const { tab } = makeTab();
+    const r = rows(tab).find((x) => x.name === "Test connection");
+    expect(r && "action" in r).toBe(true);
+  });
+
+  test("writes go through parseSettings, so the field's normalizer runs", async () => {
+    const { tab, plugin, saveSettings } = makeTab();
+    await tab.setControlValue("repoOwner", "  my_owner!  ");
+    await tab.setControlValue("baseBranch", "   ");
+    expect(plugin.settings.repoOwner).toBe("myowner");
+    expect(plugin.settings.baseBranch).toBe(DEFAULT_SETTINGS.baseBranch);
+    expect(plugin.settings.repoName).toBe("site");
+    expect(saveSettings).toHaveBeenCalledTimes(2);
+  });
+
+  test("list and YAML fields round-trip through their text form", async () => {
+    const { tab, plugin } = makeTab();
+    await tab.setControlValue("prLabels", " chore , publish ,");
+    await tab.setControlValue("frontmatterTemplate", "author: Mark");
+    expect(plugin.settings.prLabels).toEqual(["chore", "publish"]);
+    expect(plugin.settings.frontmatterTemplate).toEqual({ author: "Mark" });
+    expect(tab.getControlValue("prLabels")).toBe("chore, publish");
+    expect(tab.getControlValue("frontmatterTemplate")).toBe("author: Mark");
+  });
+
+  test("rejects stripping a required field inline", async () => {
+    const { tab } = makeTab();
+    expect(
+      await validate(tab, "strippedFrontmatterFields", "status, title"),
+    ).toContain("title");
+    expect(
+      await validate(tab, "strippedFrontmatterFields", "status, lastmod"),
+    ).toBeUndefined();
+  });
+
+  test("rejects non-object YAML inline rather than storing {}", async () => {
+    const { tab } = makeTab();
+    expect(
+      await validate(tab, "frontmatterTemplate", "just text"),
+    ).toBeTruthy();
+    expect(await validate(tab, "frontmatterTemplate", "a: 1")).toBeUndefined();
+    expect(await validate(tab, "frontmatterTemplate", "")).toBeUndefined();
+  });
+
+  test("rejects an escaping path and a bad shortcode name inline", async () => {
+    const { tab } = makeTab();
+    expect(await validate(tab, "contentDir", "../posts")).toBeTruthy();
+    expect(await validate(tab, "contentDir", "content/posts")).toBeUndefined();
+    expect(
+      await validate(tab, "calloutShortcodeName", "my callout!"),
+    ).toBeTruthy();
+    expect(await validate(tab, "calloutShortcodeName", "note")).toBeUndefined();
   });
 });
 

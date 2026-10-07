@@ -23,18 +23,34 @@ type PluginInternals = {
   data: unknown;
 };
 
-function makePlugin() {
+/** Obsidian's keychain, as a map. Device-local in Obsidian; here, per plugin. */
+function makeSecretStorage(initial: Record<string, string> = {}) {
+  const secrets = new Map(Object.entries(initial));
+  return {
+    secrets,
+    getSecret: (id: string) => secrets.get(id) ?? null,
+    setSecret: mock((id: string, value: string) => {
+      secrets.set(id, value);
+    }),
+  };
+}
+
+function makePlugin(
+  data: unknown = {
+    githubTokenSecret: "github-token",
+    repoOwner: "o",
+    repoName: "r",
+  },
+  secrets: Record<string, string> = { "github-token": "ghp_test" },
+) {
   const plugin = new ObsidianPublisher(
     { vault: {} } as never,
     {} as never,
   ) as ObsidianPublisher & PluginInternals;
-  plugin.app = { vault: {} } as never;
-  plugin.data = {
-    githubToken: "ghp_test",
-    repoOwner: "o",
-    repoName: "r",
-  };
-  return plugin;
+  const secretStorage = makeSecretStorage(secrets);
+  plugin.app = { vault: {}, secretStorage } as never;
+  plugin.data = data;
+  return Object.assign(plugin, { secretStorage });
 }
 
 const okResult = (over: Partial<PublishResult> = {}): PublishResult =>
@@ -312,33 +328,76 @@ describe("publish-all-notes command", () => {
 });
 
 describe("settings lifecycle", () => {
-  test("saveSettings persists and rebuilds the publisher", async () => {
+  test("saveSettings persists", async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    const before = (plugin as unknown as { publisher: Publisher }).publisher;
 
     plugin.settings.repoName = "changed";
     await plugin.saveSettings();
 
     expect((plugin.data as { repoName: string }).repoName).toBe("changed");
-    // Rebuilt because Publisher captures settings (and its GitHub token) at
-    // construction — see the comment on saveSettings.
-    expect((plugin as unknown as { publisher: Publisher }).publisher).not.toBe(
-      before,
-    );
   });
 
-  test("onunload cancels the pending settings save", async () => {
+  test("the token is read at publish time, not captured at load", async () => {
+    // It lives in the keychain, where it can change without this plugin's
+    // settings changing at all.
     const plugin = makePlugin();
     await plugin.onload();
-    const cancel = mock(() => {});
-    (
-      plugin as unknown as { settingTab: { save: { cancel: () => void } } }
-    ).settingTab.save.cancel = cancel;
+    plugin.secretStorage.secrets.set("github-token", "ghp_rotated");
+    expect(plugin.publishConfig().githubToken).toBe("ghp_rotated");
+  });
 
-    plugin.onunload();
+  test("an unset or missing secret resolves to no token", async () => {
+    const plugin = makePlugin(undefined, {});
+    await plugin.onload();
+    expect(plugin.publishConfig().githubToken).toBe("");
+  });
+});
 
-    expect(cancel).toHaveBeenCalledTimes(1);
+// #352: a plaintext token in data.json moves into secret storage on load.
+describe("token migration (#352)", () => {
+  const legacy = { githubToken: "ghp_legacy", repoOwner: "o", repoName: "r" };
+
+  test("moves the token to the keychain and drops the plaintext", async () => {
+    const plugin = makePlugin(legacy, {});
+    await plugin.onload();
+    expect(plugin.secretStorage.secrets.get("github-token")).toBe("ghp_legacy");
+    expect(plugin.settings.githubTokenSecret).toBe("github-token");
+    expect(plugin.data).not.toHaveProperty("githubToken");
+    expect(plugin.publishConfig().githubToken).toBe("ghp_legacy");
+  });
+
+  test("is idempotent: a second load writes nothing", async () => {
+    const plugin = makePlugin(legacy, {});
+    await plugin.onload();
+    const saved = plugin.data;
+    plugin.secretStorage.setSecret.mockClear();
+    await plugin.loadSettings();
+    expect(plugin.secretStorage.setSecret).not.toHaveBeenCalled();
+    expect(plugin.data).toBe(saved);
+  });
+
+  test("only drops the plaintext when an ID is already set", async () => {
+    // Another device migrated first and Sync merged its data.json.
+    const plugin = makePlugin(
+      { ...legacy, githubTokenSecret: "github-token" },
+      {},
+    );
+    await plugin.onload();
+    expect(plugin.secretStorage.setSecret).not.toHaveBeenCalled();
+    expect(plugin.data).not.toHaveProperty("githubToken");
+  });
+
+  test("does not overwrite a different token another plugin keeps", async () => {
+    const plugin = makePlugin(legacy, { "github-token": "ghp_someone_else" });
+    await plugin.onload();
+    expect(plugin.secretStorage.secrets.get("github-token")).toBe(
+      "ghp_someone_else",
+    );
+    expect(plugin.settings.githubTokenSecret).toBe(
+      "obsidian-publisher-github-token",
+    );
+    expect(plugin.publishConfig().githubToken).toBe("ghp_legacy");
   });
 });
 
@@ -348,7 +407,9 @@ describe("settings lifecycle", () => {
 describe("batch progress notices (#246)", () => {
   const progressOf = (plugin: ObsidianPublisher) =>
     (
-      (plugin as unknown as { publisher: Publisher }).publisher as unknown as {
+      (
+        plugin as unknown as { createPublisher(): Publisher }
+      ).createPublisher() as unknown as {
         onProgress?: (done: number, total: number) => void;
       }
     ).onProgress;
