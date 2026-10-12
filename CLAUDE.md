@@ -80,7 +80,7 @@ Octokit is mocked at three different levels on purpose. The preload `mock.module
 
 ### Build
 
-`main.js` is committed, and CI fails if a rebuild moves it — rebuild before committing any source change.
+`main.js` is committed — rebuild before committing any source change.
 
 ### Version and Release
 
