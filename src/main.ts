@@ -42,6 +42,9 @@ export default class ObsidianPublisher extends Plugin {
    * duplicate-branch outcome as two batches. */
   private inFlight: Promise<void> | undefined;
 
+  /** Held so a settings change synced from another device can redraw it. */
+  private settingTab: PublisherSettingTab | undefined;
+
   /**
    * Run a publish, or refuse if one is already running.
    *
@@ -116,7 +119,8 @@ export default class ObsidianPublisher extends Plugin {
   override async onload() {
     await this.loadSettings();
 
-    this.addSettingTab(new PublisherSettingTab(this.app, this));
+    this.settingTab = new PublisherSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     // Register commands
     this.addCommand({
@@ -199,6 +203,29 @@ export default class ObsidianPublisher extends Plugin {
       this.settings.githubTokenSecret = id;
     }
     await this.saveData(this.settings);
+  }
+
+  /**
+   * Adopt a data.json that Sync brought from another device. Without this
+   * the plugin kept its in-memory copy, and its next save wrote that stale
+   * copy back over the synced one.
+   *
+   * `loadSettings` is safe to reuse because it writes only when the file
+   * still carries a pre-#352 plaintext token — once per device, after which
+   * the file has none — so an ordinary reload never saves and cannot
+   * bounce data.json between devices. A synced `githubTokenSecret` naming a
+   * secret this device lacks needs no handling here: `publishConfig`
+   * resolves it to no token at the moment of use.
+   *
+   * A running publish holds its own snapshot of the settings, so waiting is
+   * not for its sake; it keeps a publish's notices and the settings it ran
+   * with describing one configuration.
+   */
+  override async onExternalSettingsChange() {
+    // Swallowed: the publish reports its own failure.
+    await this.inFlight?.catch(() => {});
+    await this.loadSettings();
+    this.settingTab?.update();
   }
 
   async saveSettings() {

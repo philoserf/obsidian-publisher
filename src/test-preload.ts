@@ -71,8 +71,12 @@ mock.module("obsidian", () => ({
   // The real constructor keeps the app; the token row reads its keychain.
   PluginSettingTab: class PluginSettingTab {
     app: unknown;
+    updates = 0;
     constructor(app?: unknown) {
       this.app = app;
+    }
+    update() {
+      this.updates++;
     }
   },
 

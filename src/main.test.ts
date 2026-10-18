@@ -425,6 +425,80 @@ describe("settings lifecycle", () => {
   });
 });
 
+describe("settings synced from another device (#363)", () => {
+  const tabUpdates = (plugin: ReturnType<typeof makePlugin>) =>
+    (plugin as unknown as { settingTabs: Array<{ updates: number }> })
+      .settingTabs[0]?.updates;
+
+  test("adopts the synced data without writing it back", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const synced = {
+      githubTokenSecret: "github-token",
+      repoOwner: "o",
+      repoName: "synced",
+    };
+    plugin.data = synced;
+    const save = spyOn(plugin, "saveData");
+
+    await plugin.onExternalSettingsChange();
+
+    expect(plugin.settings.repoName).toBe("synced");
+    expect(save).not.toHaveBeenCalled();
+    expect(plugin.data).toBe(synced);
+    expect(tabUpdates(plugin)).toBe(1);
+  });
+
+  test("a later save writes the synced values, not the stale ones", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    plugin.data = { ...(plugin.data as object), repoName: "synced" };
+
+    await plugin.onExternalSettingsChange();
+    await plugin.saveSettings();
+
+    expect((plugin.data as { repoName: string }).repoName).toBe("synced");
+  });
+
+  test("a secret ID this device lacks leaves the token unset", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    plugin.data = {
+      ...(plugin.data as object),
+      githubTokenSecret: "elsewhere",
+    };
+
+    await plugin.onExternalSettingsChange();
+
+    expect(plugin.settings.githubTokenSecret).toBe("elsewhere");
+    expect(plugin.publishConfig().githubToken).toBe("");
+  });
+
+  test("waits for a running publish before adopting", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    let finish = () => {};
+    const publish = spyOn(Publisher.prototype, "publishAll").mockImplementation(
+      () =>
+        new Promise<BatchPublishResult>((resolve) => {
+          finish = () => resolve(okBatch());
+        }),
+    );
+    const running = runAll(plugin);
+    plugin.data = { ...(plugin.data as object), repoName: "synced" };
+
+    const reload = plugin.onExternalSettingsChange();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(plugin.settings.repoName).toBe("r");
+
+    finish();
+    await running;
+    await reload;
+    expect(plugin.settings.repoName).toBe("synced");
+    publish.mockRestore();
+  });
+});
+
 // #352: a plaintext token in data.json moves into secret storage on load.
 describe("token migration (#352)", () => {
   const legacy = { githubToken: "ghp_legacy", repoOwner: "o", repoName: "r" };
