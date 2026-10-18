@@ -30,6 +30,12 @@ Two commands, one workflow: publishing a single note and publishing the
 whole vault converge on the same branch-commit-PR path, differing only in
 their commit message and PR title.
 
+A third entry point publishes nothing. `publisher:preflight` is a handler
+for the `obsidian` command-line tool that runs steps 2 and 4 for one note —
+everything before the network — and prints whether it would publish. It
+exists so that a tool outside Obsidian can ask the plugin rather than
+restate its rules.
+
 ## Architecture
 
 Nine source modules in `src/`, each owning one thing. The dependency
@@ -76,10 +82,11 @@ a one-line delegation kept only because callers already hold a `Publisher`.
 
 ## Entry point
 
-`main.ts` is the Obsidian `Plugin` subclass. `onload` does three things:
-load and normalize settings, register the settings tab, and register the
-two commands. It does **not** build a `Publisher` — each command builds its
-own, for a reason the next sections reach.
+`main.ts` is the Obsidian `Plugin` subclass. `onload` does four things:
+load and normalize settings, register the settings tab, register the two
+commands, and register the preflight CLI handler. It does **not** build a
+`Publisher` — each command builds its own, for a reason the next sections
+reach.
 
 `src/main.ts` — `onload`
 
@@ -87,7 +94,8 @@ own, for a reason the next sections reach.
   override async onload() {
     await this.loadSettings();
 
-    this.addSettingTab(new PublisherSettingTab(this.app, this));
+    this.settingTab = new PublisherSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     // Register commands
     this.addCommand({
@@ -111,6 +119,19 @@ own, for a reason the next sections reach.
         await this.runExclusive(() => this.publishAllNotes());
       },
     });
+
+    this.registerCliHandler(
+      "publisher:preflight",
+      "Check whether a note would publish, without touching GitHub",
+      {
+        path: {
+          value: "<path>",
+          description: "Vault path of the note",
+          required: true,
+        },
+      },
+      (params) => this.preflight(params.path),
+    );
   }
 ```
 
@@ -119,7 +140,13 @@ when an editor is focused; `view.file` can still be null, and that case
 gets a notice rather than a thrown error. `publish-all-notes` uses a plain
 `callback` — it needs no editor, because it scans the vault.
 
-Both route through `runExclusive`.
+The settings tab is kept in a field rather than handed straight to
+`addSettingTab`, so that a settings change arriving from another device can
+redraw it — see [Settings that change underneath the plugin](#settings-that-change-underneath-the-plugin).
+The CLI handler is followed in
+[Checking a note without publishing it](#checking-a-note-without-publishing-it).
+
+Both commands route through `runExclusive`.
 
 ### A publish is single-flight
 
@@ -195,8 +222,8 @@ An unset ID and a secret this device does not have both resolve to `""`,
 and validation reports both as "GitHub token is required". There is no
 third state to handle downstream.
 
-The method is called fresh by every command and by the connection test,
-never cached. The token lives in an external store and can change in
+The method is called fresh by every command, by the preflight handler and
+by the connection test, never cached. The token lives in an external store and can change in
 Settings → Keychain without this plugin's settings changing at all, so a
 client built at load would keep using the old token until restart. That is
 why `onload` builds no `Publisher`, and why each command builds its own:
@@ -281,6 +308,48 @@ That last case is the one the user feels. Keychain values do not sync; only
 the name in `data.json` does. A second device ends up pointing at a secret
 it does not have, and enters the token once by hand. The settings tab's
 token row is built to say so.
+
+### Settings that change underneath the plugin
+
+`data.json` is not only written by this plugin. Obsidian Sync replaces it
+when another device saves, and until 2.1.0 the running plugin never
+noticed: it kept its in-memory settings, and the next save — any edit in the
+settings tab — wrote that stale copy back over the synced one (#363).
+Obsidian calls `onExternalSettingsChange` when the file changes from
+outside:
+
+`src/main.ts` — `onExternalSettingsChange`
+
+```ts
+  override async onExternalSettingsChange() {
+    // Swallowed: the publish reports its own failure.
+    await this.inFlight?.catch(() => {});
+    await this.loadSettings();
+    this.settingTab?.update();
+  }
+```
+
+It reuses `loadSettings`, which looks like the trap: `loadSettings` can
+call `saveData`, and a reload that writes on every external change would
+bounce `data.json` between devices indefinitely. It does not, because of the
+early return above — `loadSettings` writes only when the file still carries
+a plaintext `githubToken`, and the file it writes carries none. So the write
+happens at most once per device, and only in the one case where it is
+wanted: a pre-2.0.0 `data.json` arriving by Sync. A separate reload that
+parsed without migrating would skip exactly that case. An ordinary reload
+never writes, and a test pins it.
+
+The wait on `inFlight` is not for the running publish's sake. It holds its
+own `PublishConfig`, captured by `createPublisher` before it started, so
+swapping `this.settings` under it would change nothing it uses. Waiting
+keeps the publish's notices and the configuration it ran with describing
+the same thing. The `catch` exists only so that a failed publish does not
+also fail the reload; the publish has already reported its own error.
+
+A synced `githubTokenSecret` naming a secret this device lacks needs
+nothing here. `publishConfig` resolves it to `""` at the moment of use, as
+it would for any missing secret, and `update()` redraws the token row,
+whose description then says the secret is missing.
 
 ## Settings
 
@@ -427,13 +496,23 @@ the user pick or create a keychain secret and stores only its ID:
               new SecretComponent(this.app, setting.controlEl)
                 .setValue(this.plugin.settings.githubTokenSecret)
                 .onChange(async (id) => {
-                  this.plugin.settings.githubTokenSecret = id;
+                  // A cleared selection arrives as null; "" is the
+                  // setting's own "no secret", as a reload would store it.
+                  this.plugin.settings.githubTokenSecret = id ?? "";
                   await this.plugin.saveSettings();
                   // Re-render so the description reports the new secret.
                   this.update();
                 });
             },
 ```
+
+This is the one write in the tab that does not go through `parseSettings`,
+so it has to produce the value `parseSettings` would. Clearing the selection
+hands `onChange` a `null`, which until 2.1.0 was stored as is — harmless,
+since `publishConfig` treats any falsy ID as no token and the next load
+turned `null` back into `""`, but the in-memory settings held a value their
+type rules out until then. The `obsidian` 1.14 typings made the `null`
+visible, and it now becomes `""`, the field's default.
 
 The row's description is where the second-device problem gets answered.
 The plugin's settings and Settings → Keychain are separate screens, and a
@@ -958,37 +1037,20 @@ watching progress, not results.
 
 ### The single-note path
 
-`publishNote` reads the file, splits its frontmatter, checks the publish
-flag, and then hands a one-element list to the same workflow:
+`publishNote` reads the file and checks it may enter the workflow, then
+hands a one-element list to the same workflow:
 
 `src/publisher.ts` — `publishNote`
 
 ```ts
   async publishNote(file: TFile): Promise<PublishResult> {
-    let content: string;
-    try {
-      content = await this.vault.read(file);
-    } catch {
-      return failedResult(file.path, "Failed to read file");
-    }
-
-    const { frontmatter, body, error: parseError } = splitFrontmatter(content);
-    if (parseError) {
-      return failedResult(file.path, parseError);
-    }
-    if (!hasPublishFlag(frontmatter)) {
-      return failedResult(
-        file.path,
-        "File does not have 'status: publish' in frontmatter",
-      );
-    }
-    // Frontmatter validation is prepareBatch's sole responsibility; the
-    // parse and publish-flag checks above gate entry into the workflow.
+    const entry = await this.readForPublish(file);
+    if ("error" in entry) return failedResult(file.path, entry.error);
 
     const result = await this.runPublishWorkflow({
       branchPrefix: "publish",
       readFailures: [],
-      files: [{ file, frontmatter, body }],
+      files: [entry],
       commitMessage: () => `Publish: ${file.basename}`,
       prTitle: () => `Publish: ${file.basename}`,
       prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
@@ -1008,13 +1070,119 @@ flag, and then hands a one-element list to the same workflow:
   }
 ```
 
+The entry gate is its own method because two callers need it:
+
+`src/publisher.ts` — `readForPublish`
+
+```ts
+  private async readForPublish(
+    file: TFile,
+  ): Promise<PublishableFile | { error: string }> {
+    let content: string;
+    try {
+      content = await this.vault.read(file);
+    } catch {
+      return { error: "Failed to read file" };
+    }
+
+    const { frontmatter, body, error: parseError } = splitFrontmatter(content);
+    if (parseError) return { error: parseError };
+    if (!hasPublishFlag(frontmatter)) {
+      return { error: "File does not have 'status: publish' in frontmatter" };
+    }
+    return { file, frontmatter, body };
+  }
+```
+
 Frontmatter _validation_ is deliberately absent here — that is
 `prepareBatch`'s sole responsibility. The parse and publish-flag checks
-above only gate entry into the workflow, so there is exactly one place that
-decides whether a note's `title` and `date` are acceptable.
+only gate entry into the workflow, so there is exactly one place that
+decides whether a note's `title` and `date` are acceptable. On success it
+returns the `PublishableFile` the batch scan builds, already parsed, so
+nothing downstream reads the note twice.
 
-The tail unwraps the batch shape back into a single result, lifting the
-batch-level `prUrl` and warnings onto it.
+The tail of `publishNote` unwraps the batch shape back into a single
+result, lifting the batch-level `prUrl` and warnings onto it.
+
+### Checking a note without publishing it
+
+As #362 describes it, the vault's `/publish` skill validated a note's
+frontmatter itself, then moved it to `Published/` and stopped. Its checks
+and the plugin's were two statements of one rule, and a note the skill
+accepted could still fail here. `preflight` is the plugin answering for itself, built from the same
+two pieces `publishNote` uses:
+
+`src/publisher.ts` — `preflight`
+
+```ts
+  async preflight(file: TFile): Promise<Preflight> {
+    const entry = await this.readForPublish(file);
+    if ("error" in entry)
+      return { ok: false, error: entry.error, warnings: [] };
+    const [prepared] = await this.prepareBatch([entry]);
+    if (!prepared) return { ok: false, error: "Unknown error", warnings: [] };
+    return prepared.ok
+      ? { ok: true, warnings: prepared.warnings }
+      : { ok: false, error: prepared.error, warnings: prepared.warnings };
+  }
+```
+
+Everything `publishNote` does before `createBranchWithRetry` runs here —
+`readForPublish`, then `prepareBatch`'s validation, transform and image
+reads — and nothing after it. The `!prepared` arm is unreachable, since
+`prepareBatch` returns one `Prepared` per input, and exists because
+`noUncheckedIndexedAccess` types the destructured element as possibly
+absent.
+
+Two consequences follow from reusing `prepareBatch` rather than
+approximating it. The publish set is one slug, exactly as in `publishNote`,
+so the verdict is the single-note command's verdict: a note with outbound
+links passes, and those links would degrade to text. And image warnings
+come back with the verdict, because resolving images is part of preparing.
+
+The result is its own type, not a `PublishResult`:
+
+`src/types.ts` — `Preflight`
+
+```ts
+export type Preflight =
+  | { ok: true; warnings: PublishWarning[] }
+  | { ok: false; error: string; warnings: PublishWarning[] };
+```
+
+The reason is the one [`Prepared`](#a-prepared-note-is-not-a-published-note)
+gives: a `PublishResult` with `success: true` means "published" everywhere
+it is read, and nothing here was.
+
+The plugin side of the CLI is a thin adapter:
+
+`src/main.ts` — `preflight`
+
+```ts
+  private async preflight(notePath: string | undefined): Promise<string> {
+    const file =
+      notePath && notePath !== "true"
+        ? this.app.vault.getFileByPath(notePath)
+        : null;
+    if (!file) return `File not found: ${notePath ?? ""}`;
+    const publisher = new Publisher(
+      this.app.vault,
+      this.publishConfig(),
+      undefined,
+      this.app.metadataCache,
+    );
+    return formatPreflight(await publisher.preflight(file));
+  }
+```
+
+Three things it leaves out are each deliberate. It does not go through
+`runExclusive`: it creates no branch, so it cannot duplicate one, and
+refusing it during a publish would only be noise. It passes no progress
+callback, which would raise a notice in the app for a run the user started
+from a terminal. And it calls no `validateSettings` — preflight has to work
+on a device whose keychain lacks the token, since secrets do not sync, and
+nothing it does needs one. The `"true"` comparison is how the CLI types a
+flag given without a value.
 
 ## The transform chain
 
@@ -2275,6 +2443,25 @@ warning per (file, collision) pair means multiple warnings for the same
 target when three or more sources collide — and every contributor needs to
 reach the user.
 
+The preflight handler's output is formatted here too, because it is the
+same text in a different medium:
+
+`src/notices.ts` — `formatPreflight`
+
+```ts
+export function formatPreflight(preflight: Preflight): string {
+  const verdict = preflight.ok ? "ok" : preflight.error;
+  return [verdict, ...formatWarnings(preflight.warnings)].join("\n");
+}
+```
+
+The first line is always the verdict — `ok`, or the reason — and each
+warning follows on its own line in the wording the in-app notice uses. A
+tool parsing it reads the first line and can ignore the rest. One limit:
+`validateFrontmatter` joins several field problems with `; ` into one
+string, so a note missing both `title` and `date` gets one reason line, not
+two.
+
 `main.ts` is what turns these into toasts. The PR URL gets a 10-second
 notice rather than the default ~5s, for a concrete reason: on iOS there is
 no console, so the notice is the only place the URL appears, and a GitHub
@@ -2291,14 +2478,19 @@ grep -c 'test(' src/*.test.ts | sort -t: -k2 -rn
 ```text
 src/note-transformer.test.ts:140
 src/settings.test.ts:59
-src/publisher.test.ts:54
+src/publisher.test.ts:58
 src/settings-load.test.ts:36
+src/main.test.ts:36
 src/github-api-gateway.test.ts:34
 src/schema.test.ts:28
-src/main.test.ts:28
+src/notices.test.ts:14
 src/slug.test.ts:11
-src/notices.test.ts:11
 ```
+
+The CLI handler is tested the way the commands are: the preload's `Plugin`
+mock records each `registerCliHandler` call in a map, and `main.test.ts`
+calls the recorded handler directly. Whether the `obsidian` CLI dispatches
+to it is outside what the mock can see.
 
 Octokit is mocked at three levels, deliberately. The preload
 `mock.module`s `@octokit/rest` and `@octokit/request-error` globally;
@@ -2329,7 +2521,9 @@ these four methods.
 
 Test files are typechecked, which was not always true: they were excluded
 from `tsc`, so every cast, fake and stub in the suite was decorative
-(#320).
+(#320). The checker is now Bun's built-in one — `typecheck` runs
+`bun --check`, not `tsc --noEmit` — and it reads the same `include`, which
+is why it reports 21 files: the 19 under `src/` plus the two build scripts.
 
 Transcript of a command run while authoring this document — nothing re-runs it:
 
@@ -2376,12 +2570,13 @@ narrative describing something that was gone while verify still passed
 (#328). Its replacement is the release-time read: the regeneration reads
 the source and the prose side by side and corrects the prose.
 
-This regeneration found the prose behind the code in three places, all
-from the 2.0.0 settings work, and corrected each in place: `onload` was
-said to build the `Publisher`, `saveSettings` to rebuild it when the token
-changed, and the validators to accept `PublisherSettings`. All three
-predate the keychain move, which builds the `Publisher` per command from a
-`PublishConfig`.
+The 2.1.0 regeneration found the prose behind the code where this
+release's work had moved it, and corrected it in place: `onload` was said
+to do three things and the plugin to have two entry points, before the CLI
+handler; `publishNote` was quoted with the read and gate inline, before
+they moved to `readForPublish`; and the type checker was implied to be
+`tsc`. `TESTING.md` and `THEORY.md` had the same kind of drift and were
+corrected alongside.
 
 ## Companion documents
 
@@ -2394,12 +2589,3 @@ This one deliberately does not duplicate them:
 - `TESTING.md` — where a new test belongs, and why Octokit is mocked at
   three levels.
 - `CLAUDE.md` — the working conventions and the invariants in brief.
-
-## Index
-
-| #   | Severity | Issue                                                                                             | Primary location                 |
-| --- | -------- | ------------------------------------------------------------------------------------------------- | -------------------------------- |
-| 1   | medium   | Entry point and settings prose predated the keychain move — corrected in place                    | `src/main.ts`, `src/settings.ts` |
-| 2   | low      | `verify:docs` described in `TESTING.md` and `THEORY.md` after it was removed — corrected in place | `TESTING.md`, `THEORY.md`        |
-
-**Total: 2 findings, both corrected in place; none filed (0 critical, 0 high, 1 medium, 1 low)**

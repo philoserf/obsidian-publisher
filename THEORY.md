@@ -28,6 +28,14 @@ An **operation** is one invocation of one of the two commands. It produces exact
 branch, one commit and one pull request, or it produces nothing. There is no partial
 operation and no resumable operation.
 
+The `publisher:preflight` CLI handler is not an operation. It runs a single-note operation's
+preparation — the same `readForPublish` and `prepareBatch` — and stops before the network,
+so it produces nothing by construction. What it returns is the verdict that operation would
+reach, publish set of one included, and the reason it reuses those functions rather than
+restating their checks is [one rule, one owner](#one-rule-one-owner--and-rejection-rather-than-repair)
+below: the vault's `/publish` skill had its own copy of the rules, and the two could disagree
+(#362).
+
 What the system does _not_ model is as load-bearing as what it does. It has no
 representation of the site's current contents, no cache of what was published before, no
 record of previous operations. It cannot tell you whether a note is already live. This is
@@ -247,6 +255,15 @@ wrong type falls back, present but unnormalized runs the field's one normalizer 
 pairing is the invariant. A field normalized on only one side was the bug class (#314). Since
 2.0.0 the tab cannot reintroduce it: every control writes through `setControlValue`, which
 runs `parseSettings` on the edited settings, so the tab has no normalizers of its own.
+
+The file also changes while the plugin runs. Obsidian Sync replaces it when another device
+saves, and until 2.1.0 the plugin kept its in-memory copy and wrote that back over the synced
+one on its next save (#363). `onExternalSettingsChange` now re-reads it through
+`loadSettings` — the load path, so the one-normalizer invariant holds for a synced file as it
+does for a local one. The constraint that shapes the reload is that it must not write: a
+reload that saved would bounce the file between devices. `loadSettings` writes only to
+migrate a plaintext token, which leaves a file with no plaintext token, so the next reload is
+a no-op. Keep that property if the migration ever changes.
 
 What crosses this seam is also narrower than the settings. The GitHub token lives in
 Obsidian's keychain, and `data.json` holds only its secret's ID (#352). The token is joined

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **`publisher:preflight` checks a note from the command line.** `obsidian publisher:preflight path="Drafts/Note.md"` runs every check a publish makes before reaching GitHub — frontmatter parse, `status: publish`, required fields, the transform and image resolution — and prints `ok` or the reason the note would fail, followed by any warnings one per line. It shares those checks with the publish command rather than restating them, so a note it accepts is one Publisher will accept. It needs no GitHub token and opens no branch, so it works on a device whose keychain has never held one (#362, #368)
+
+### Fixed
+
+- **Settings changed on another device are adopted, not overwritten.** When Obsidian Sync brought a new `data.json`, the running plugin kept its in-memory copy, and its next save — any edit in the settings tab — silently wrote that stale copy back over the synced one. The plugin now reloads on an external change, after any publish in progress, and redraws an open settings tab. The reload itself never writes (#363, #369)
+- Clearing the token row's keychain selection stored `null` in a field typed as a string until the next reload turned it back into `""`. It now stores `""` directly (#370)
+
+### Internal
+
+- GitHub-hosted automation is retired: the CI, check and release workflows and Dependabot are removed, and the docs describe the local steps instead. Releases are cut locally (#365, #366)
+- `typecheck` runs Bun's built-in checker (`bun --check`) instead of `tsc --noEmit`; the `typescript` dependency stays for the editor (#364, #367)
+- Dependency bumps, including `obsidian` 1.13.1 → 1.14.4. `minAppVersion` stays 1.13.0 (#370)
+
 ## 2.0.0
 
 **Requires Obsidian 1.13.0** (previously 1.0.0). The keychain token and the declarative settings tab both depend on APIs that version introduced.
