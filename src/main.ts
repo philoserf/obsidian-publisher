@@ -1,5 +1,5 @@
 import { Notice, Plugin, type TFile } from "obsidian";
-import { formatBatchNotice, formatWarnings } from "./notices";
+import { formatBatchNotice, formatPreflight, formatWarnings } from "./notices";
 import { Publisher } from "./publisher";
 import {
   legacyGithubToken,
@@ -140,6 +140,42 @@ export default class ObsidianPublisher extends Plugin {
         await this.runExclusive(() => this.publishAllNotes());
       },
     });
+
+    this.registerCliHandler(
+      "publisher:preflight",
+      "Check whether a note would publish, without touching GitHub",
+      {
+        path: {
+          value: "<path>",
+          description: "Vault path of the note",
+          required: true,
+        },
+      },
+      (params) => this.preflight(params.path),
+    );
+  }
+
+  /**
+   * The `publisher:preflight` CLI handler. Outside `runExclusive`: it
+   * creates no branch, so it cannot duplicate one. Built without the
+   * progress callback, which would raise a notice in the app for a run the
+   * user started from a terminal. The token is never required — preflight
+   * has to work on a device whose keychain does not hold it, since secrets
+   * do not sync.
+   */
+  private async preflight(notePath: string | undefined): Promise<string> {
+    const file =
+      notePath && notePath !== "true"
+        ? this.app.vault.getFileByPath(notePath)
+        : null;
+    if (!file) return `File not found: ${notePath ?? ""}`;
+    const publisher = new Publisher(
+      this.app.vault,
+      this.publishConfig(),
+      undefined,
+      this.app.metadataCache,
+    );
+    return formatPreflight(await publisher.preflight(file));
   }
 
   /**
