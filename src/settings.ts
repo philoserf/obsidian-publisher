@@ -358,7 +358,9 @@ export class PublisherSettingTab extends PluginSettingTab {
               new SecretComponent(this.app, setting.controlEl)
                 .setValue(this.plugin.settings.githubTokenSecret)
                 .onChange(async (id) => {
-                  this.plugin.settings.githubTokenSecret = id;
+                  // A cleared selection arrives as null; "" is the
+                  // setting's own "no secret", as a reload would store it.
+                  this.plugin.settings.githubTokenSecret = id ?? "";
                   await this.plugin.saveSettings();
                   // Re-render so the description reports the new secret.
                   this.update();
