@@ -12,6 +12,7 @@ import { sanitizeFilename, sanitizeSlug, vaultBasename } from "./slug";
 import {
   type BatchPublishResult,
   errorMessage,
+  type Preflight,
   type PublishConfig,
   type PublishResult,
   type PublishWarning,
@@ -381,30 +382,13 @@ export class Publisher {
    * file to it, and opens a pull request against baseBranch.
    */
   async publishNote(file: TFile): Promise<PublishResult> {
-    let content: string;
-    try {
-      content = await this.vault.read(file);
-    } catch {
-      return failedResult(file.path, "Failed to read file");
-    }
-
-    const { frontmatter, body, error: parseError } = splitFrontmatter(content);
-    if (parseError) {
-      return failedResult(file.path, parseError);
-    }
-    if (!hasPublishFlag(frontmatter)) {
-      return failedResult(
-        file.path,
-        "File does not have 'status: publish' in frontmatter",
-      );
-    }
-    // Frontmatter validation is prepareBatch's sole responsibility; the
-    // parse and publish-flag checks above gate entry into the workflow.
+    const entry = await this.readForPublish(file);
+    if ("error" in entry) return failedResult(file.path, entry.error);
 
     const result = await this.runPublishWorkflow({
       branchPrefix: "publish",
       readFailures: [],
-      files: [{ file, frontmatter, body }],
+      files: [entry],
       commitMessage: () => `Publish: ${file.basename}`,
       prTitle: () => `Publish: ${file.basename}`,
       prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
@@ -421,6 +405,47 @@ export class Publisher {
       prUrl: result.prUrl,
       warnings: [...single.warnings, ...result.warnings],
     };
+  }
+
+  /**
+   * Would `publishNote` accept this file? Runs every step it takes before
+   * the network — read, parse, publish flag, frontmatter validation,
+   * transform, image resolution — through the same two functions, so there
+   * is one definition of "publishable" (#362). Needs no token and makes no
+   * GitHub call; the vault's `/publish` skill reaches it through the CLI.
+   */
+  async preflight(file: TFile): Promise<Preflight> {
+    const entry = await this.readForPublish(file);
+    if ("error" in entry)
+      return { ok: false, error: entry.error, warnings: [] };
+    const [prepared] = await this.prepareBatch([entry]);
+    if (!prepared) return { ok: false, error: "Unknown error", warnings: [] };
+    return prepared.ok
+      ? { ok: true, warnings: prepared.warnings }
+      : { ok: false, error: prepared.error, warnings: prepared.warnings };
+  }
+
+  /**
+   * Read a single note and check it may enter the workflow: it parses and
+   * carries the publish flag. Frontmatter validation is `prepareBatch`'s
+   * sole responsibility, not this one's.
+   */
+  private async readForPublish(
+    file: TFile,
+  ): Promise<PublishableFile | { error: string }> {
+    let content: string;
+    try {
+      content = await this.vault.read(file);
+    } catch {
+      return { error: "Failed to read file" };
+    }
+
+    const { frontmatter, body, error: parseError } = splitFrontmatter(content);
+    if (parseError) return { error: parseError };
+    if (!hasPublishFlag(frontmatter)) {
+      return { error: "File does not have 'status: publish' in frontmatter" };
+    }
+    return { file, frontmatter, body };
   }
 
   /**

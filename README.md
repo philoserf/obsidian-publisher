@@ -16,6 +16,10 @@ This is personal tooling, not a general-purpose plugin. It is opinionated in way
 
 If you want something similar, the code is MIT-licensed — fork it and adapt. Don't expect upstream to accommodate your workflow.
 
+## Checking a note from the command line
+
+`obsidian publisher:preflight path="Drafts/Note.md"` runs every check a publish makes before it reaches GitHub — frontmatter parse, `status: publish`, required fields, the transform and image resolution — and prints `ok` or the reason the note would fail. Any warnings (a missing image, say) follow, one per line; the first line is always the verdict. It needs no GitHub token and opens no branch, so it works on a device that has never entered one.
+
 ## Content Transformations
 
 The plugin converts Obsidian-specific syntax to Hugo-compatible markdown during publish:

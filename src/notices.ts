@@ -1,4 +1,4 @@
-import type { BatchPublishResult, PublishWarning } from "./types";
+import type { BatchPublishResult, Preflight, PublishWarning } from "./types";
 
 type NamedImageWarning = Extract<PublishWarning, { name: string }>;
 
@@ -75,4 +75,14 @@ export function formatWarnings(warnings: PublishWarning[]): string[] {
   }
 
   return messages;
+}
+
+/**
+ * The `publisher:preflight` CLI output: `ok`, or the reason the note would
+ * fail, then one line per warning. Line-oriented and stable, because the
+ * vault's `/publish` skill parses it — the first line is the verdict.
+ */
+export function formatPreflight(preflight: Preflight): string {
+  const verdict = preflight.ok ? "ok" : preflight.error;
+  return [verdict, ...formatWarnings(preflight.warnings)].join("\n");
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatBatchNotice, formatWarnings } from "./notices";
+import { formatBatchNotice, formatPreflight, formatWarnings } from "./notices";
 import type { BatchPublishResult } from "./types";
 
 function result(
@@ -120,5 +120,30 @@ describe("formatWarnings", () => {
       { kind: "pr-label-failed", labels: ["chore"], error: "403" },
     ]);
     expect(messages).toHaveLength(4);
+  });
+});
+
+describe("formatPreflight", () => {
+  test("a clean pass is the single line ok", () => {
+    expect(formatPreflight({ ok: true, warnings: [] })).toBe("ok");
+  });
+
+  test("the verdict is the first line and each warning follows", () => {
+    expect(
+      formatPreflight({
+        ok: true,
+        warnings: [{ kind: "image-failed", name: "a.png" }],
+      }).split("\n"),
+    ).toEqual(["ok", "Warning: 1 image(s) failed: a.png"]);
+  });
+
+  test("a failure prints its reason in place of ok", () => {
+    expect(
+      formatPreflight({
+        ok: false,
+        error: "Invalid frontmatter: date is required",
+        warnings: [],
+      }),
+    ).toBe("Invalid frontmatter: date is required");
   });
 });

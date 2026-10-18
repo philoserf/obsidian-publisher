@@ -21,6 +21,7 @@ type PluginInternals = {
     ) => Promise<void>;
   }>;
   data: unknown;
+  cliHandlers: Map<string, (params: Record<string, string>) => Promise<string>>;
 };
 
 /** Obsidian's keychain, as a map. Device-local in Obsidian; here, per plugin. */
@@ -101,6 +102,76 @@ describe("ObsidianPublisher.onload", () => {
     plugin.data = null;
     await plugin.onload();
     expect(plugin.settings.baseBranch).toBe("main");
+  });
+});
+
+describe("publisher:preflight CLI handler (#362)", () => {
+  const note = { basename: "note", path: "Drafts/note.md" };
+  const runPreflight = async (
+    plugin: ObsidianPublisher & PluginInternals,
+    params: Record<string, string>,
+  ) => plugin.cliHandlers.get("publisher:preflight")?.(params);
+  const withVault = (plugin: ReturnType<typeof makePlugin>) => {
+    const getFileByPath = mock((p: string) => (p === note.path ? note : null));
+    (plugin.app as { vault: unknown }).vault = { getFileByPath };
+    return getFileByPath;
+  };
+
+  test("prints ok for a note that would publish", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    const preflight = spyOn(Publisher.prototype, "preflight").mockResolvedValue(
+      { ok: true, warnings: [] },
+    );
+
+    expect(await runPreflight(plugin, { path: note.path })).toBe("ok");
+    expect(preflight).toHaveBeenCalledWith(note as never);
+    expect(shown()).toEqual([]);
+    preflight.mockRestore();
+  });
+
+  test("prints the reason a note would fail", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    const preflight = spyOn(Publisher.prototype, "preflight").mockResolvedValue(
+      {
+        ok: false,
+        error: "Invalid frontmatter: date is required",
+        warnings: [],
+      },
+    );
+
+    expect(await runPreflight(plugin, { path: note.path })).toBe(
+      "Invalid frontmatter: date is required",
+    );
+    preflight.mockRestore();
+  });
+
+  test("reports a path that names no file", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    const preflight = spyOn(Publisher.prototype, "preflight");
+
+    expect(await runPreflight(plugin, { path: "Nope.md" })).toBe(
+      "File not found: Nope.md",
+    );
+    expect(preflight).not.toHaveBeenCalled();
+    preflight.mockRestore();
+  });
+
+  test("works on a device whose keychain lacks the token", async () => {
+    const plugin = makePlugin(undefined, {});
+    await plugin.onload();
+    withVault(plugin);
+    const preflight = spyOn(Publisher.prototype, "preflight").mockResolvedValue(
+      { ok: true, warnings: [] },
+    );
+
+    expect(await runPreflight(plugin, { path: note.path })).toBe("ok");
+    preflight.mockRestore();
   });
 });
 

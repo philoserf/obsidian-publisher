@@ -165,6 +165,76 @@ describe("Publisher.validateSettings", () => {
   });
 });
 
+describe("Publisher.preflight (#362)", () => {
+  const noGitHub = (gh: ReturnType<typeof makeGitHubApiGateway>) => {
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+    expect(gh.createPullRequest).not.toHaveBeenCalled();
+  };
+
+  test("accepts a publishable note without touching GitHub", async () => {
+    const vault = makeVault([{ name: "test.md", content: publishedNote }]);
+    const gh = makeGitHubApiGateway();
+    // No token: preflight must work on a device whose keychain lacks it.
+    const { publisher } = makePublisher(
+      vault,
+      makeSettings({ githubToken: "" }),
+      gh,
+    );
+
+    const result = await publisher.preflight(makeTFile("test.md") as never);
+
+    expect(result).toEqual({ ok: true, warnings: [] });
+    noGitHub(gh);
+  });
+
+  test("reports the frontmatter failure publishNote would", async () => {
+    const undated = "---\ntitle: Undated\nstatus: publish\n---\nbody";
+    const vault = makeVault([{ name: "undated.md", content: undated }]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+    const file = makeTFile("undated.md") as never;
+
+    const result = await publisher.preflight(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/^Invalid frontmatter: /);
+    noGitHub(gh);
+    // One definition of "publishable": the real publish fails the same way.
+    expect((await publisher.publishNote(file)).error).toBe(result.error);
+  });
+
+  test("rejects a note without the publish flag", async () => {
+    const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.preflight(makeTFile("draft.md") as never);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "File does not have 'status: publish' in frontmatter",
+      warnings: [],
+    });
+    noGitHub(gh);
+  });
+
+  test("carries image warnings on a passing note", async () => {
+    const vault = makeVault([{ name: "img.md", content: noteWithImage }]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.preflight(makeTFile("img.md") as never);
+
+    expect(result).toEqual({
+      ok: true,
+      warnings: [{ kind: "image-failed", name: "photo.png" }],
+    });
+    noGitHub(gh);
+  });
+});
+
 describe("Publisher.publishNote", () => {
   test("creates branch, commits, and opens PR", async () => {
     const vault = makeVault([{ name: "test.md", content: publishedNote }]);

@@ -31,11 +31,16 @@ mock.module("obsidian", () => ({
   // main.ts evaluates `class ObsidianPublisher extends Plugin` at module
   // load, and main.test.ts drives onload(), so this needs the surface that
   // onload/onunload actually touch: app, addCommand, addSettingTab,
-  // loadData, saveData. Nothing in src/ uses registerEvent or ribbons.
+  // registerCliHandler, loadData, saveData. Nothing in src/ uses
+  // registerEvent or ribbons.
   Plugin: class Plugin {
     app: unknown;
     commands: Array<Record<string, unknown>> = [];
     settingTabs: unknown[] = [];
+    cliHandlers = new Map<
+      string,
+      (params: Record<string, string>) => Promise<string> | string
+    >();
     data: unknown = null;
     constructor(app?: unknown) {
       this.app = app;
@@ -46,6 +51,14 @@ mock.module("obsidian", () => ({
     }
     addSettingTab(tab: unknown) {
       this.settingTabs.push(tab);
+    }
+    registerCliHandler(
+      command: string,
+      _description: string,
+      _flags: unknown,
+      handler: (params: Record<string, string>) => Promise<string> | string,
+    ) {
+      this.cliHandlers.set(command, handler);
     }
     async loadData() {
       return this.data;

@@ -96,6 +96,13 @@ export type PublishWarning =
  */
 export type PublishResult = PublishSuccess | PublishFailure;
 
+/** Whether a note would publish, decided without touching GitHub. Not a
+ * `PublishResult`: a success there means the note was published, and
+ * nothing here was. */
+export type Preflight =
+  | { ok: true; warnings: PublishWarning[] }
+  | { ok: false; error: string; warnings: PublishWarning[] };
+
 export interface PublishSuccess {
   /** Original file path */
   filePath: string;
