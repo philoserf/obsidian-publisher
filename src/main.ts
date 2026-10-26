@@ -3,9 +3,9 @@ import { formatBatchNotice, formatPreflight, formatWarnings } from "./notices";
 import { Publisher } from "./publisher";
 import {
   legacyGithubToken,
+  migrateGithubToken,
   PublisherSettingTab,
   parseSettings,
-  SUGGESTED_TOKEN_NAME,
 } from "./settings";
 import {
   type BatchPublishResult,
@@ -14,12 +14,6 @@ import {
   type PublisherSettings,
   type PublishWarning,
 } from "./types";
-
-/** Secret IDs for the migrated token. The generic one lets another plugin
- * that needs a GitHub token pick it from the keychain; the plugin-specific
- * one is used only when the generic one already holds a different token. */
-const SHARED_TOKEN_ID = SUGGESTED_TOKEN_NAME;
-const OWN_TOKEN_ID = "obsidian-publisher-github-token";
 
 /** A GitHub PR URL takes longer than the default ~5s to read on a phone. */
 const PR_NOTICE_DURATION_MS = 10_000;
@@ -182,27 +176,16 @@ export default class ObsidianPublisher extends Plugin {
     return formatPreflight(await publisher.preflight(file));
   }
 
-  /**
-   * Load settings, moving a plaintext token from before #352 into secret
-   * storage. Idempotent: once saved, data.json holds no `githubToken` and
-   * this does nothing. If an ID is already set — another device migrated
-   * first and Sync brought its data.json — the plaintext is only dropped.
-   * Secrets do not sync, so that device enters the token once by hand.
-   */
+  /** Load settings, moving a plaintext token from before #352 into secret
+   * storage (`migrateGithubToken`). Idempotent: once saved, data.json holds
+   * no `githubToken` and this does nothing. */
   async loadSettings() {
     const data = await this.loadData();
     this.settings = parseSettings(data);
     const legacy = legacyGithubToken(data);
-    if (!legacy) return;
-    if (!this.settings.githubTokenSecret) {
-      const { secretStorage } = this.app;
-      const shared = secretStorage.getSecret(SHARED_TOKEN_ID);
-      const id =
-        shared === null || shared === legacy ? SHARED_TOKEN_ID : OWN_TOKEN_ID;
-      secretStorage.setSecret(id, legacy);
-      this.settings.githubTokenSecret = id;
+    if (migrateGithubToken(this.settings, legacy, this.app.secretStorage)) {
+      await this.saveData(this.settings);
     }
-    await this.saveData(this.settings);
   }
 
   /**
