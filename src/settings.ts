@@ -260,7 +260,7 @@ export function parseSettings(data: unknown): PublisherSettings {
 
 /** The name a new token is suggested under. Generic on purpose, so another
  * plugin that needs a GitHub token can pick the same secret. */
-export const SUGGESTED_TOKEN_NAME = "github-token";
+const SUGGESTED_TOKEN_NAME = "github-token";
 
 /**
  * What the token row says about the secret it points at. The plugin row and
