@@ -278,22 +278,47 @@ moves it, once:
     const data = await this.loadData();
     this.settings = parseSettings(data);
     const legacy = legacyGithubToken(data);
-    if (!legacy) return;
-    if (!this.settings.githubTokenSecret) {
-      const { secretStorage } = this.app;
-      const shared = secretStorage.getSecret(SHARED_TOKEN_ID);
-      const id =
-        shared === null || shared === legacy ? SHARED_TOKEN_ID : OWN_TOKEN_ID;
-      secretStorage.setSecret(id, legacy);
-      this.settings.githubTokenSecret = id;
+    if (migrateGithubToken(this.settings, legacy, this.app.secretStorage)) {
+      await this.saveData(this.settings);
     }
-    await this.saveData(this.settings);
   }
 ```
 
-The migration lives here rather than in `parseSettings`, which stays pure:
+The migration does not live in `parseSettings`, which stays pure:
 `parseSettings` never carries a `githubToken` into its result, and
-`legacyGithubToken` is the one reader of the old field.
+`legacyGithubToken` is the one reader of the old field. Nor does it live
+inline here. The algorithm is a function in `settings.ts`, and it reaches
+the keychain only through the two methods it uses:
+
+`src/settings.ts` — `migrateGithubToken`
+
+```ts
+export function migrateGithubToken(
+  settings: PublisherSettings,
+  legacyToken: string,
+  secrets: SecretStore,
+): boolean {
+  if (!legacyToken) return false;
+  if (!settings.githubTokenSecret) {
+    const shared = secrets.getSecret(SHARED_TOKEN_ID);
+    const id =
+      shared === null || shared === legacyToken
+        ? SHARED_TOKEN_ID
+        : OWN_TOKEN_ID;
+    secrets.setSecret(id, legacyToken);
+    settings.githubTokenSecret = id;
+  }
+  return true;
+}
+```
+
+`SecretStore` is `getSecret` and `setSecret` and nothing else, so a test
+passes a `Map` where `loadSettings` passes `app.secretStorage`. The shape
+is deliberate. Metadator migrates its Anthropic key with the same algorithm
+in `migrateApiKey`, and keeping the two copies in one shape is what lets a
+keychain fix in one plugin be carried to the other (#373). The boolean is
+the save decision: `true` whenever a plaintext token was present, since
+saving is what removes it from `data.json`.
 
 Three cases fall out of it. With no plaintext token there is nothing to do,
 and that is every load after the first save — so the migration is
@@ -331,8 +356,8 @@ outside:
 
 It reuses `loadSettings`, which looks like the trap: `loadSettings` can
 call `saveData`, and a reload that writes on every external change would
-bounce `data.json` between devices indefinitely. It does not, because of the
-early return above — `loadSettings` writes only when the file still carries
+bounce `data.json` between devices indefinitely. It does not, because of
+`migrateGithubToken`'s first line — `loadSettings` writes only when the file still carries
 a plaintext `githubToken`, and the file it writes carries none. So the write
 happens at most once per device, and only in the one case where it is
 wanted: a pre-2.0.0 `data.json` arriving by Sync. A separate reload that
@@ -2479,7 +2504,7 @@ grep -c 'test(' src/*.test.ts | sort -t: -k2 -rn
 src/note-transformer.test.ts:140
 src/settings.test.ts:59
 src/publisher.test.ts:58
-src/settings-load.test.ts:36
+src/settings-load.test.ts:41
 src/main.test.ts:36
 src/github-api-gateway.test.ts:34
 src/schema.test.ts:28
@@ -2569,6 +2594,11 @@ but a re-run never read the prose, so a deleted function left the
 narrative describing something that was gone while verify still passed
 (#328). Its replacement is the release-time read: the regeneration reads
 the source and the prose side by side and corrects the prose.
+
+The 2.1.1 pass updated this document in place rather than rewriting it:
+`loadSettings` was quoted with the token migration inline, before it moved
+to `migrateGithubToken`, and the paragraph on synced reloads pointed at an
+early return that had moved with it.
 
 The 2.1.0 regeneration found the prose behind the code where this
 release's work had moved it, and corrected it in place: `onload` was said
