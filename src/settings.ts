@@ -285,6 +285,45 @@ export function legacyGithubToken(data: unknown): string {
     : "";
 }
 
+/** Secret IDs for the migrated token. The generic one lets another plugin
+ * that needs a GitHub token pick it from the keychain; the plugin-specific
+ * one is used only when the generic one already holds a different token. */
+export const SHARED_TOKEN_ID = SUGGESTED_TOKEN_NAME;
+export const OWN_TOKEN_ID = "obsidian-publisher-github-token";
+
+/** The slice of app.secretStorage the migration uses, so it runs under test. */
+export interface SecretStore {
+  getSecret(id: string): string | null;
+  setSecret(id: string, secret: string): void;
+}
+
+/**
+ * Move a plaintext token from before #352 into the keychain, recording the
+ * secret's ID on `settings`. Returns whether settings must be saved — which
+ * is what drops the plaintext from data.json. If an ID is already set
+ * (another device migrated first and Sync brought its data.json), the
+ * plaintext is only dropped: secrets do not sync, so this device enters the
+ * token once by hand. Metadator's `migrateApiKey` is the same algorithm; a
+ * fix to one belongs in the other.
+ */
+export function migrateGithubToken(
+  settings: PublisherSettings,
+  legacyToken: string,
+  secrets: SecretStore,
+): boolean {
+  if (!legacyToken) return false;
+  if (!settings.githubTokenSecret) {
+    const shared = secrets.getSecret(SHARED_TOKEN_ID);
+    const id =
+      shared === null || shared === legacyToken
+        ? SHARED_TOKEN_ID
+        : OWN_TOKEN_ID;
+    secrets.setSecret(id, legacyToken);
+    settings.githubTokenSecret = id;
+  }
+  return true;
+}
+
 export class PublisherSettingTab extends PluginSettingTab {
   plugin: ObsidianPublisher;
 
