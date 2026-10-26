@@ -17,7 +17,7 @@ The current next step for this repo is tracked in the workspace backlog at `../N
 ```bash
 bun test src/note-transformer.test.ts   # Run a single test file
 bun test -t "wikilink"                  # Run tests whose name matches a substring
-bun run check        # typecheck + biome check + prettier --check on markdown (run before committing)
+bun run check        # typecheck + biome check + bun fmt --check on markdown (run before committing)
 bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
 ```
 
@@ -88,4 +88,4 @@ Use the `release-gate` then `release-ship` skills — do not tag by hand. `relea
 
 ## Code Style
 
-Code style is enforced by Biome, and markdown by prettier. Run `bun run check` before committing. Type imports come before value imports.
+Code style is enforced by Biome, and markdown by `bun fmt`, which reads `.prettierrc.json` and `.prettierignore`. Run `bun run check` before committing. Type imports come before value imports.
