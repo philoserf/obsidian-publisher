@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.1
+
+No change in what the plugin does.
+
+### Internal
+
+- Markdown is formatted with Bun's built-in `bun fmt` instead of prettier, which leaves `devDependencies`. `bun fmt` reads the existing `.prettierrc.json` and `.prettierignore`, and the switch reformats no file (#372, #374)
+- The keychain token migration moves out of `loadSettings` into `migrateGithubToken`, a pure function behind a small `SecretStore` seam — the same shape as metadator's `migrateApiKey`, so a keychain fix carries between the two plugins. New unit tests cover it, including the previously untested case where the shared secret already holds the same token (#373, #375); `SUGGESTED_TOKEN_NAME` is no longer exported (#376)
+
 ## 2.1.0
 
 ### Added
