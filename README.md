@@ -76,7 +76,7 @@ This plugin requires a GitHub Personal Access Token (PAT) to publish content.
 
 - **Use a fine-grained token** scoped to your target repository with `contents:write` and `pull_requests:write` permissions. Avoid classic tokens with broad `repo` scope.
 - **Token storage:** The token is kept in Obsidian's keychain (Settings → Keychain), which encrypts it with the operating system's secure storage; the plugin's `data.json` holds only the secret's name. Obsidian does not sync keychain secrets, so choose or enter the token once on each device you publish from. Requires Obsidian 1.13.0.
-- **Upgrading:** A plaintext token left in `data.json` by an earlier version is moved into the keychain on the first load and removed from `data.json`. Because that change syncs, every other device needs the token entered once.
+- **Upgrading:** A plaintext token in `data.json` from before the keychain is ignored and dropped on the next save; it is no longer moved into the keychain (#382). Enter the token in Settings → Keychain on each device.
 - **Recommendations:** Use a token scoped to a single repository.
 
 ## Alternatives
