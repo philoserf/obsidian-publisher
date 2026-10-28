@@ -36,11 +36,12 @@ prepared first, any failure aborts the run before a branch exists, and the
 user confirms the deletions before anything reaches GitHub. A single-note
 publish only ever adds.
 
-Two more entry points are handlers for the `obsidian` command-line tool.
+Three more entry points are handlers for the `obsidian` command-line tool.
 `publisher:preflight` publishes nothing: it runs steps 2 and 4 for one
 note — everything before the network — and prints whether it would
-publish. `publisher:publish` runs the whole single-note path for a named
-note and prints the pull request URL. Both exist so that a tool outside
+publish. `publisher:publish` starts the whole single-note path for a named
+note and prints a run id, and `publisher:result` reads that run's outcome
+back, the pull request URL among it. They exist so that a tool outside
 Obsidian can ask the plugin rather than restate its rules.
 
 ## Architecture
@@ -142,7 +143,7 @@ reach.
 
     this.registerCliHandler(
       "publisher:publish",
-      "Publish a note to GitHub and print the pull request URL",
+      "Start publishing a note to GitHub; prints a run id, or why it cannot start",
       {
         path: {
           value: "<path>",
@@ -151,6 +152,19 @@ reach.
         },
       },
       (params) => this.publishFromCli(params.path),
+    );
+
+    this.registerCliHandler(
+      "publisher:result",
+      "Print a started publish's result, or that it is still running",
+      {
+        id: {
+          value: "<id>",
+          description: "Run id printed by publisher:publish",
+          required: true,
+        },
+      },
+      (params) => this.resultFromCli(params.id),
     );
   }
 ```
@@ -1317,12 +1331,18 @@ without a value.
 ### Publishing from the command line
 
 `publisher:publish` is the publish-current-note command for a named file,
-reporting in text instead of notices (#380):
+reporting in text instead of notices (#380). It comes in two halves,
+because the Obsidian CLI stops waiting for a handler after roughly
+10–20 ms and prints nothing, while the handler carries on (#389). A publish
+takes seconds, so a handler that awaited it would open the pull request
+and print no URL — and a caller reading that empty output as a failure
+would open a second one. So `publisher:publish` answers at once, and
+`publisher:result` reads the outcome back:
 
 `src/main.ts` — `publishFromCli`
 
 ```ts
-  private async publishFromCli(notePath: string | undefined): Promise<string> {
+  private publishFromCli(notePath: string | undefined): string {
     if (this.inFlight) return "A publish is already running";
     const file = this.cliFile(notePath);
     if (!file) return `File not found: ${notePath ?? ""}`;
@@ -1335,17 +1355,22 @@ reporting in text instead of notices (#380):
     const validationError = publisher.validateSettings();
     if (validationError) return `Cannot publish: ${validationError}`;
 
-    let output = "";
-    await this.runExclusive(async () => {
-      try {
-        output = formatPublish(await publisher.publishNote(file));
-      } catch (error) {
-        // Printed, not a notice: the caller is a terminal.
-        console.error("[Publisher] Publish failed", error);
-        output = `Error: ${errorMessage(error)}`;
-      }
-    });
-    return output;
+    const id = newRunId();
+    this.cliRuns.start(
+      id,
+      new Promise<string>((resolve) => {
+        void this.runExclusive(async () => {
+          try {
+            resolve(formatPublish(await publisher.publishNote(file)));
+          } catch (error) {
+            // Printed, not a notice: the caller is a terminal.
+            console.error("[Publisher] Publish failed", error);
+            resolve(`Error: ${errorMessage(error)}`);
+          }
+        });
+      }),
+    );
+    return `started ${id}`;
   }
 ```
 
@@ -1353,14 +1378,73 @@ It is the preflight adapter's shape with the two things preflight leaves
 out put back. `validateSettings` runs before `runExclusive` and before
 anything reaches GitHub, so a device without the token prints
 `Cannot publish: GitHub token is required`. And the publish itself runs
-inside `runExclusive`, because unlike preflight it opens a branch.
+inside `runExclusive`, because unlike preflight it opens a branch. Every
+refusal that needs no network is still the handler's final answer; only a
+publish that actually starts answers `started <id>`.
 
 The `inFlight` check at the top looks redundant with the guard, and is
 not. `runExclusive` refuses with a notice, which a terminal caller would
 never see; checking first makes the refusal the printed verdict instead.
-A thrown failure is likewise caught and printed rather than handed to
-`reportFailure`, whose notice is for a run started in the app. The output
-is `formatPublish`'s, covered in [What the user sees](#what-the-user-sees).
+The check still holds across the split: `runExclusive` sets `inFlight`
+synchronously, before its first `await`, so a second `publisher:publish`
+called straight after `started <id>` is refused at once. A thrown failure
+is likewise caught and printed rather than handed to `reportFailure`,
+whose notice is for a run started in the app. The output is
+`formatPublish`'s, covered in [What the user sees](#what-the-user-sees).
+
+The promise handed to `cliRuns` never rejects — both arms `resolve` — so
+the store needs no error path:
+
+`src/main.ts` — `CliRuns`
+
+```ts
+export class CliRuns {
+  private readonly runs = new Map<string, string | undefined>();
+
+  start(id: string, work: Promise<string>): void {
+    this.runs.set(id, undefined);
+    while (this.runs.size > MAX_CLI_RUNS) {
+      const oldest = this.runs.keys().next().value;
+      if (oldest === undefined) break;
+      this.runs.delete(oldest);
+    }
+    // `work` never rejects. An evicted run stays evicted.
+    void work.then((output) => {
+      if (this.runs.has(id)) this.runs.set(id, output);
+    });
+  }
+
+  /** The run's output, `null` while it is running, or `undefined` when there
+   * is no such run. */
+  read(id: string): string | null | undefined {
+    if (!this.runs.has(id)) return undefined;
+    return this.runs.get(id) ?? null;
+  }
+}
+```
+
+A `Map` iterates in insertion order, so its first key is the oldest run,
+and the store keeps the last `MAX_CLI_RUNS` (50). It lives on the plugin
+and in memory only: nothing about a run syncs, and a reload forgets every
+id. `read` separates three answers by type — a string is the output,
+`null` is still running, `undefined` is no such run — and the second
+handler turns each into a line:
+
+`src/main.ts` — `resultFromCli`
+
+```ts
+  private resultFromCli(id: string | undefined): string {
+    if (!id || id === "true") return "id=<run id> is required";
+    const output = this.cliRuns.read(id);
+    if (output === undefined) return `No run ${id}`;
+    return output ?? `running ${id}`;
+  }
+```
+
+A caller polls it: `running <id>` until the publish settles, then exactly
+what the one-step handler used to print — `ok <URL>` or the reason, then
+warnings. The `"true"` comparison is `cliFile`'s, for an `id` flag given
+without a value.
 
 ## The transform chain
 
@@ -2780,8 +2864,8 @@ tool parsing it reads the first line and can ignore the rest. One limit:
 string, so a note missing both `title` and `date` gets one reason line, not
 two.
 
-`publisher:publish` prints in the same shape, so a caller parses one
-format for both handlers:
+`publisher:result` prints a finished publish in the same shape, so a caller
+parses one format for both:
 
 `src/notices.ts` — `formatPublish`
 
@@ -2795,7 +2879,7 @@ export function formatPublish(result: PublishResult): string {
 ```
 
 The verdict is `ok` followed by the pull request URL, or the failure
-reason. A thrown failure never reaches it; `publishFromCli` prints
+reason. A thrown failure never reaches it; `publishFromCli` records
 `Error: …` for that case itself.
 
 `main.ts` is what turns these into toasts. The PR URL gets a 10-second
@@ -2834,7 +2918,7 @@ grep -c 'test(' src/*.test.ts | sort -t: -k2 -rn
 src/note-transformer.test.ts:140
 src/publisher.test.ts:65
 src/settings.test.ts:59
-src/main.test.ts:38
+src/main.test.ts:40
 src/github-api-gateway.test.ts:37
 src/settings-load.test.ts:34
 src/schema.test.ts:28
@@ -2928,6 +3012,13 @@ but a re-run never read the prose, so a deleted function left the
 narrative describing something that was gone while verify still passed
 (#328). Its replacement is the release-time read: the regeneration reads
 the source and the prose side by side and corrects the prose.
+
+The 2.4.0 pass worked in place as well. Its one change, #390, split
+`publisher:publish` into a start and a read-back, so the pass quoted the
+second `registerCliHandler` call, rewrote the section on publishing from
+the command line around the synchronous `publishFromCli`, and added
+`CliRuns` and `resultFromCli`. It corrected the prose that said the CLI
+handler prints the pull request URL, and the test-count transcript.
 
 The 2.3.0 pass worked in place too. Its one change, #387, made Publish
 All reconcile `contentDir`, so the pass added the sections on

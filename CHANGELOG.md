@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.4.0
+
+### Added
+
+- **`publisher:result` reads a started publish back.** `obsidian publisher:result id=<id>` prints `running <id>` until the publish that `publisher:publish` started has finished, and then its output in preflight's shape: `ok` and the pull request URL, or the reason it failed, then any warnings one per line. An id it does not know gets `No run <id>`, and a missing one `id=<run id> is required`. Results are kept in memory for the last 50 runs, so nothing syncs and a reload forgets them (#389, #390)
+
+### Changed
+
+- **`publisher:publish` answers at once.** It prints `started <id>`, or the reason it cannot start: `A publish is already running`, `File not found: …` or `Cannot publish: …`. The Obsidian CLI (1.15.0) stops waiting for a handler after roughly 10–20 ms and prints nothing, while a publish takes seconds, so the old handler opened the pull request and printed no URL, and a caller reading that as a failure would open a second one. Callers now poll `publisher:result`. The single-flight guard still refuses a second publish straight after the first has started (#389, #390)
+
+### Internal
+
+- `CliRuns` holds the CLI runs on the plugin. The CLI handler tests are rewritten for the start and result halves, which also stops the old tests' leaked spies from inflating a later command test's call count. 433 tests, from 431 (#390)
+- `README.md`, which #390 left as one line with literal `\n` escapes, is restored to its 2.3.0 form plus that PR's command-line paragraph
+
 ## 2.3.0
 
 ### Added
