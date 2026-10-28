@@ -8,12 +8,16 @@ import type {
 type NamedImageWarning = Extract<PublishWarning, { name: string }>;
 
 export function formatBatchNotice(result: BatchPublishResult): string {
+  if (result.cancelled) return "Publish All cancelled: nothing was committed";
   if (result.error) return `✗ Failed to publish: ${result.error}`;
   if (result.total === 0) return "No publishable notes found";
   if (result.successful === 0) {
     return "All files failed to process. No PR created.";
   }
-  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`;
+  const removed = result.deleted?.length
+    ? `, ${result.deleted.length} removed`
+    : "";
+  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed${removed}`;
 }
 
 function formatNamedImageWarnings(

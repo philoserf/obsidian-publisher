@@ -233,6 +233,67 @@ describe("GitHubApiGateway.commitFiles", () => {
   });
 });
 
+describe("GitHubApiGateway reconciliation (#379)", () => {
+  test("commitFiles turns each deletion into a null-sha tree entry", async () => {
+    const { service, octokit } = makeService();
+
+    await service.commitFiles(
+      [{ path: "content/posts/kept.md", content: "x" }],
+      "batch",
+      "main",
+      ["content/posts/retired.md"],
+    );
+
+    const treeCall = octokit.rest.git.createTree.mock.calls[0] as unknown[];
+    const { tree } = treeCall[0] as { tree: Array<Record<string, unknown>> };
+    expect(tree).toContainEqual({
+      path: "content/posts/retired.md",
+      mode: "100644",
+      type: "blob",
+      sha: null,
+    });
+    expect(tree).toContainEqual(
+      expect.objectContaining({ path: "content/posts/kept.md", content: "x" }),
+    );
+  });
+
+  test("listMarkdownFiles lists only .md files directly in the directory", async () => {
+    const getContent = mock(async () => ({
+      data: [
+        { type: "file", name: "a.md", path: "content/posts/a.md" },
+        { type: "file", name: ".gitkeep", path: "content/posts/.gitkeep" },
+        { type: "dir", name: "drafts", path: "content/posts/drafts" },
+        { type: "file", name: "note.txt", path: "content/posts/note.txt" },
+      ],
+    }));
+    const { service, octokit } = makeService();
+    (octokit.rest as Record<string, unknown>).repos = { getContent };
+
+    expect(await service.listMarkdownFiles("content/posts", "main")).toEqual([
+      "content/posts/a.md",
+    ]);
+    expect(getContent).toHaveBeenCalledWith({
+      owner: "testowner",
+      repo: "testrepo",
+      path: "content/posts",
+      ref: "main",
+    });
+  });
+
+  test("listMarkdownFiles treats a missing directory as empty", async () => {
+    const { service, octokit } = makeService();
+    (octokit.rest as Record<string, unknown>).repos = {
+      getContent: mock(async () => {
+        throw new RequestError("Not Found", 404, {} as never);
+      }),
+    };
+
+    expect(await service.listMarkdownFiles("content/posts", "main")).toEqual(
+      [],
+    );
+  });
+});
+
 describe("GitHubApiGateway.createPullRequest", () => {
   test("creates PR and adds labels", async () => {
     const { service, octokit } = makeService();

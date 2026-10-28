@@ -145,6 +145,10 @@ export interface BatchPublishResult {
   error?: string | undefined;
   /** Batch-level non-fatal conditions (e.g. PR label apply failed); always present, [] when none */
   warnings: PublishWarning[];
+  /** Posts the PR removes from `contentDir` (#379); absent when none */
+  deleted?: string[] | undefined;
+  /** The user declined the deletions; nothing was committed */
+  cancelled?: boolean | undefined;
 }
 
 /**

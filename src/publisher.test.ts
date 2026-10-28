@@ -84,10 +84,23 @@ function makeVault(
 
 function makeGitHubApiGateway() {
   return {
-    commitFiles: mock(async () => {}),
+    commitFiles: mock(
+      async (
+        _files: Array<{ path: string; content: string | ArrayBuffer }>,
+        _message: string,
+        _branch: string,
+        _deletions: readonly string[] = [],
+      ) => {},
+    ),
     createBranchWithRetry: mock(async () => "publish/2026-01-01-000000"),
     createPullRequest: mock(
-      async (): Promise<{
+      async (
+        _branch: string,
+        _base: string,
+        _title: string,
+        _body: string,
+        _labels: string[],
+      ): Promise<{
         url: string;
         warnings: PublishWarning[];
       }> => ({
@@ -96,8 +109,12 @@ function makeGitHubApiGateway() {
       }),
     ),
     deleteBranch: mock(async () => {}),
+    listMarkdownFiles: mock(async (): Promise<string[]> => []),
   };
 }
+
+// Says yes to any deletion; the reconciliation tests supply their own.
+const confirmYes = async () => true;
 
 // Helper to inject mock github service into publisher
 function makePublisher(
@@ -496,7 +513,7 @@ describe("Publisher.publishAll", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(2);
     expect(result.prUrl).toBe("https://github.com/test/pr/1");
@@ -514,7 +531,7 @@ describe("Publisher.publishAll", () => {
     });
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(0);
     expect(result.prUrl).toBeUndefined();
@@ -527,7 +544,7 @@ describe("Publisher.publishAll", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(0);
     expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
@@ -552,7 +569,7 @@ describe("Publisher.publishAll", () => {
     }));
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(2);
     expect(result.prUrl).toBe("https://github.com/test/pr/3");
@@ -575,7 +592,7 @@ describe("Publisher.publishAll", () => {
     });
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.error).toContain("branch exists");
     expect(result.successful).toBe(0);
@@ -585,7 +602,9 @@ describe("Publisher.publishAll", () => {
     expect(result.results.every((r) => !r.success)).toBe(true);
   });
 
-  test("includes read failures in PR result alongside successful files", async () => {
+  // #379: a reconciling Publish All is all or nothing, so a note it cannot
+  // read must stop the run rather than drop out of the publish set.
+  test("aborts the whole batch when any note fails to read", async () => {
     const vault = makeVault([
       { name: "ok.md", content: publishedNote },
       { name: "broken.md", content: publishedNote },
@@ -597,17 +616,18 @@ describe("Publisher.publishAll", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(2);
-    expect(result.successful).toBe(1);
-    expect(result.failed).toBe(1);
-    expect(result.prUrl).toBe("https://github.com/test/pr/1");
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.error).toBe("Nothing published: 1 note failed to read");
+    expect(result.prUrl).toBeUndefined();
     const broken = result.results.find((r) => r.filePath === "broken.md");
-    expect(broken?.success).toBe(false);
     expect(broken?.error).toContain("Failed to read");
-    expect(gh.createBranchWithRetry).toHaveBeenCalledTimes(1);
-    expect(gh.createPullRequest).toHaveBeenCalledTimes(1);
+    expect(gh.listMarkdownFiles).not.toHaveBeenCalled();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+    expect(gh.commitFiles).not.toHaveBeenCalled();
   });
 
   test("skips branch and PR creation when only read failures exist", async () => {
@@ -621,7 +641,7 @@ describe("Publisher.publishAll", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(2);
     expect(result.successful).toBe(0);
@@ -640,7 +660,7 @@ describe("Publisher.publishAll", () => {
     });
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.error).toContain("PR creation failed");
     expect(result.successful).toBe(0);
@@ -665,14 +685,14 @@ describe("Publisher.publishAll", () => {
       gh,
     );
 
-    await publisher.publishAll();
+    await publisher.publishAll(confirmYes);
 
     expect(progress).toHaveBeenCalledTimes(3);
     expect(progress.mock.calls[0]).toEqual([1, 3]);
     expect(progress.mock.calls[2]).toEqual([3, 3]);
   });
 
-  test("batch surfaces malformed frontmatter YAML per-file", async () => {
+  test("batch surfaces malformed frontmatter YAML and aborts", async () => {
     const malformed = "---\n: bad yaml :\n---\nbody";
     const vault = makeVault([
       { name: "good.md", content: publishedNote },
@@ -681,17 +701,17 @@ describe("Publisher.publishAll", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(2);
-    expect(result.successful).toBe(1);
-    expect(result.failed).toBe(1);
+    expect(result.successful).toBe(0);
     const brokenResult = result.results.find((r) => r.filePath === "broken.md");
     expect(brokenResult?.success).toBe(false);
     expect(brokenResult?.error).toMatch(/^Malformed frontmatter YAML: /);
+    expect(gh.commitFiles).not.toHaveBeenCalled();
   });
 
-  test("batch publish fails per-file on missing required field", async () => {
+  test("a note that fails validation aborts the batch before any branch", async () => {
     const missingDate = `---
 title: No Date
 status: publish
@@ -704,14 +724,20 @@ body`;
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(2);
-    expect(result.successful).toBe(1);
-    expect(result.failed).toBe(1);
+    expect(result.successful).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.error).toBe("Nothing published: 1 note failed to prepare");
     const badResult = result.results.find((r) => r.filePath === "bad.md");
-    expect(badResult?.success).toBe(false);
     expect(badResult?.error).toContain("date");
+    const goodResult = result.results.find((r) => r.filePath === "good.md");
+    expect(goodResult?.error).toBe(
+      "Nothing published: 1 note failed to prepare",
+    );
+    expect(gh.listMarkdownFiles).not.toHaveBeenCalled();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
   });
 
   test("reads shared image once across the batch", async () => {
@@ -736,7 +762,7 @@ Also ![[photo.png]]`;
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(2);
     expect(vault.readBinary).toHaveBeenCalledTimes(1);
@@ -773,7 +799,7 @@ Has ![[a.png]]`;
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(2);
     const collisions = result.results
@@ -806,16 +832,120 @@ Has ![[a.png]]`;
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(2);
-    expect(result.successful).toBe(1);
-    expect(result.failed).toBe(1);
+    expect(result.successful).toBe(0);
     const broken = result.results.find((r) => r.filePath === "broken.md");
     expect(broken?.success).toBe(false);
     expect(broken?.error).toContain("Failed to read");
     expect(broken?.error).toContain("EACCES");
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("Publish All reconciles contentDir (#379)", () => {
+  const note = (title: string) =>
+    `---\ntitle: ${title}\nstatus: publish\ndate: 2026-01-01\n---\nbody`;
+  const setup = (remote: string[]) => {
+    const vault = makeVault([
+      { name: "kept.md", content: note("Kept") },
+      { name: "new.md", content: note("New") },
+    ]);
+    const gh = makeGitHubApiGateway();
+    gh.listMarkdownFiles.mockResolvedValue(remote);
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+    return { publisher, gh };
+  };
+
+  test("deletes an orphan in the same commit and keeps published posts", async () => {
+    const { publisher, gh } = setup([
+      "content/posts/kept.md",
+      "content/posts/retired.md",
+    ]);
+    const confirm = mock(async () => true);
+
+    const result = await publisher.publishAll(confirm);
+
+    expect(gh.listMarkdownFiles).toHaveBeenCalledWith("content/posts", "main");
+    expect(confirm).toHaveBeenCalledWith(["content/posts/retired.md"]);
+    const [entries = [], message, , deletions] =
+      gh.commitFiles.mock.calls[0] ?? [];
+    expect(deletions).toEqual(["content/posts/retired.md"]);
+    expect(entries.map((e) => e.path)).toContain("content/posts/kept.md");
+    expect(message).toBe("Publish 2 notes from Obsidian, remove 1");
+    expect(result.deleted).toEqual(["content/posts/retired.md"]);
+    const body = gh.createPullRequest.mock.calls[0]?.[3];
+    expect(body).toContain("Removed 1 post no longer in the vault:");
+    expect(body).toContain("- content/posts/retired.md");
+  });
+
+  test("never takes Hugo's _index.md for an orphan", async () => {
+    const { publisher, gh } = setup(["content/posts/_index.md"]);
+    const confirm = mock(async () => true);
+
+    const result = await publisher.publishAll(confirm);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(gh.commitFiles.mock.calls[0]?.[3]).toEqual([]);
+    expect(result.deleted).toEqual([]);
+  });
+
+  test("asks nothing when nothing would be deleted", async () => {
+    const { publisher, gh } = setup(["content/posts/kept.md"]);
+    const confirm = mock(async () => true);
+
+    await publisher.publishAll(confirm);
+
+    expect(confirm).not.toHaveBeenCalled();
     expect(gh.commitFiles).toHaveBeenCalledTimes(1);
+  });
+
+  test("a declined confirmation commits nothing and opens no branch", async () => {
+    const { publisher, gh } = setup(["content/posts/retired.md"]);
+
+    const result = await publisher.publishAll(async () => false);
+
+    expect(result.cancelled).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("an empty publish set deletes nothing and reads no remote", async () => {
+    const vault = makeVault([{ name: "draft.md", content: unpublishedNote }]);
+    const gh = makeGitHubApiGateway();
+    gh.listMarkdownFiles.mockResolvedValue(["content/posts/a.md"]);
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const result = await publisher.publishAll(confirmYes);
+
+    expect(result.total).toBe(0);
+    expect(gh.listMarkdownFiles).not.toHaveBeenCalled();
+    expect(gh.commitFiles).not.toHaveBeenCalled();
+  });
+
+  test("a failed listing aborts before any branch", async () => {
+    const { publisher, gh } = setup([]);
+    gh.listMarkdownFiles.mockRejectedValue(new Error("Failed to list"));
+
+    const result = await publisher.publishAll(confirmYes);
+
+    expect(result.error).toBe("Failed to list");
+    expect(result.successful).toBe(0);
+    expect(gh.createBranchWithRetry).not.toHaveBeenCalled();
+  });
+
+  test("publishNote never reads the remote or deletes", async () => {
+    const vault = makeVault([{ name: "kept.md", content: note("Kept") }]);
+    const gh = makeGitHubApiGateway();
+    gh.listMarkdownFiles.mockResolvedValue(["content/posts/retired.md"]);
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    await publisher.publishNote(vault.getMarkdownFiles()[0] as never);
+
+    expect(gh.listMarkdownFiles).not.toHaveBeenCalled();
+    expect(gh.commitFiles.mock.calls[0]?.[3]).toEqual([]);
   });
 });
 
@@ -836,7 +966,7 @@ describe("Publisher filename collision precheck", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.error).toContain("Filename collision");
     expect(result.error).toContain("notes/Hello World.md");
@@ -855,7 +985,7 @@ describe("Publisher filename collision precheck", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.error).toBeUndefined();
     expect(gh.commitFiles).toHaveBeenCalledTimes(1);
@@ -872,7 +1002,7 @@ describe("Publisher filename collision precheck", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.error).toContain("Filename collisions");
     expect(result.error).toContain('"a.md"');
@@ -893,7 +1023,7 @@ describe("Publisher filename collision precheck", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.error).toContain("Filename collision");
     expect(result.error).toContain("one/Hello.md");
@@ -919,7 +1049,7 @@ describe("Publisher filename collision precheck", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.total).toBe(2);
     expect(result.successful).toBe(0);
@@ -964,7 +1094,7 @@ See [[Not Published]] for details.`;
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(2);
     const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
@@ -984,7 +1114,7 @@ See [[Not Published]] for details.`;
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(1);
     const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
@@ -1064,7 +1194,7 @@ describe("Publisher workflow arguments", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    await publisher.publishAll();
+    await publisher.publishAll(confirmYes);
 
     const branchCall = gh.createBranchWithRetry.mock.calls[0] as unknown[];
     expect(branchCall[0]).toBe("publish-batch");
@@ -1089,7 +1219,7 @@ describe("Publisher workflow arguments", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    await publisher.publishAll();
+    await publisher.publishAll(confirmYes);
 
     const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
     expect(commitCall[1]).toBe("Publish 1 note from Obsidian");
@@ -1149,7 +1279,7 @@ describe("Publisher candidate selection", () => {
       gh,
     );
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.successful).toBe(1);
     // One read, not four: the three ruled out never touched the disk.
@@ -1178,7 +1308,7 @@ describe("Publisher candidate selection", () => {
       gh,
     );
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(vault.read).toHaveBeenCalledTimes(1);
     expect(result.results).toHaveLength(1);
@@ -1204,7 +1334,7 @@ describe("Publisher candidate selection", () => {
       gh,
     );
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(vault.read).toHaveBeenCalledTimes(2);
     expect(result.successful).toBe(1);
@@ -1218,7 +1348,7 @@ describe("Publisher candidate selection", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(vault.read).toHaveBeenCalledTimes(2);
     expect(result.successful).toBe(1);
@@ -1283,7 +1413,7 @@ describe("path-qualified image references (#308)", () => {
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
 
-    const result = await publisher.publishAll();
+    const result = await publisher.publishAll(confirmYes);
 
     expect(result.results.flatMap((r) => r.warnings ?? [])).toEqual([]);
     expect(result.successful).toBe(2);

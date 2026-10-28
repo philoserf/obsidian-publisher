@@ -37,11 +37,13 @@ restating their checks is [one rule, one owner](#one-rule-one-owner--and-rejecti
 below: the vault's `/publish` skill had its own copy of the rules, and the two could disagree
 (#362).
 
-What the system does _not_ model is as load-bearing as what it does. It has no
-representation of the site's current contents, no cache of what was published before, no
-record of previous operations. It cannot tell you whether a note is already live. This is
-not an omission waiting to be filled — several behaviors that look like bugs are consequences
-of it, and "fixing" them by acquiring site state would be a different system.
+What the system does _not_ model is as load-bearing as what it does. It has no cache of
+what was published before and no record of previous operations, and it cannot tell you
+whether a note is already live. It has one look at the site's current contents, and only
+one: a Publish All lists `contentDir` on the base branch once, for the length of the run,
+and keeps nothing (#379). That look is what lets the premise below hold, and it is the
+limit. Anything that needs more of the site's state than that listing is still a different
+system.
 
 ## The organizing ideas
 
@@ -238,11 +240,16 @@ class is checked against the port. Error narrowing has one rule and it is load-b
 gets a prefix. Wrapping a `RequestError` destroyed the status and silently disabled retry,
 because the retry predicate reads it (#242).
 
-The gateway has **no delete path**, and this is felt well outside it. Because a note's
-committed filename follows the slug rule, renaming a note publishes a new file and leaves
-the old one live. Changing the slug rule does this to every note at once. There is no
-mechanism in this system to clean that up, which is why the rule's blast radius is the real
-argument for keeping it in one module.
+The gateway deletes in exactly one place: tree entries with a null `sha` in a Publish All
+commit (#379). **On Publish All, `contentDir` is exactly what the vault says it is**: every
+`.md` directly in it that no prepared note writes is removed, except Hugo's `_index.md`.
+That premise is only safe when the publish set is whole, so a Publish All is all or nothing
+— a note that fails to read, parse or prepare aborts the run before any branch exists, an
+empty set deletes nothing, the deletions are confirmed before the branch, and the PR lists
+them. A single-note publish stays additive: renaming a note publishes a new file and leaves
+the old one live until the next Publish All. Changing the slug rule renames every file at
+once, which a Publish All would now turn into a wholesale delete-and-add — still the real
+argument for keeping that rule in one module.
 
 **Hugo** is the seam with no verification at all. The plugin assumes `autoIDType: "github"`
 and `removePathAccents: false` — both Hugo defaults — and emits `callout` and `mermaid`
@@ -308,10 +315,11 @@ the tab writes through `parseSettings`. There is no second place to forget.
 It absorbs new **warning kinds** well. The union in `types.ts` is discriminated and
 `notices.ts` is pure formatting, so the compiler will walk you to every site.
 
-It does **not** accommodate anything requiring knowledge of the site. Incremental publishing,
-link resolution against live pages, detecting that a note was renamed, cleaning up orphaned
-files — each needs a model of remote state the system deliberately lacks. These are not
-features waiting to be added; the first one implemented becomes the system's new premise.
+It does **not** accommodate anything requiring more knowledge of the site than one listing of
+`contentDir`. Cleaning up orphaned posts was the first such feature, and it became a new
+premise (#379) rather than a model of remote state: one read per Publish All, nothing kept.
+Incremental publishing, link resolution against live pages, and detecting that a note was
+renamed each need a lasting model of the site, which the system still deliberately lacks.
 
 It does **not** accommodate multi-user anything. Both the "reject don't repair" discipline
 and the freedom to ship breaking changes depend on the single installation.

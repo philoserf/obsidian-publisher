@@ -128,6 +128,22 @@ describe("formatWarnings", () => {
   });
 });
 
+describe("formatBatchNotice reconciliation (#379)", () => {
+  test("a declined deletion reads as cancelled, not failed", () => {
+    expect(formatBatchNotice(result({ cancelled: true }))).toBe(
+      "Publish All cancelled: nothing was committed",
+    );
+  });
+
+  test("a batch that removed posts says how many", () => {
+    expect(
+      formatBatchNotice(
+        result({ total: 2, successful: 2, deleted: ["a.md", "b.md"] }),
+      ),
+    ).toBe("Batch publish complete: 2 succeeded, 0 failed, 2 removed");
+  });
+});
+
 describe("formatPreflight", () => {
   test("a clean pass is the single line ok", () => {
     expect(formatPreflight({ ok: true, warnings: [] })).toBe("ok");

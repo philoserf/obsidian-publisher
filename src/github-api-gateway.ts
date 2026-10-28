@@ -46,7 +46,11 @@ type TreeEntry = {
   path: string;
   mode: "100644";
   type: "blob";
-} & ({ content: string; sha?: never } | { sha: string; content?: never });
+} & (
+  | { content: string; sha?: never }
+  // `null` deletes the path from the base tree.
+  | { sha: string | null; content?: never }
+);
 
 /** Attempt ceiling for `withRetry`. */
 const COMMIT_MAX_ATTEMPTS = 3;
@@ -275,12 +279,43 @@ export class GitHubApiGateway {
   }
 
   /**
-   * Commit multiple files in a single atomic commit using the Git Trees API
+   * The `.md` files directly in `dir` on `ref`, as repository paths: one
+   * contents read, no recursion, so subdirectories and anything else in
+   * the directory are never listed. A directory that does not exist is
+   * empty. GitHub returns at most 1,000 entries for a directory; a longer
+   * listing is truncated, which can only under-report what exists, so a
+   * caller deleting from it deletes less, never more.
+   */
+  async listMarkdownFiles(dir: string, ref: string): Promise<string[]> {
+    try {
+      const response = await this.withRetry(() =>
+        this.octokit.rest.repos.getContent({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          path: dir,
+          ref,
+        }),
+      );
+      const entries = Array.isArray(response.data) ? response.data : [];
+      return entries
+        .filter((e) => e.type === "file" && e.name.endsWith(".md"))
+        .map((e) => e.path);
+    } catch (error) {
+      if (error instanceof RequestError && error.status === 404) return [];
+      rethrowWithPrefix(error, `Failed to list ${dir}`);
+    }
+  }
+
+  /**
+   * Commit multiple files in a single atomic commit using the Git Trees API.
+   * Each path in `deletions` is removed from the base tree in the same
+   * commit.
    */
   async commitFiles(
     files: Array<{ path: string; content: string | ArrayBuffer }>,
     message: string,
     branch: string,
+    deletions: readonly string[] = [],
   ): Promise<void> {
     try {
       const branchSha = await this.withRetry(() => this.getBranchSha(branch));
@@ -325,6 +360,10 @@ export class GitHubApiGateway {
           type: "blob" as const,
           sha: blob.data.sha,
         });
+      }
+
+      for (const path of deletions) {
+        treeEntries.push({ path, mode: "100644", type: "blob", sha: null });
       }
 
       const newTree = await this.withRetry(() =>
