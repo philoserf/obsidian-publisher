@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { Notice } from "obsidian";
-import ObsidianPublisher from "./main";
+import ObsidianPublisher, { CliRuns, MAX_CLI_RUNS } from "./main";
 import { Publisher } from "./publisher";
 import type { BatchPublishResult, PublishResult } from "./types";
 
@@ -21,7 +21,10 @@ type PluginInternals = {
     ) => Promise<void>;
   }>;
   data: unknown;
-  cliHandlers: Map<string, (params: Record<string, string>) => Promise<string>>;
+  cliHandlers: Map<
+    string,
+    (params: Record<string, string>) => Promise<string> | string
+  >;
 };
 
 /** Obsidian's keychain, as a map. Device-local in Obsidian; here, per plugin. */
@@ -175,38 +178,60 @@ describe("publisher:preflight CLI handler (#362)", () => {
   });
 });
 
-describe("publisher:publish CLI handler", () => {
+// #389: the Obsidian CLI stops waiting after ~10-20 ms, so publish starts the
+// run and `publisher:result` reads it back.
+describe("publisher:publish and publisher:result CLI handlers", () => {
   const note = { basename: "note", path: "Published/note.md" };
-  const runPublish = async (
+  const cli = (
     plugin: ObsidianPublisher & PluginInternals,
+    name: string,
     params: Record<string, string>,
-  ) => plugin.cliHandlers.get("publisher:publish")?.(params);
+  ) => plugin.cliHandlers.get(name)?.(params);
+  const start = (plugin: ObsidianPublisher & PluginInternals) =>
+    cli(plugin, "publisher:publish", { path: note.path }) as unknown as string;
+  const idOf = (started: string) => started.replace(/^started /, "");
+  const result = (plugin: ObsidianPublisher & PluginInternals, id: string) =>
+    cli(plugin, "publisher:result", { id });
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  };
   const withVault = (plugin: ReturnType<typeof makePlugin>) => {
     (plugin.app as { vault: unknown }).vault = {
       getFileByPath: (p: string) => (p === note.path ? note : null),
     };
   };
-
-  test("prints ok and the pull request URL, with no notices", async () => {
-    const plugin = makePlugin();
+  const ready = async (secrets?: Record<string, string>) => {
+    const plugin = makePlugin(undefined, secrets);
     await plugin.onload();
     withVault(plugin);
-    const publish = spyOn(Publisher.prototype, "publishNote").mockResolvedValue(
-      okResult({ prUrl: "https://github.com/o/r/pull/1" }),
+    return plugin;
+  };
+
+  test("answers started at once, then the result reads ok and the URL", async () => {
+    const plugin = await ready();
+    let release: (r: PublishResult) => void = () => {};
+    const publish = spyOn(Publisher.prototype, "publishNote").mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
     );
 
-    expect(await runPublish(plugin, { path: note.path })).toBe(
-      "ok https://github.com/o/r/pull/1",
-    );
+    const started = start(plugin);
+    expect(started).toMatch(/^started [0-9a-f]{8}$/);
+    const id = idOf(started);
+    expect(await result(plugin, id)).toBe(`running ${id}`);
+
+    release(okResult({ prUrl: "https://github.com/o/r/pull/1" }));
+    await settle();
+
+    expect(await result(plugin, id)).toBe("ok https://github.com/o/r/pull/1");
     expect(publish).toHaveBeenCalledWith(note as never);
     expect(shown()).toEqual([]);
     publish.mockRestore();
   });
 
-  test("prints the reason a publish failed", async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    withVault(plugin);
+  test("the result carries the reason a publish failed", async () => {
+    const plugin = await ready();
     const publish = spyOn(Publisher.prototype, "publishNote").mockResolvedValue(
       {
         filePath: note.path,
@@ -216,68 +241,82 @@ describe("publisher:publish CLI handler", () => {
       },
     );
 
-    expect(await runPublish(plugin, { path: note.path })).toBe(
+    const id = idOf(start(plugin));
+    await settle();
+
+    expect(await result(plugin, id)).toBe(
       "Invalid frontmatter: date is required",
     );
     publish.mockRestore();
   });
 
-  test("prints a thrown error", async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    withVault(plugin);
+  test("the result carries a thrown error", async () => {
+    const plugin = await ready();
     const publish = spyOn(Publisher.prototype, "publishNote").mockRejectedValue(
       new Error("boom"),
     );
     const error = spyOn(console, "error").mockImplementation(() => {});
 
-    expect(await runPublish(plugin, { path: note.path })).toBe("Error: boom");
+    const id = idOf(start(plugin));
+    await settle();
+
+    expect(await result(plugin, id)).toBe("Error: boom");
     publish.mockRestore();
     error.mockRestore();
   });
 
-  test("refuses without the token, before touching GitHub", async () => {
-    const plugin = makePlugin(undefined, {});
-    await plugin.onload();
-    withVault(plugin);
+  test("refuses at once without the token, before touching GitHub", async () => {
+    const plugin = await ready({});
     const publish = spyOn(Publisher.prototype, "publishNote");
 
-    expect(await runPublish(plugin, { path: note.path })).toBe(
-      "Cannot publish: GitHub token is required",
-    );
+    expect(start(plugin)).toBe("Cannot publish: GitHub token is required");
     expect(publish).not.toHaveBeenCalled();
     publish.mockRestore();
   });
 
-  test("reports a path that names no file", async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    withVault(plugin);
+  test("reports a path that names no file at once", async () => {
+    const plugin = await ready();
 
-    expect(await runPublish(plugin, { path: "Nope.md" })).toBe(
+    expect(cli(plugin, "publisher:publish", { path: "Nope.md" })).toBe(
       "File not found: Nope.md",
     );
   });
 
-  test("refuses while another publish is running", async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    withVault(plugin);
+  test("refuses at once while another publish is running", async () => {
+    const plugin = await ready();
     let release: (r: PublishResult) => void = () => {};
     const publish = spyOn(Publisher.prototype, "publishNote").mockReturnValue(
       new Promise((resolve) => {
         release = resolve;
       }),
     );
+    publish.mockClear();
 
-    const first = runPublish(plugin, { path: note.path });
-    expect(await runPublish(plugin, { path: note.path })).toBe(
-      "A publish is already running",
-    );
+    const id = idOf(start(plugin));
+    expect(start(plugin)).toBe("A publish is already running");
     release(okResult());
-    expect(await first).toBe("ok");
+    await settle();
+
+    expect(await result(plugin, id)).toBe("ok");
     expect(publish).toHaveBeenCalledTimes(1);
     publish.mockRestore();
+  });
+
+  test("an unknown or missing id says so", async () => {
+    const plugin = await ready();
+
+    expect(await result(plugin, "deadbeef")).toBe("No run deadbeef");
+    expect(await cli(plugin, "publisher:result", {})).toBe(
+      "id=<run id> is required",
+    );
+  });
+
+  test("keeps only the most recent runs", () => {
+    const runs = new CliRuns();
+    const never = new Promise<string>(() => {});
+    for (let i = 0; i <= MAX_CLI_RUNS; i++) runs.start(`run${i}`, never);
+    expect(runs.read("run0")).toBeUndefined();
+    expect(runs.read(`run${MAX_CLI_RUNS}`)).toBeNull();
   });
 });
 
