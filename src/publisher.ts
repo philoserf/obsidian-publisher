@@ -21,11 +21,24 @@ import {
 /** The gateway surface `Publisher` uses. A port rather than the class
  * itself because `GitHubApiGateway`'s private fields make it nominal, so
  * no fake can satisfy it; the constructor's default argument is where the
- * real class is checked against these four. */
+ * real class is checked against these five. */
 export type PublishGateway = Pick<
   GitHubApiGateway,
-  "commitFiles" | "createBranchWithRetry" | "createPullRequest" | "deleteBranch"
+  | "commitFiles"
+  | "createBranchWithRetry"
+  | "createPullRequest"
+  | "deleteBranch"
+  | "listMarkdownFiles"
 >;
+
+/** Asked before a reconciling Publish All deletes anything; resolves true to
+ * go ahead. Called before any branch exists, so a refusal leaves nothing
+ * behind. */
+export type ConfirmDeletions = (paths: string[]) => Promise<boolean>;
+
+/** Hugo's section page. It lives in `contentDir` but no note produces it, so
+ * reconciliation must never take it for an orphan. */
+const SECTION_INDEX = "_index.md";
 
 type ProgressCallback = (done: number, total: number) => void;
 
@@ -63,6 +76,10 @@ type WorkflowOpts = {
   branchPrefix: string;
   readFailures: PublishResult[];
   files: PublishableFile[];
+  /** Already prepared, so the workflow does not prepare again. */
+  prepared?: Prepared[];
+  /** Repository paths the commit removes. */
+  deletions?: string[];
   commitMessage: (successCount: number) => string;
   prTitle: (succeeded: PublishResult[]) => string;
   prBody: (succeeded: PublishResult[]) => string;
@@ -449,9 +466,21 @@ export class Publisher {
   }
 
   /**
-   * Publish all notes with status: publish to a single branch and PR.
+   * Publish all notes with status: publish to a single branch and PR, and
+   * make `contentDir` exactly the publish set: any `.md` directly in it that
+   * no note produces is deleted in the same commit (#379).
+   *
+   * Deleting is only safe when the publish set is known to be whole, so the
+   * run is all or nothing. A note that fails to read, parse or prepare
+   * aborts it before any branch exists; otherwise that note would drop out
+   * of the set and its post would be deleted. An empty set publishes and
+   * deletes nothing. Deletions are confirmed through `confirmDeletions`
+   * before the branch is created, and listed in the PR body, which is the
+   * second gate. `publishNote` never deletes: it cannot know the whole set.
    */
-  async publishAll(): Promise<BatchPublishResult> {
+  async publishAll(
+    confirmDeletions: ConfirmDeletions,
+  ): Promise<BatchPublishResult> {
     const { files, readFailures } = await this.getPublishableFiles();
     if (files.length === 0) {
       return buildBatchResult(readFailures, {
@@ -459,27 +488,90 @@ export class Publisher {
       });
     }
 
-    const collisions = this.detectFilenameCollisions(files);
-    if (collisions.length > 0) {
-      const collisionError = this.filenameCollisionError(collisions);
+    if (readFailures.length > 0) {
+      const abort = `Nothing published: ${readFailures.length} note${readFailures.length !== 1 ? "s" : ""} failed to read`;
       return buildBatchResult(
-        [...readFailures, ...failedResults(files, collisionError)],
-        { error: collisionError },
+        [...readFailures, ...failedResults(files, abort)],
+        { error: abort },
       );
     }
 
-    return this.runPublishWorkflow({
+    const collisions = this.detectFilenameCollisions(files);
+    if (collisions.length > 0) {
+      const collisionError = this.filenameCollisionError(collisions);
+      return buildBatchResult(failedResults(files, collisionError), {
+        error: collisionError,
+      });
+    }
+
+    let prepared: Prepared[];
+    let deletions: string[];
+    try {
+      prepared = await this.prepareBatch(files);
+      const failures = prepared.filter((p) => !p.ok).length;
+      if (failures > 0) {
+        const abort = `Nothing published: ${failures} note${failures !== 1 ? "s" : ""} failed to prepare`;
+        return buildBatchResult(
+          toResults(prepared, { error: new Error(abort) }),
+          {
+            error: abort,
+          },
+        );
+      }
+      deletions = await this.findOrphans(prepared);
+    } catch (error) {
+      return buildBatchResult(failedResults(files, errorMessage(error)), {
+        error: errorMessage(error),
+      });
+    }
+
+    if (deletions.length > 0 && !(await confirmDeletions(deletions))) {
+      return { ...buildBatchResult([]), cancelled: true };
+    }
+
+    const removed =
+      deletions.length === 0
+        ? ""
+        : `\n\nRemoved ${deletions.length} post${deletions.length !== 1 ? "s" : ""} no longer in the vault:\n${deletions
+            .map((d) => `- ${d}`)
+            .join("\n")}`;
+    const result = await this.runPublishWorkflow({
       branchPrefix: "publish-batch",
       readFailures,
       files,
+      prepared,
+      deletions,
       commitMessage: (n) =>
-        `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian`,
+        `Publish ${n} note${n !== 1 ? "s" : ""} from Obsidian` +
+        (deletions.length > 0 ? `, remove ${deletions.length}` : ""),
       prTitle: (succeeded) => `Batch Publish: ${succeeded.length} notes`,
       prBody: (succeeded) =>
         `Published ${succeeded.length} notes from Obsidian\n\n${succeeded
           .map((r) => `- ${r.filePath}`)
-          .join("\n")}`,
+          .join("\n")}${removed}`,
     });
+    return result.prUrl ? { ...result, deleted: deletions } : result;
+  }
+
+  /**
+   * The `.md` files directly in `contentDir` on the base branch that no
+   * prepared note writes, sorted. One read of the remote per run, and
+   * nothing kept between runs: the system still holds no model of the
+   * site, only this listing for as long as the run lasts.
+   */
+  private async findOrphans(prepared: Prepared[]): Promise<string[]> {
+    const written = new Set(
+      prepared.flatMap((p) => (p.ok ? p.entries.map((e) => e.path) : [])),
+    );
+    const existing = await this.githubApiGateway.listMarkdownFiles(
+      this.settings.contentDir,
+      this.settings.baseBranch,
+    );
+    return existing
+      .filter(
+        (path) => !written.has(path) && !path.endsWith(`/${SECTION_INDEX}`),
+      )
+      .sort();
   }
 
   /** Commit, reporting only whether it landed. Turning that into publish
@@ -488,10 +580,16 @@ export class Publisher {
     branchName: string,
     fileEntries: FileEntry[],
     message: string,
+    deletions: string[],
   ): Promise<{ error?: unknown }> {
     if (fileEntries.length === 0) return {};
     try {
-      await this.githubApiGateway.commitFiles(fileEntries, message, branchName);
+      await this.githubApiGateway.commitFiles(
+        fileEntries,
+        message,
+        branchName,
+        deletions,
+      );
       return {};
     } catch (error) {
       return { error };
@@ -527,7 +625,7 @@ export class Publisher {
     // the workflow failed" rather than inferring it from an empty array.
     let prepared: Prepared[] | undefined;
     try {
-      prepared = await this.prepareBatch(opts.files);
+      prepared = opts.prepared ?? (await this.prepareBatch(opts.files));
       return await this.commitAndOpenPr(branchName, prepared, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
@@ -549,6 +647,7 @@ export class Publisher {
       branchName,
       flattenEntries(prepared),
       opts.commitMessage(successCount),
+      opts.deletions ?? [],
     );
 
     const committedResults = toResults(

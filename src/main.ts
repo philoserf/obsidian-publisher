@@ -1,4 +1,4 @@
-import { Notice, Plugin, type TFile } from "obsidian";
+import { type App, Modal, Notice, Plugin, Setting, type TFile } from "obsidian";
 import {
   formatBatchNotice,
   formatPreflight,
@@ -27,6 +27,56 @@ const PR_NOTICE_DURATION_MS = 10_000;
 function reportFailure(summary: string, error: unknown): void {
   console.error(`[Publisher] ${summary}`, error);
   new Notice(`✗ ${summary}: ${errorMessage(error)}`);
+}
+
+/**
+ * Asks before a reconciling Publish All deletes posts (#379), listing every
+ * one. Closing the modal any way but the confirm button is a no, so a
+ * dismissed dialog on an iPad never deletes.
+ */
+class ConfirmDeletionsModal extends Modal {
+  private decided = false;
+
+  constructor(
+    app: App,
+    private readonly paths: string[],
+    private readonly resolve: (ok: boolean) => void,
+  ) {
+    super(app);
+  }
+
+  override onOpen(): void {
+    const n = this.paths.length;
+    const posts = `${n} post${n !== 1 ? "s" : ""}`;
+    this.setTitle(`Remove ${posts} from the site?`);
+    this.contentEl.createEl("p", {
+      text: "Publish All makes the site's posts match the vault. No note publishes these any more, so the pull request will delete them:",
+    });
+    const list = this.contentEl.createEl("ul");
+    for (const path of this.paths) list.createEl("li", { text: path });
+    new Setting(this.contentEl)
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
+      .addButton((b) =>
+        b
+          .setButtonText(`Publish and remove ${posts}`)
+          .setWarning()
+          .onClick(() => {
+            this.decide(true);
+            this.close();
+          }),
+      );
+  }
+
+  override onClose(): void {
+    this.contentEl.empty();
+    this.decide(false);
+  }
+
+  private decide(ok: boolean): void {
+    if (this.decided) return;
+    this.decided = true;
+    this.resolve(ok);
+  }
 }
 
 function notifyWarnings(warnings: PublishWarning[]): void {
@@ -319,7 +369,13 @@ export default class ObsidianPublisher extends Plugin {
 
     let result: BatchPublishResult;
     try {
-      result = await publisher.publishAll();
+      result = await publisher.publishAll((paths) => {
+        // The progress notice would sit over the dialog.
+        this.endProgress();
+        return new Promise((resolve) =>
+          new ConfirmDeletionsModal(this.app, paths, resolve).open(),
+        );
+      });
     } catch (error) {
       reportFailure("Batch publish failed", error);
       return;

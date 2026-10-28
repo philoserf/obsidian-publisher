@@ -80,6 +80,19 @@ mock.module("obsidian", () => ({
     }
   },
 
+  // main.ts declares `class ConfirmDeletionsModal extends Modal` at module
+  // load. No test opens it: the batch tests stub publishAll.
+  Modal: class Modal {
+    app: unknown;
+    constructor(app?: unknown) {
+      this.app = app;
+    }
+    open() {}
+    close() {}
+  },
+
+  Setting: class Setting {},
+
   // Chainable no-ops: the token row's render callback builds one, though
   // no test runs render — the tab is tested as definition data.
   SecretComponent: class SecretComponent {

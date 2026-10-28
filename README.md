@@ -10,7 +10,7 @@ This is personal tooling, not a general-purpose plugin. It is opinionated in way
 
 - **Single user.** The only known installation is the maintainer's. Breaking changes ship without migration paths (see `CHANGELOG.md` — 1.4.0 renamed the publish sentinel, 1.5.0 retired `removePublishFlag` and the `{{< ref >}}` wikilinks, 1.6.0 retired the direct-commit publish mode entirely).
 - **One target shape.** The Hugo destination is expected to use `content/posts/`, `static/images/`, and the shipped `hugo-shortcodes/` (callout + mermaid) installed in the site's theme. Other layouts will see broken links or missing renderers.
-- **PR workflow only, mandatory.** Every publish creates a timestamped feature branch and opens a PR against `baseBranch`. There is no direct-commit escape hatch. A second publish is refused while one is still running — on a slow connection, re-tapping a button that has not visibly responded would otherwise open a duplicate branch and PR, and there is no delete path to clean either up.
+- **PR workflow only, mandatory.** Every publish creates a timestamped feature branch and opens a PR against `baseBranch`. There is no direct-commit escape hatch. A second publish is refused while one is still running — on a slow connection, re-tapping a button that has not visibly responded would otherwise open a duplicate branch and PR, and the plugin cannot delete a branch or PR it opened.
 - **Required frontmatter.** Notes must carry `status: publish`, plus a non-empty `title` and `date`. Missing or empty required fields fail the publish per-note.
 - **No issue triage for feature requests.** Bugs are welcome; feature requests from other users will almost always be closed as out-of-scope.
 
@@ -68,7 +68,20 @@ Heading anchors (`[[Page#Heading]]`) assume the destination Hugo site uses the d
 
 Page slugs, committed filenames, and heading anchors all share one rule: NFC-normalize, lowercase, keep Unicode letters and digits, and turn whitespace into hyphens. So a note titled `Rōnin…` publishes at `/posts/rōnin-…/`, matching what Hugo generates by default. Sites that set `removePathAccents: true` will see mismatched links, for the same reason as `github-ascii` above.
 
-Because the destination filename follows that same rule, **renaming a note renames its published file** — and the plugin has no delete path, so the previous file stays in the site repo until you remove it by hand. Add the old URL to the note's `aliases` before republishing if you want it to keep resolving.
+Because the destination filename follows that same rule, **renaming a note renames its published file**. Publishing the one note leaves the previous file in the site repo; the next Publish All removes it (see below). Add the old URL to the note's `aliases` before republishing if you want it to keep resolving.
+
+## Publish All keeps the posts directory in step
+
+Publish All treats `contentDir` as exactly the publish set. It reads the directory on `baseBranch` once, and every `.md` file directly in it that no `status: publish` note produces — a retired, merged, renamed or recalled note — is deleted in the same commit. Nothing else is touched: subdirectories, `.gitkeep`, Hugo's `_index.md`, images in `imageDir`, and anything outside `contentDir` stay as they are. Redirects for removed posts are the site's business, not the plugin's.
+
+Because a deletion is only right when the publish set is whole, the run is all or nothing, with these guards:
+
+- A note that fails to read, parse or validate stops the run before any branch exists, so a frontmatter typo cannot delete its own post.
+- An empty publish set publishes and deletes nothing.
+- When there is something to delete, a dialog lists every post first; anything but the confirm button cancels, with nothing committed.
+- The pull request lists every deletion, and is the last gate before merge.
+
+Publishing a single note never deletes anything: it cannot know the whole set.
 
 ## Security
 
