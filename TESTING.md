@@ -13,10 +13,9 @@ Policy doc for what this repo tests, what it doesn't, and why. Written for a fut
 
 The manual loop, when a change needs end-to-end verification:
 
-1. `bun run build` — produces `main.js`.
-2. `bun run deploy` — copies `main.js` and `manifest.json` into the vault's plugin directory.
-3. Reload Obsidian (Cmd-R on desktop, or disable/enable the plugin in Settings).
-4. Publish a note. Inspect the opened PR on GitHub for correct branch name, commit payload, labels, and body.
+1. `bun run build` — produces `main.js` and copies it and `manifest.json` into the vault's plugin directory.
+2. Reload Obsidian (Cmd-R on desktop, or disable/enable the plugin in Settings).
+3. Publish a note. Inspect the opened PR on GitHub for correct branch name, commit payload, labels, and body.
 
 This is not a replacement for tests — it's the path for catching integration-layer issues that the unit suite can't see (Obsidian dispatch, real Octokit behavior, real Hugo rendering).
 

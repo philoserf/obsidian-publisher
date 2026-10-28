@@ -18,10 +18,10 @@ The current next step for this repo is tracked in the workspace backlog at `../N
 bun test src/note-transformer.test.ts   # Run a single test file
 bun test -t "wikilink"                  # Run tests whose name matches a substring
 bun run check        # typecheck + biome check + bun fmt --check on markdown (run before committing)
-bun run deploy       # Copy main.js + manifest.json into local vault plugin folder
+bun run build        # check, bundle main.js, and install it into the vault (deploy.ts)
 ```
 
-`deploy` needs `OBSIDIAN_DEPLOY_DEST` set to the vault's plugin directory; it lives in the gitignored `.env.local` and the script exits 1 without it.
+`bun run build` ends with `deploy.ts`, which copies `main.js` and `manifest.json` to `OBSIDIAN_DEPLOY_DEST` from the gitignored `.env.local`. Unset, the build stops at `./main.js`. There is no separate deploy step.
 
 ## Architecture
 
@@ -80,7 +80,7 @@ Octokit is mocked at three different levels on purpose. The preload `mock.module
 
 ### Build
 
-`main.js` is committed — rebuild before committing any source change.
+`main.js` is build output and gitignored. The vault gets it from `bun run build`, and a release attaches a fresh build, so nothing reads a committed copy. It was tracked until 2026-10-28; the reason given for tracking it (template #28, install from a GitHub checkout) does not apply to a plugin with one installation.
 
 ### Version and Release
 
