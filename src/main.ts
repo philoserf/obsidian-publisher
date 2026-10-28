@@ -15,6 +15,43 @@ import {
   type PublishWarning,
 } from "./types";
 
+/**
+ * CLI publishes started and not yet read back (#389). The Obsidian CLI stops
+ * waiting for a handler after roughly 10-20 ms and prints nothing, while the
+ * handler carries on; a publish takes seconds, so `publisher:publish` starts
+ * one and `publisher:result` reads its output back. In memory only, so
+ * nothing syncs; the most recent runs are kept, the oldest dropped first.
+ */
+export const MAX_CLI_RUNS = 50;
+
+export class CliRuns {
+  private readonly runs = new Map<string, string | undefined>();
+
+  start(id: string, work: Promise<string>): void {
+    this.runs.set(id, undefined);
+    while (this.runs.size > MAX_CLI_RUNS) {
+      const oldest = this.runs.keys().next().value;
+      if (oldest === undefined) break;
+      this.runs.delete(oldest);
+    }
+    // `work` never rejects. An evicted run stays evicted.
+    void work.then((output) => {
+      if (this.runs.has(id)) this.runs.set(id, output);
+    });
+  }
+
+  /** The run's output, `null` while it is running, or `undefined` when there
+   * is no such run. */
+  read(id: string): string | null | undefined {
+    if (!this.runs.has(id)) return undefined;
+    return this.runs.get(id) ?? null;
+  }
+}
+
+function newRunId(): string {
+  return Math.random().toString(16).slice(2, 10).padEnd(8, "0");
+}
+
 /** A GitHub PR URL takes longer than the default ~5s to read on a phone. */
 const PR_NOTICE_DURATION_MS = 10_000;
 
@@ -96,6 +133,9 @@ export default class ObsidianPublisher extends Plugin {
    * publishing the current note while a batch is committing has the same
    * duplicate-branch outcome as two batches. */
   private inFlight: Promise<void> | undefined;
+
+  /** CLI publishes for `publisher:result` (#389). */
+  readonly cliRuns = new CliRuns();
 
   /** Held so a settings change synced from another device can redraw it. */
   private settingTab: PublisherSettingTab | undefined;
@@ -215,7 +255,7 @@ export default class ObsidianPublisher extends Plugin {
 
     this.registerCliHandler(
       "publisher:publish",
-      "Publish a note to GitHub and print the pull request URL",
+      "Start publishing a note to GitHub; prints a run id, or why it cannot start",
       {
         path: {
           value: "<path>",
@@ -224,6 +264,19 @@ export default class ObsidianPublisher extends Plugin {
         },
       },
       (params) => this.publishFromCli(params.path),
+    );
+
+    this.registerCliHandler(
+      "publisher:result",
+      "Print a started publish's result, or that it is still running",
+      {
+        id: {
+          value: "<id>",
+          description: "Run id printed by publisher:publish",
+          required: true,
+        },
+      },
+      (params) => this.resultFromCli(params.id),
     );
   }
 
@@ -257,11 +310,14 @@ export default class ObsidianPublisher extends Plugin {
   /**
    * The `publisher:publish` CLI handler: the publish-current-note command
    * for a named file, reporting in text instead of notices, since the run
-   * was started from a terminal. Inside `runExclusive`, because unlike
-   * preflight it opens a branch; a publish already running is reported as
-   * the verdict rather than with the guard's notice.
+   * was started from a terminal. Synchronous, because the CLI stops waiting
+   * long before a publish finishes (#389): every check that needs no
+   * network answers at once with its final line, and otherwise the publish
+   * is started inside `runExclusive` — which claims `inFlight` before it
+   * returns, so a second call is refused at once too — and `started <id>` is
+   * printed for `publisher:result`.
    */
-  private async publishFromCli(notePath: string | undefined): Promise<string> {
+  private publishFromCli(notePath: string | undefined): string {
     if (this.inFlight) return "A publish is already running";
     const file = this.cliFile(notePath);
     if (!file) return `File not found: ${notePath ?? ""}`;
@@ -274,17 +330,31 @@ export default class ObsidianPublisher extends Plugin {
     const validationError = publisher.validateSettings();
     if (validationError) return `Cannot publish: ${validationError}`;
 
-    let output = "";
-    await this.runExclusive(async () => {
-      try {
-        output = formatPublish(await publisher.publishNote(file));
-      } catch (error) {
-        // Printed, not a notice: the caller is a terminal.
-        console.error("[Publisher] Publish failed", error);
-        output = `Error: ${errorMessage(error)}`;
-      }
-    });
-    return output;
+    const id = newRunId();
+    this.cliRuns.start(
+      id,
+      new Promise<string>((resolve) => {
+        void this.runExclusive(async () => {
+          try {
+            resolve(formatPublish(await publisher.publishNote(file)));
+          } catch (error) {
+            // Printed, not a notice: the caller is a terminal.
+            console.error("[Publisher] Publish failed", error);
+            resolve(`Error: ${errorMessage(error)}`);
+          }
+        });
+      }),
+    );
+    return `started ${id}`;
+  }
+
+  /** The `publisher:result` CLI handler: `running <id>`, the publish's own
+   * output (`ok <URL>` or the reason, then warnings), or why there is none. */
+  private resultFromCli(id: string | undefined): string {
+    if (!id || id === "true") return "id=<run id> is required";
+    const output = this.cliRuns.read(id);
+    if (output === undefined) return `No run ${id}`;
+    return output ?? `running ${id}`;
   }
 
   /** Load settings. Never saves, so an ordinary reload cannot bounce
