@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.0
+
+### Added
+
+- **`publisher:publish` publishes a note from the command line.** `obsidian publisher:publish path="Published/Note.md"` does what the publish-current-note command does for the named note, and prints the result in `publisher:preflight`'s shape: `ok` and the pull request URL, or the reason the publish failed, then any warnings one per line. It raises no notices, since the run started from a terminal. Unlike preflight it needs the token, and a device without one gets `Cannot publish: GitHub token is required` before anything reaches GitHub. It shares the single-flight guard with the two commands, so it refuses while another publish is running (#380)
+
+### Changed
+
+- **A thrown publish failure says what failed.** The notice reads `✗ Publish failed: …` or `✗ Batch publish failed: …` instead of `✗ Error: …`, and the console line carries a `[Publisher]` prefix. A publish that returns a failure still reads `✗ Failed to publish: <reason>` (#384)
+
+### Removed
+
+- **A plaintext token in `data.json` is no longer moved into the keychain.** The one-time migration from before 2.0.0 is gone, along with `migrateGithubToken` and its `SecretStore` seam. A stray `githubToken` is still dropped on load, so a save cannot write one back; enter the token in Settings → Keychain on each device. `loadSettings` now never saves (#382, #383)
+
+### Internal
+
+- `main.js` is build output and no longer tracked. `bun run build` ends by copying `main.js` and `manifest.json` into the plugin directory named by `OBSIDIAN_DEPLOY_DEST` in the gitignored `.env.local`, and stops at `./main.js` when that is unset; the separate `deploy` script is removed (#381)
+- Dev dependency bump: `@types/node` 26.6.5 → 26.6.6 (#385)
+
 ## 2.1.1
 
 No change in what the plugin does.
