@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { formatBatchNotice, formatPreflight, formatWarnings } from "./notices";
+import {
+  formatBatchNotice,
+  formatPreflight,
+  formatPublish,
+  formatWarnings,
+} from "./notices";
 import type { BatchPublishResult } from "./types";
 
 function result(
@@ -145,5 +150,35 @@ describe("formatPreflight", () => {
         warnings: [],
       }),
     ).toBe("Invalid frontmatter: date is required");
+  });
+});
+
+describe("formatPublish", () => {
+  test("a success is ok and the pull request URL", () => {
+    expect(
+      formatPublish({
+        filePath: "a.md",
+        success: true,
+        warnings: [],
+        prUrl: "https://github.com/o/r/pull/1",
+      }),
+    ).toBe("ok https://github.com/o/r/pull/1");
+  });
+
+  test("a success without a URL is the single line ok", () => {
+    expect(
+      formatPublish({ filePath: "a.md", success: true, warnings: [] }),
+    ).toBe("ok");
+  });
+
+  test("a failure prints its reason, then each warning", () => {
+    expect(
+      formatPublish({
+        filePath: "a.md",
+        success: false,
+        error: "boom",
+        warnings: [{ kind: "image-failed", name: "a.png" }],
+      }).split("\n"),
+    ).toEqual(["boom", "Warning: 1 image(s) failed: a.png"]);
   });
 });

@@ -1,4 +1,9 @@
-import type { BatchPublishResult, Preflight, PublishWarning } from "./types";
+import type {
+  BatchPublishResult,
+  Preflight,
+  PublishResult,
+  PublishWarning,
+} from "./types";
 
 type NamedImageWarning = Extract<PublishWarning, { name: string }>;
 
@@ -85,4 +90,16 @@ export function formatWarnings(warnings: PublishWarning[]): string[] {
 export function formatPreflight(preflight: Preflight): string {
   const verdict = preflight.ok ? "ok" : preflight.error;
   return [verdict, ...formatWarnings(preflight.warnings)].join("\n");
+}
+
+/**
+ * The `publisher:publish` CLI output, in `formatPreflight`'s shape: `ok`
+ * and the pull request URL, or the reason the publish failed, then one line
+ * per warning. The first line is the verdict.
+ */
+export function formatPublish(result: PublishResult): string {
+  const verdict = result.success
+    ? ["ok", result.prUrl].filter(Boolean).join(" ")
+    : result.error;
+  return [verdict, ...formatWarnings(result.warnings)].join("\n");
 }
