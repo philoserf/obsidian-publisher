@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.0
+
+### Added
+
+- **Publish All keeps the posts directory in step with the vault.** It lists `contentDir` on `baseBranch` once and deletes, in the same commit, every `.md` directly in it that no `status: publish` note produces, so a retired, merged, renamed or recalled post no longer needs a hand commit in the site repository. Hugo's `_index.md` is never deleted, and neither are subdirectories, `.gitkeep`, images or anything outside `contentDir`. A confirmation dialog lists every deletion first; anything but its confirm button cancels, and the notice reads `Publish All cancelled: nothing was committed`. The pull request body and commit message list the removals, and the result notice counts them (#379, #387)
+
+### Changed
+
+- **Publish All is all or nothing.** A note that fails to read, parse or prepare now stops the whole run before any branch exists, with `Nothing published: N notes failed to read` (or `failed to prepare`); it used to publish the rest and report the failures. A failed note would otherwise drop out of the publish set and have its live post deleted. An empty publish set reads nothing from GitHub and deletes nothing. Publishing a single note, by command or `publisher:publish`, still only adds (#387)
+
+### Internal
+
+- The gateway gains `listMarkdownFiles`, one contents read of a directory, and `commitFiles` takes a `deletions` list that becomes null-`sha` tree entries beside the writes. Publish All prepares every note before it creates the branch. 431 tests, from 419 (#387)
+
 ## 2.2.0
 
 ### Added

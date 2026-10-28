@@ -27,8 +27,14 @@ The flow, end to end:
    is opened against `baseBranch`.
 
 Two commands, one workflow: publishing a single note and publishing the
-whole vault converge on the same branch-commit-PR path, differing only in
-their commit message and PR title.
+whole vault converge on the same branch-commit-PR path. They differ in
+their commit message and PR title, and in one larger way. Publish All
+makes `contentDir` exactly the publish set, deleting in the same commit
+every post no note produces any more. Because a deletion is only safe when
+the set is known to be whole, it swaps steps 3 and 4: every note is
+prepared first, any failure aborts the run before a branch exists, and the
+user confirms the deletions before anything reaches GitHub. A single-note
+publish only ever adds.
 
 Two more entry points are handlers for the `obsidian` command-line tool.
 `publisher:preflight` publishes nothing: it runs steps 2 and 4 for one
@@ -186,8 +192,8 @@ Both commands, and `publisher:publish`, route through `runExclusive`.
 One flag covers both commands and the publish CLI handler, not one per
 entry point. Publishing the current
 note while a batch is committing has the same outcome as two batches: two
-branches, two pull requests, and no delete path in the gateway to clean
-either up by anything but hand.
+branches and two pull requests, and nothing in the plugin can close either
+one; that takes a hand.
 
 The case is not hypothetical. Obsidian will invoke a command again while
 the previous invocation's promise is still pending — a second hotkey press,
@@ -280,7 +286,9 @@ That makes dismissal a correctness concern rather than a tidiness one.
 `endProgress()` is called from a `finally` around `publishAll`, not from
 the progress tick: if preparation throws part-way through, the tick never
 reaches `done === total`, and a duration-0 notice would stay on screen
-forever.
+forever. The deletion prompt calls it too, before opening, because the
+progress notice would otherwise sit over the dialog — see
+[Asking before a post is removed](#asking-before-a-post-is-removed).
 
 ### Loading settings never writes
 
@@ -736,6 +744,117 @@ publishable notes found" notice would swallow.
 Groups are sorted by filename and paths sorted within a group, so the error
 message is stable across runs.
 
+### Publish All makes the posts directory match the vault
+
+Before 2.3.0, Publish All could only add. A post whose note was retired,
+merged, renamed or taken out of the publish set stayed live on the site
+until someone deleted it by hand in the site repository — a git operation
+an iPad cannot do. `publishAll` now treats `contentDir` as exactly the
+publish set (#379), and the price of that is that the run must be all or
+nothing:
+
+`src/publisher.ts` — `publishAll`
+
+```ts
+    if (readFailures.length > 0) {
+      const abort = `Nothing published: ${readFailures.length} note${readFailures.length !== 1 ? "s" : ""} failed to read`;
+      return buildBatchResult(
+        [...readFailures, ...failedResults(files, abort)],
+        { error: abort },
+      );
+    }
+
+    const collisions = this.detectFilenameCollisions(files);
+    if (collisions.length > 0) {
+      const collisionError = this.filenameCollisionError(collisions);
+      return buildBatchResult(failedResults(files, collisionError), {
+        error: collisionError,
+      });
+    }
+
+    let prepared: Prepared[];
+    let deletions: string[];
+    try {
+      prepared = await this.prepareBatch(files);
+      const failures = prepared.filter((p) => !p.ok).length;
+      if (failures > 0) {
+        const abort = `Nothing published: ${failures} note${failures !== 1 ? "s" : ""} failed to prepare`;
+        return buildBatchResult(
+          toResults(prepared, { error: new Error(abort) }),
+          {
+            error: abort,
+          },
+        );
+      }
+      deletions = await this.findOrphans(prepared);
+    } catch (error) {
+      return buildBatchResult(failedResults(files, errorMessage(error)), {
+        error: errorMessage(error),
+      });
+    }
+
+    if (deletions.length > 0 && !(await confirmDeletions(deletions))) {
+      return { ...buildBatchResult([]), cancelled: true };
+    }
+```
+
+The reason is in what a deletion is computed from. An orphan is a post no
+_prepared_ note writes, so a note that drops out of the set — unreadable,
+malformed frontmatter, missing `title`, a transform that throws — would
+make its own live post look like an orphan, and the run would delete it.
+So any read or prepare failure stops the run with `Nothing published: N
+notes failed to read` (or `to prepare`), before a branch exists. Until
+2.3.0 those notes were reported and the rest published; that is the one
+visible behavior change.
+
+Preparing first also inverts the ordering
+[the shared workflow](#the-workflow-both-commands-share) otherwise uses:
+the batch is transformed before the branch is created, and handed in as
+`prepared` so the workflow does not prepare it again. A branch failure now
+throws away the preparation, which is the cheaper loss next to a branch
+left behind by a refused confirmation.
+
+The guards around the listing are each a short-circuit. An empty publish
+set returns at the top, before anything reads the remote, so a vault with
+no `status: publish` notes can never empty the site. `confirmDeletions`
+runs only when there is something to delete, and a refusal returns
+`cancelled: true` with no branch and no commit. The deletions then go into
+the commit message, the PR body and the result, so the pull request is the
+second place they can be caught.
+
+`src/publisher.ts` — `findOrphans`
+
+```ts
+  private async findOrphans(prepared: Prepared[]): Promise<string[]> {
+    const written = new Set(
+      prepared.flatMap((p) => (p.ok ? p.entries.map((e) => e.path) : [])),
+    );
+    const existing = await this.githubApiGateway.listMarkdownFiles(
+      this.settings.contentDir,
+      this.settings.baseBranch,
+    );
+    return existing
+      .filter(
+        (path) => !written.has(path) && !path.endsWith(`/${SECTION_INDEX}`),
+      )
+      .sort();
+  }
+```
+
+One listing of the remote, on `baseBranch`, held for the length of the
+run and then dropped: the plugin still keeps no model of the site. The
+written set is built from the prepared entries' paths, so it compares
+committed names to committed names, and the slug rule's output is the
+only thing that decides a match. `_index.md` is Hugo's section page, which
+lives in `contentDir` but which no note produces; it is excluded by name,
+so adding one to the site cannot make a reconcile delete it. The sort
+makes the confirmation and the PR body list the same paths in the same
+order every run.
+
+`publishNote` never calls any of this. It cannot know the whole set, so it
+cannot know what is an orphan; a renamed note's old file stays live until
+the next Publish All.
+
 ### The workflow both commands share
 
 `src/publisher.ts` — `runPublishWorkflow`
@@ -759,7 +878,7 @@ message is stable across runs.
     // the workflow failed" rather than inferring it from an empty array.
     let prepared: Prepared[] | undefined;
     try {
-      prepared = await this.prepareBatch(opts.files);
+      prepared = opts.prepared ?? (await this.prepareBatch(opts.files));
       return await this.commitAndOpenPr(branchName, prepared, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
@@ -768,10 +887,12 @@ message is stable across runs.
   }
 ```
 
-The branch is created **first**, before anything is prepared. That ordering
-is what makes a branch-creation failure cheap: nothing has been transformed
-yet, and the failure is reported against the file list without any work
-being thrown away.
+For a single note the branch is created **first**, before anything is
+prepared. That ordering is what makes a branch-creation failure cheap:
+nothing has been transformed yet, and the failure is reported against the
+file list without any work being thrown away. Publish All passes
+`prepared` in, already built, for the reason given above, and the
+`opts.prepared ??` arm skips the second preparation.
 
 `prepared` is left `undefined` until preparation completes. That is not
 tidiness — it is the signal `workflowFailure` reads to tell "nothing was
@@ -888,6 +1009,7 @@ same bytes.
       branchName,
       flattenEntries(prepared),
       opts.commitMessage(successCount),
+      opts.deletions ?? [],
     );
 
     const committedResults = toResults(
@@ -926,6 +1048,10 @@ same bytes.
 When nothing succeeded, the branch is deleted and no PR is opened — an
 empty pull request is worse than none, and the branch would otherwise
 linger with no way to remove it from inside the plugin.
+
+The deletions ride in the same commit as the writes. A reconcile is one
+commit and one pull request, so merging it, or not, takes the whole
+change at once.
 
 `cleanupBranch` swallows its own errors and logs a warning. It is
 best-effort by design: a failed cleanup must not mask the original publish
@@ -1019,7 +1145,9 @@ and their scope is the point:
 
 The `try` wraps each note individually, so one note throwing — a
 frontmatter value YAML cannot serialize, say — fails that note and leaves
-the batch intact.
+the rest of the batch prepared. What happens next is the caller's call:
+`preflight` and `publishNote` report that note, and `publishAll` aborts
+the run on it.
 
 Note the comment at the push: entries are built and attached **after every
 `await` this note needs**. There is no window in which a note's content
@@ -2034,8 +2162,9 @@ filesystem.
 Keeping the three unified is load-bearing. `buildPublishSet` slugifies
 while `detectFilenameCollisions` sanitizes filenames, so if the two ever
 diverge a link resolves against a name that was never committed. And the
-blast radius of changing the rule is renamed live files — which the gateway
-has no delete path to clean up.
+blast radius of changing the rule is renamed live files. The next Publish
+All would offer to delete every old name, and a long confirmation list is
+the sign that the rule changed, not the vault.
 
 One operation deliberately stays _outside_ the rule:
 
@@ -2267,15 +2396,73 @@ type TreeEntry = {
   path: string;
   mode: "100644";
   type: "blob";
-} & ({ content: string; sha?: never } | { sha: string; content?: never });
+} & (
+  | { content: string; sha?: never }
+  // `null` deletes the path from the base tree.
+  | { sha: string | null; content?: never }
+);
 ```
 
 `content` and `sha` are mutually exclusive with `?: never`, so a tree entry
-naming its content both ways does not compile.
+naming its content both ways does not compile. The `sha` arm also admits
+`null`, which is how the Git Trees API deletes a path from the base tree.
+`commitFiles` takes an optional `deletions` list and appends one such entry
+per path after the writes:
+
+`src/github-api-gateway.ts` — `commitFiles`
+
+```ts
+      for (const path of deletions) {
+        treeEntries.push({ path, mode: "100644", type: "blob", sha: null });
+      }
+```
+
+So a reconcile's deletions cost no request of their own; they travel in the
+same `createTree` as the writes.
 
 The full sequence is: read the branch SHA, read its commit, build the tree
 on top of that commit's tree, create a commit, move the ref. Five calls
 regardless of how many notes are in the batch.
+
+### Listing what the site already has
+
+Reconciliation needs one read the gateway did not have before 2.3.0:
+
+`src/github-api-gateway.ts` — `listMarkdownFiles`
+
+```ts
+  async listMarkdownFiles(dir: string, ref: string): Promise<string[]> {
+    try {
+      const response = await this.withRetry(() =>
+        this.octokit.rest.repos.getContent({
+          owner: this.settings.repoOwner,
+          repo: this.settings.repoName,
+          path: dir,
+          ref,
+        }),
+      );
+      const entries = Array.isArray(response.data) ? response.data : [];
+      return entries
+        .filter((e) => e.type === "file" && e.name.endsWith(".md"))
+        .map((e) => e.path);
+    } catch (error) {
+      if (error instanceof RequestError && error.status === 404) return [];
+      rethrowWithPrefix(error, `Failed to list ${dir}`);
+    }
+  }
+```
+
+One contents read, no recursion. Only `type: "file"` entries ending in
+`.md` survive the filter, so subdirectories, `.gitkeep`, images and
+anything else in the directory can never be candidates for deletion. A
+missing directory is a 404, which reads as empty rather than as a failure.
+Any other error goes through `rethrowWithPrefix` like the rest of the
+gateway, and `publishAll` turns it into a failed run that committed
+nothing.
+
+GitHub returns at most 1,000 entries for a directory listing. A longer one
+is truncated, which can only under-report what exists, so a reconcile on
+it deletes less, never more.
 
 ### Errors narrow in exactly one place
 
@@ -2473,19 +2660,100 @@ directly testable.
 
 ```ts
 export function formatBatchNotice(result: BatchPublishResult): string {
+  if (result.cancelled) return "Publish All cancelled: nothing was committed";
   if (result.error) return `✗ Failed to publish: ${result.error}`;
   if (result.total === 0) return "No publishable notes found";
   if (result.successful === 0) {
     return "All files failed to process. No PR created.";
   }
-  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed`;
+  const removed = result.deleted?.length
+    ? `, ${result.deleted.length} removed`
+    : "";
+  return `Batch publish complete: ${result.successful} succeeded, ${result.failed} failed${removed}`;
 }
 ```
 
-Four distinct outcomes, in priority order: a batch-level error, nothing
-found, everything failed, and a mixed summary. The ordering matters —
-`total === 0` has to be checked before `successful === 0`, or an empty
-vault reports "All files failed to process".
+Five distinct outcomes, in priority order: a declined deletion, a
+batch-level error, nothing found, everything failed, and a mixed summary.
+The ordering matters — `total === 0` has to be checked before
+`successful === 0`, or an empty vault reports "All files failed to
+process". A cancelled run carries no error and a zero total, so it is
+checked first, or it would read as "No publishable notes found". The
+summary adds `, N removed` when the pull request deletes posts.
+
+### Asking before a post is removed
+
+`publishAll` takes its confirmation as a function, so the orchestrator
+stays free of Obsidian UI and the tests can answer it directly. `main.ts`
+supplies a modal:
+
+`src/main.ts` — `publishAllNotes`
+
+```ts
+      result = await publisher.publishAll((paths) => {
+        // The progress notice would sit over the dialog.
+        this.endProgress();
+        return new Promise((resolve) =>
+          new ConfirmDeletionsModal(this.app, paths, resolve).open(),
+        );
+      });
+```
+
+`src/main.ts` — `ConfirmDeletionsModal`
+
+```ts
+class ConfirmDeletionsModal extends Modal {
+  private decided = false;
+
+  constructor(
+    app: App,
+    private readonly paths: string[],
+    private readonly resolve: (ok: boolean) => void,
+  ) {
+    super(app);
+  }
+
+  override onOpen(): void {
+    const n = this.paths.length;
+    const posts = `${n} post${n !== 1 ? "s" : ""}`;
+    this.setTitle(`Remove ${posts} from the site?`);
+    this.contentEl.createEl("p", {
+      text: "Publish All makes the site's posts match the vault. No note publishes these any more, so the pull request will delete them:",
+    });
+    const list = this.contentEl.createEl("ul");
+    for (const path of this.paths) list.createEl("li", { text: path });
+    new Setting(this.contentEl)
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
+      .addButton((b) =>
+        b
+          .setButtonText(`Publish and remove ${posts}`)
+          .setWarning()
+          .onClick(() => {
+            this.decide(true);
+            this.close();
+          }),
+      );
+  }
+
+  override onClose(): void {
+    this.contentEl.empty();
+    this.decide(false);
+  }
+
+  private decide(ok: boolean): void {
+    if (this.decided) return;
+    this.decided = true;
+    this.resolve(ok);
+  }
+}
+```
+
+The modal lists every path it would delete. Its one safety property is
+that **anything but the confirm button is a no**: Cancel closes it,
+Escape and a tap outside close it, and `onClose` resolves `false` on every
+route. `decided` makes the first answer final, so the confirm button's
+`true` is not overwritten by the `false` its own `close()` triggers. On an
+iPad a dismissed dialog is the likely accident, and it must not delete.
 
 Warnings are grouped by kind, one notice per kind, deduplicated by name.
 The target-collision case unions its sources per target path, because one
@@ -2564,13 +2832,13 @@ grep -c 'test(' src/*.test.ts | sort -t: -k2 -rn
 
 ```text
 src/note-transformer.test.ts:140
+src/publisher.test.ts:65
 src/settings.test.ts:59
-src/publisher.test.ts:58
 src/main.test.ts:38
+src/github-api-gateway.test.ts:37
 src/settings-load.test.ts:34
-src/github-api-gateway.test.ts:34
 src/schema.test.ts:28
-src/notices.test.ts:17
+src/notices.test.ts:19
 src/slug.test.ts:11
 ```
 
@@ -2597,14 +2865,18 @@ That typed argument is the reason `PublishGateway` exists:
 ```ts
 export type PublishGateway = Pick<
   GitHubApiGateway,
-  "commitFiles" | "createBranchWithRetry" | "createPullRequest" | "deleteBranch"
+  | "commitFiles"
+  | "createBranchWithRetry"
+  | "createPullRequest"
+  | "deleteBranch"
+  | "listMarkdownFiles"
 >;
 ```
 
 A port rather than the class itself, because `GitHubApiGateway`'s private
 fields make it nominal — no fake can satisfy the class type. The
 constructor's default argument is where the real class is checked against
-these four methods.
+these five methods; `listMarkdownFiles` is the one 2.3.0 added.
 
 Test files are typechecked, which was not always true: they were excluded
 from `tsc`, so every cast, fake and stub in the suite was decorative
@@ -2656,6 +2928,14 @@ but a re-run never read the prose, so a deleted function left the
 narrative describing something that was gone while verify still passed
 (#328). Its replacement is the release-time read: the regeneration reads
 the source and the prose side by side and corrects the prose.
+
+The 2.3.0 pass worked in place too. Its one change, #387, made Publish
+All reconcile `contentDir`, so the pass added the sections on
+`publishAll` and `findOrphans`, `listMarkdownFiles`, the deleting
+`TreeEntry` arm and `ConfirmDeletionsModal`. It updated the quotes of
+`runPublishWorkflow`, `commitAndOpenPr`, `formatBatchNotice` and
+`PublishGateway`, and corrected the prose that said the gateway had no
+delete path and that the two commands differ only in their messages.
 
 The 2.2.0 pass also worked in place, because this release touched only
 `main.ts`, `notices.ts` and `settings.ts`. It replaced the section on the
