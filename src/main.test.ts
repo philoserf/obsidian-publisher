@@ -605,7 +605,6 @@ describe("settings synced from another device (#363)", () => {
   });
 });
 
-// #352: a plaintext token in data.json moves into secret storage on load.
 describe("batch progress notices (#246)", () => {
   const progressOf = (plugin: ObsidianPublisher) =>
     (

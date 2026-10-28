@@ -30,11 +30,12 @@ Two commands, one workflow: publishing a single note and publishing the
 whole vault converge on the same branch-commit-PR path, differing only in
 their commit message and PR title.
 
-A third entry point publishes nothing. `publisher:preflight` is a handler
-for the `obsidian` command-line tool that runs steps 2 and 4 for one note —
-everything before the network — and prints whether it would publish. It
-exists so that a tool outside Obsidian can ask the plugin rather than
-restate its rules.
+Two more entry points are handlers for the `obsidian` command-line tool.
+`publisher:preflight` publishes nothing: it runs steps 2 and 4 for one
+note — everything before the network — and prints whether it would
+publish. `publisher:publish` runs the whole single-note path for a named
+note and prints the pull request URL. Both exist so that a tool outside
+Obsidian can ask the plugin rather than restate its rules.
 
 ## Architecture
 
@@ -84,7 +85,7 @@ a one-line delegation kept only because callers already hold a `Publisher`.
 
 `main.ts` is the Obsidian `Plugin` subclass. `onload` does four things:
 load and normalize settings, register the settings tab, register the two
-commands, and register the preflight CLI handler. It does **not** build a
+commands, and register the two CLI handlers. It does **not** build a
 `Publisher` — each command builds its own, for a reason the next sections
 reach.
 
@@ -132,6 +133,19 @@ reach.
       },
       (params) => this.preflight(params.path),
     );
+
+    this.registerCliHandler(
+      "publisher:publish",
+      "Publish a note to GitHub and print the pull request URL",
+      {
+        path: {
+          value: "<path>",
+          description: "Vault path of the note",
+          required: true,
+        },
+      },
+      (params) => this.publishFromCli(params.path),
+    );
   }
 ```
 
@@ -143,10 +157,11 @@ gets a notice rather than a thrown error. `publish-all-notes` uses a plain
 The settings tab is kept in a field rather than handed straight to
 `addSettingTab`, so that a settings change arriving from another device can
 redraw it — see [Settings that change underneath the plugin](#settings-that-change-underneath-the-plugin).
-The CLI handler is followed in
-[Checking a note without publishing it](#checking-a-note-without-publishing-it).
+The CLI handlers are followed in
+[Checking a note without publishing it](#checking-a-note-without-publishing-it)
+and [Publishing from the command line](#publishing-from-the-command-line).
 
-Both commands route through `runExclusive`.
+Both commands, and `publisher:publish`, route through `runExclusive`.
 
 ### A publish is single-flight
 
@@ -168,7 +183,8 @@ Both commands route through `runExclusive`.
   }
 ```
 
-One flag covers both commands, not one per command. Publishing the current
+One flag covers both commands and the publish CLI handler, not one per
+entry point. Publishing the current
 note while a batch is committing has the same outcome as two batches: two
 branches, two pull requests, and no delete path in the gateway to clean
 either up by anything but hand.
@@ -222,8 +238,8 @@ An unset ID and a secret this device does not have both resolve to `""`,
 and validation reports both as "GitHub token is required". There is no
 third state to handle downstream.
 
-The method is called fresh by every command, by the preflight handler and
-by the connection test, never cached. The token lives in an external store and can change in
+The method is called fresh by every command, by both CLI handlers and by
+the connection test, never cached. The token lives in an external store and can change in
 Settings → Keychain without this plugin's settings changing at all, so a
 client built at load would keep using the old token until restart. That is
 why `onload` builds no `Publisher`, and why each command builds its own:
@@ -266,73 +282,30 @@ the progress tick: if preparation throws part-way through, the tick never
 reaches `done === total`, and a duration-0 notice would stay on screen
 forever.
 
-### Moving a plaintext token into the keychain
+### Loading settings never writes
 
-Before 2.0.0 the token sat in `data.json` as `githubToken`. `loadSettings`
-moves it, once:
+Before 2.0.0 the token sat in `data.json` as `githubToken`, and until 2.2.0
+`loadSettings` moved it into the keychain on the first load and saved. That
+migration is gone (#382): no synced `data.json` still carried a plaintext
+token. What is left is one line:
 
 `src/main.ts` — `loadSettings`
 
 ```ts
   async loadSettings() {
-    const data = await this.loadData();
-    this.settings = parseSettings(data);
-    const legacy = legacyGithubToken(data);
-    if (migrateGithubToken(this.settings, legacy, this.app.secretStorage)) {
-      await this.saveData(this.settings);
-    }
+    this.settings = parseSettings(await this.loadData());
   }
 ```
 
-The migration does not live in `parseSettings`, which stays pure:
-`parseSettings` never carries a `githubToken` into its result, and
-`legacyGithubToken` is the one reader of the old field. Nor does it live
-inline here. The algorithm is a function in `settings.ts`, and it reaches
-the keychain only through the two methods it uses:
+`parseSettings` never carries a `githubToken` into its result, so a stray
+plaintext token is dropped on load, and the next save — which writes
+`this.settings` — cannot write it back. Nothing moves it into the keychain;
+the token is entered in Settings → Keychain on each device, because keychain
+values do not sync and only the secret's name in `data.json` does. The
+settings tab's token row is built to say so.
 
-`src/settings.ts` — `migrateGithubToken`
-
-```ts
-export function migrateGithubToken(
-  settings: PublisherSettings,
-  legacyToken: string,
-  secrets: SecretStore,
-): boolean {
-  if (!legacyToken) return false;
-  if (!settings.githubTokenSecret) {
-    const shared = secrets.getSecret(SHARED_TOKEN_ID);
-    const id =
-      shared === null || shared === legacyToken
-        ? SHARED_TOKEN_ID
-        : OWN_TOKEN_ID;
-    secrets.setSecret(id, legacyToken);
-    settings.githubTokenSecret = id;
-  }
-  return true;
-}
-```
-
-`SecretStore` is `getSecret` and `setSecret` and nothing else, so a test
-passes a `Map` where `loadSettings` passes `app.secretStorage`. The shape
-is deliberate. Metadator migrates its Anthropic key with the same algorithm
-in `migrateApiKey`, and keeping the two copies in one shape is what lets a
-keychain fix in one plugin be carried to the other (#373). The boolean is
-the save decision: `true` whenever a plaintext token was present, since
-saving is what removes it from `data.json`.
-
-Three cases fall out of it. With no plaintext token there is nothing to do,
-and that is every load after the first save — so the migration is
-idempotent. With a plaintext token and no ID, the token goes into the
-keychain under the generic `github-token`, unless another plugin already
-keeps a _different_ token there, in which case it uses
-`obsidian-publisher-github-token` rather than overwrite it. With a
-plaintext token **and** an ID — another device migrated first and Sync
-brought its `data.json` — the plaintext is simply dropped.
-
-That last case is the one the user feels. Keychain values do not sync; only
-the name in `data.json` does. A second device ends up pointing at a secret
-it does not have, and enters the token once by hand. The settings tab's
-token row is built to say so.
+The property that matters most is the one the deletion bought: `loadSettings`
+never calls `saveData`. The next section depends on it.
 
 ### Settings that change underneath the plugin
 
@@ -354,15 +327,12 @@ outside:
   }
 ```
 
-It reuses `loadSettings`, which looks like the trap: `loadSettings` can
-call `saveData`, and a reload that writes on every external change would
-bounce `data.json` between devices indefinitely. It does not, because of
-`migrateGithubToken`'s first line — `loadSettings` writes only when the file still carries
-a plaintext `githubToken`, and the file it writes carries none. So the write
-happens at most once per device, and only in the one case where it is
-wanted: a pre-2.0.0 `data.json` arriving by Sync. A separate reload that
-parsed without migrating would skip exactly that case. An ordinary reload
-never writes, and a test pins it.
+It reuses `loadSettings`, and that is safe because `loadSettings` never
+saves. A reload that wrote on every external change would bounce
+`data.json` between devices indefinitely. Before 2.2.0 this held only
+after the migration had run once on a device; now it holds by construction,
+and a test in `main.test.ts` pins it by spying on `saveData` across a
+reload.
 
 The wait on `inFlight` is not for the running publish's sake. It holds its
 own `PublishConfig`, captured by `createPublisher` before it started, so
@@ -392,8 +362,7 @@ export function parseSettings(data: unknown): PublisherSettings {
 
   return {
     // Only the secret's ID. A plaintext `githubToken` from before #352 is
-    // never carried into the result; `legacyGithubToken` reads it once so
-    // loadSettings can move it into secret storage.
+    // never carried into the result, so a save cannot write one back.
     githubTokenSecret: str(
       d.githubTokenSecret,
       DEFAULT_SETTINGS.githubTokenSecret,
@@ -1185,10 +1154,7 @@ The plugin side of the CLI is a thin adapter:
 
 ```ts
   private async preflight(notePath: string | undefined): Promise<string> {
-    const file =
-      notePath && notePath !== "true"
-        ? this.app.vault.getFileByPath(notePath)
-        : null;
+    const file = this.cliFile(notePath);
     if (!file) return `File not found: ${notePath ?? ""}`;
     const publisher = new Publisher(
       this.app.vault,
@@ -1200,14 +1166,73 @@ The plugin side of the CLI is a thin adapter:
   }
 ```
 
+`src/main.ts` — `cliFile`
+
+```ts
+  private cliFile(notePath: string | undefined): TFile | null {
+    return notePath && notePath !== "true"
+      ? this.app.vault.getFileByPath(notePath)
+      : null;
+  }
+```
+
 Three things it leaves out are each deliberate. It does not go through
 `runExclusive`: it creates no branch, so it cannot duplicate one, and
 refusing it during a publish would only be noise. It passes no progress
 callback, which would raise a notice in the app for a run the user started
 from a terminal. And it calls no `validateSettings` — preflight has to work
 on a device whose keychain lacks the token, since secrets do not sync, and
-nothing it does needs one. The `"true"` comparison is how the CLI types a
-flag given without a value.
+nothing it does needs one. `cliFile` resolves the `path=` argument for both
+CLI handlers; the `"true"` comparison is how the CLI types a flag given
+without a value.
+
+### Publishing from the command line
+
+`publisher:publish` is the publish-current-note command for a named file,
+reporting in text instead of notices (#380):
+
+`src/main.ts` — `publishFromCli`
+
+```ts
+  private async publishFromCli(notePath: string | undefined): Promise<string> {
+    if (this.inFlight) return "A publish is already running";
+    const file = this.cliFile(notePath);
+    if (!file) return `File not found: ${notePath ?? ""}`;
+    const publisher = new Publisher(
+      this.app.vault,
+      this.publishConfig(),
+      undefined,
+      this.app.metadataCache,
+    );
+    const validationError = publisher.validateSettings();
+    if (validationError) return `Cannot publish: ${validationError}`;
+
+    let output = "";
+    await this.runExclusive(async () => {
+      try {
+        output = formatPublish(await publisher.publishNote(file));
+      } catch (error) {
+        // Printed, not a notice: the caller is a terminal.
+        console.error("[Publisher] Publish failed", error);
+        output = `Error: ${errorMessage(error)}`;
+      }
+    });
+    return output;
+  }
+```
+
+It is the preflight adapter's shape with the two things preflight leaves
+out put back. `validateSettings` runs before `runExclusive` and before
+anything reaches GitHub, so a device without the token prints
+`Cannot publish: GitHub token is required`. And the publish itself runs
+inside `runExclusive`, because unlike preflight it opens a branch.
+
+The `inFlight` check at the top looks redundant with the guard, and is
+not. `runExclusive` refuses with a notice, which a terminal caller would
+never see; checking first makes the refusal the printed verdict instead.
+A thrown failure is likewise caught and printed rather than handed to
+`reportFailure`, whose notice is for a run started in the app. The output
+is `formatPublish`'s, covered in [What the user sees](#what-the-user-sees).
 
 ## The transform chain
 
@@ -2487,10 +2512,47 @@ tool parsing it reads the first line and can ignore the rest. One limit:
 string, so a note missing both `title` and `date` gets one reason line, not
 two.
 
+`publisher:publish` prints in the same shape, so a caller parses one
+format for both handlers:
+
+`src/notices.ts` — `formatPublish`
+
+```ts
+export function formatPublish(result: PublishResult): string {
+  const verdict = result.success
+    ? ["ok", result.prUrl].filter(Boolean).join(" ")
+    : result.error;
+  return [verdict, ...formatWarnings(result.warnings)].join("\n");
+}
+```
+
+The verdict is `ok` followed by the pull request URL, or the failure
+reason. A thrown failure never reaches it; `publishFromCli` prints
+`Error: …` for that case itself.
+
 `main.ts` is what turns these into toasts. The PR URL gets a 10-second
 notice rather than the default ~5s, for a concrete reason: on iOS there is
 no console, so the notice is the only place the URL appears, and a GitHub
 URL takes a moment to read on a phone.
+
+A publish that throws, rather than returning a failure, goes through one
+function (#384):
+
+`src/main.ts` — `reportFailure`
+
+```ts
+function reportFailure(summary: string, error: unknown): void {
+  console.error(`[Publisher] ${summary}`, error);
+  new Notice(`✗ ${summary}: ${errorMessage(error)}`);
+}
+```
+
+The summary names what failed — `Publish failed` or `Batch publish
+failed` — and appears in both the console line and the notice, so a
+console search finds what a notice showed. The notice carries the message
+because iOS has no console. A publish that _returns_ a failure is a
+result, not a thrown error, and keeps its own `✗ Failed to publish:`
+wording.
 
 ## Verifying the whole thing
 
@@ -2504,18 +2566,18 @@ grep -c 'test(' src/*.test.ts | sort -t: -k2 -rn
 src/note-transformer.test.ts:140
 src/settings.test.ts:59
 src/publisher.test.ts:58
-src/settings-load.test.ts:41
-src/main.test.ts:36
+src/main.test.ts:38
+src/settings-load.test.ts:34
 src/github-api-gateway.test.ts:34
 src/schema.test.ts:28
-src/notices.test.ts:14
+src/notices.test.ts:17
 src/slug.test.ts:11
 ```
 
-The CLI handler is tested the way the commands are: the preload's `Plugin`
+The CLI handlers are tested the way the commands are: the preload's `Plugin`
 mock records each `registerCliHandler` call in a map, and `main.test.ts`
-calls the recorded handler directly. Whether the `obsidian` CLI dispatches
-to it is outside what the mock can see.
+calls the recorded handlers directly. Whether the `obsidian` CLI dispatches
+to them is outside what the mock can see.
 
 Octokit is mocked at three levels, deliberately. The preload
 `mock.module`s `@octokit/rest` and `@octokit/request-error` globally;
@@ -2594,6 +2656,15 @@ but a re-run never read the prose, so a deleted function left the
 narrative describing something that was gone while verify still passed
 (#328). Its replacement is the release-time read: the regeneration reads
 the source and the prose side by side and corrects the prose.
+
+The 2.2.0 pass also worked in place, because this release touched only
+`main.ts`, `notices.ts` and `settings.ts`. It replaced the section on the
+token migration, which #382 removed, with the one-line `loadSettings`; it
+rewrote the synced-reload paragraph, whose argument rested on the
+migration's early return; and it added `publisher:publish`,
+`formatPublish` and `reportFailure`. The sections on the transform chain,
+images and the gateway quote code this release did not change, and gate
+check 8 confirms their snippets still match.
 
 The 2.1.1 pass updated this document in place rather than rewriting it:
 `loadSettings` was quoted with the token migration inline, before it moved
