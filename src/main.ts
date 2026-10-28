@@ -6,12 +6,7 @@ import {
   formatWarnings,
 } from "./notices";
 import { Publisher } from "./publisher";
-import {
-  legacyGithubToken,
-  migrateGithubToken,
-  PublisherSettingTab,
-  parseSettings,
-} from "./settings";
+import { PublisherSettingTab, parseSettings } from "./settings";
 import {
   type BatchPublishResult,
   errorMessage,
@@ -230,16 +225,10 @@ export default class ObsidianPublisher extends Plugin {
     return output;
   }
 
-  /** Load settings, moving a plaintext token from before #352 into secret
-   * storage (`migrateGithubToken`). Idempotent: once saved, data.json holds
-   * no `githubToken` and this does nothing. */
+  /** Load settings. Never saves, so an ordinary reload cannot bounce
+   * data.json between devices. */
   async loadSettings() {
-    const data = await this.loadData();
-    this.settings = parseSettings(data);
-    const legacy = legacyGithubToken(data);
-    if (migrateGithubToken(this.settings, legacy, this.app.secretStorage)) {
-      await this.saveData(this.settings);
-    }
+    this.settings = parseSettings(await this.loadData());
   }
 
   /**
@@ -247,10 +236,7 @@ export default class ObsidianPublisher extends Plugin {
    * the plugin kept its in-memory copy, and its next save wrote that stale
    * copy back over the synced one.
    *
-   * `loadSettings` is safe to reuse because it writes only when the file
-   * still carries a pre-#352 plaintext token — once per device, after which
-   * the file has none — so an ordinary reload never saves and cannot
-   * bounce data.json between devices. A synced `githubTokenSecret` naming a
+   * `loadSettings` is safe to reuse because it never saves. A synced `githubTokenSecret` naming a
    * secret this device lacks needs no handling here: `publishConfig`
    * resolves it to no token at the moment of use.
    *

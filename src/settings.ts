@@ -212,8 +212,7 @@ export function parseSettings(data: unknown): PublisherSettings {
 
   return {
     // Only the secret's ID. A plaintext `githubToken` from before #352 is
-    // never carried into the result; `legacyGithubToken` reads it once so
-    // loadSettings can move it into secret storage.
+    // never carried into the result, so a save cannot write one back.
     githubTokenSecret: str(
       d.githubTokenSecret,
       DEFAULT_SETTINGS.githubTokenSecret,
@@ -276,52 +275,6 @@ export function tokenStatus(id: string, onDevice: readonly string[]): string {
   return onDevice.includes(id)
     ? `Uses the keychain secret "${id}".`
     : `This device's keychain has no secret named "${id}". Add your token in Settings → Keychain under that name, or choose another secret here.`;
-}
-
-/** The plaintext token a pre-#352 data.json carried, or "" when there is none. */
-export function legacyGithubToken(data: unknown): string {
-  return isPlainObject(data) && typeof data.githubToken === "string"
-    ? data.githubToken
-    : "";
-}
-
-/** Secret IDs for the migrated token. The generic one lets another plugin
- * that needs a GitHub token pick it from the keychain; the plugin-specific
- * one is used only when the generic one already holds a different token. */
-export const SHARED_TOKEN_ID = SUGGESTED_TOKEN_NAME;
-export const OWN_TOKEN_ID = "obsidian-publisher-github-token";
-
-/** The slice of app.secretStorage the migration uses, so it runs under test. */
-export interface SecretStore {
-  getSecret(id: string): string | null;
-  setSecret(id: string, secret: string): void;
-}
-
-/**
- * Move a plaintext token from before #352 into the keychain, recording the
- * secret's ID on `settings`. Returns whether settings must be saved — which
- * is what drops the plaintext from data.json. If an ID is already set
- * (another device migrated first and Sync brought its data.json), the
- * plaintext is only dropped: secrets do not sync, so this device enters the
- * token once by hand. Metadator's `migrateApiKey` is the same algorithm; a
- * fix to one belongs in the other.
- */
-export function migrateGithubToken(
-  settings: PublisherSettings,
-  legacyToken: string,
-  secrets: SecretStore,
-): boolean {
-  if (!legacyToken) return false;
-  if (!settings.githubTokenSecret) {
-    const shared = secrets.getSecret(SHARED_TOKEN_ID);
-    const id =
-      shared === null || shared === legacyToken
-        ? SHARED_TOKEN_ID
-        : OWN_TOKEN_ID;
-    secrets.setSecret(id, legacyToken);
-    settings.githubTokenSecret = id;
-  }
-  return true;
 }
 
 export class PublisherSettingTab extends PluginSettingTab {
