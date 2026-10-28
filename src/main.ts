@@ -18,6 +18,17 @@ import {
 /** A GitHub PR URL takes longer than the default ~5s to read on a phone. */
 const PR_NOTICE_DURATION_MS = 10_000;
 
+/**
+ * The plugin's one failure report, in the shape Periodic Notes'
+ * `reportFailure` uses: a prefixed console line carrying the error object,
+ * and a notice with the message, since iOS has no console. `summary` is
+ * reused in both, so console lines stay greppable.
+ */
+function reportFailure(summary: string, error: unknown): void {
+  console.error(`[Publisher] ${summary}`, error);
+  new Notice(`✗ ${summary}: ${errorMessage(error)}`);
+}
+
 function notifyWarnings(warnings: PublishWarning[]): void {
   for (const message of formatWarnings(warnings)) {
     new Notice(message);
@@ -218,7 +229,8 @@ export default class ObsidianPublisher extends Plugin {
       try {
         output = formatPublish(await publisher.publishNote(file));
       } catch (error) {
-        console.error("Publish error:", error);
+        // Printed, not a notice: the caller is a terminal.
+        console.error("[Publisher] Publish failed", error);
         output = `Error: ${errorMessage(error)}`;
       }
     });
@@ -288,9 +300,7 @@ export default class ObsidianPublisher extends Plugin {
 
       notifyWarnings(result.warnings);
     } catch (error) {
-      const message = errorMessage(error);
-      new Notice(`✗ Error: ${message}`);
-      console.error("Publish error:", error);
+      reportFailure("Publish failed", error);
     }
   }
 
@@ -311,9 +321,7 @@ export default class ObsidianPublisher extends Plugin {
     try {
       result = await publisher.publishAll();
     } catch (error) {
-      const message = errorMessage(error);
-      new Notice(`✗ Error: ${message}`);
-      console.error("Batch publish error:", error);
+      reportFailure("Batch publish failed", error);
       return;
     } finally {
       // Runs whether publishAll resolved or threw, so a failure part-way
@@ -355,9 +363,7 @@ export default class ObsidianPublisher extends Plugin {
         }
       }
     } catch (error) {
-      const message = errorMessage(error);
-      new Notice(`✗ Error: ${message}`);
-      console.error("Batch publish error:", error);
+      reportFailure("Batch publish failed", error);
     }
   }
 }
