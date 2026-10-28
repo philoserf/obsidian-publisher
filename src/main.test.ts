@@ -406,7 +406,7 @@ describe("publish-current-note command", () => {
 
     await runCurrent(plugin, { basename: "note", path: "note.md" });
 
-    expect(shown()).toContain("✗ Error: network down");
+    expect(shown()).toContain("✗ Publish failed: network down");
     validate.mockRestore();
     publish.mockRestore();
   });
@@ -467,7 +467,7 @@ describe("publish-all-notes command", () => {
 
     await runAll(plugin);
 
-    expect(shown()).toContain("✗ Error: rate limited");
+    expect(shown()).toContain("✗ Batch publish failed: rate limited");
     validate.mockRestore();
     publish.mockRestore();
   });
@@ -663,7 +663,7 @@ describe("batch progress notices (#246)", () => {
 
     const held = (plugin as unknown as { progress?: unknown }).progress;
     expect(held).toBeUndefined();
-    expect(shown()).toContain("✗ Error: failed part-way");
+    expect(shown()).toContain("✗ Batch publish failed: failed part-way");
     validate.mockRestore();
     publish.mockRestore();
   });
