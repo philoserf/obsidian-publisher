@@ -262,9 +262,9 @@ saves, and until 2.1.0 the plugin kept its in-memory copy and wrote that back ov
 one on its next save (#363). `onExternalSettingsChange` now re-reads it through
 `loadSettings` — the load path, so the one-normalizer invariant holds for a synced file as it
 does for a local one. The constraint that shapes the reload is that it must not write: a
-reload that saved would bounce the file between devices. `loadSettings` writes only to
-migrate a plaintext token, which leaves a file with no plaintext token, so the next reload is
-a no-op. Keep that property if the migration ever changes.
+reload that saved would bounce the file between devices. `loadSettings` never writes. It
+used to, once per device, to move a pre-#352 plaintext token into the keychain; that
+migration was removed on 2026-10-28, once no synced data.json carried one.
 
 What crosses this seam is also narrower than the settings. The GitHub token lives in
 Obsidian's keychain, and `data.json` holds only its secret's ID (#352). The token is joined

@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  legacyGithubToken,
-  migrateGithubToken,
-  OWN_TOKEN_ID,
-  parseSettings,
-  SHARED_TOKEN_ID,
-} from "./settings";
+import { parseSettings } from "./settings";
 import { DEFAULT_SETTINGS } from "./types";
 
 describe("parseSettings", () => {
@@ -300,72 +294,5 @@ describe("the plaintext token does not survive a load (#352)", () => {
     const result = parseSettings({ githubToken: "ghp_secret", repoName: "r" });
     expect(result).not.toHaveProperty("githubToken");
     expect(JSON.stringify(result)).not.toContain("ghp_secret");
-  });
-
-  test("legacyGithubToken reads it once, for the migration", () => {
-    expect(legacyGithubToken({ githubToken: "ghp_secret" })).toBe("ghp_secret");
-  });
-
-  test("legacyGithubToken is empty when there is nothing to move", () => {
-    expect(legacyGithubToken({})).toBe("");
-    expect(legacyGithubToken({ githubToken: 42 })).toBe("");
-    expect(legacyGithubToken(null)).toBe("");
-  });
-});
-
-// #352, #373: the migration as a pure function, the shape metadator's
-// `migrateApiKey` tests, so a keychain fix ports between the two.
-describe("migrateGithubToken", () => {
-  function store(initial: Record<string, string> = {}) {
-    const secrets = new Map(Object.entries(initial));
-    const sets: string[] = [];
-    return {
-      secrets,
-      sets,
-      getSecret: (id: string) => secrets.get(id) ?? null,
-      setSecret: (id: string, value: string) => {
-        sets.push(id);
-        secrets.set(id, value);
-      },
-    };
-  }
-
-  test("moves the token under the shared ID and asks for a save", () => {
-    const s = store();
-    const settings = { ...DEFAULT_SETTINGS };
-    expect(migrateGithubToken(settings, "ghp_x", s)).toBe(true);
-    expect(s.secrets.get(SHARED_TOKEN_ID)).toBe("ghp_x");
-    expect(settings.githubTokenSecret).toBe(SHARED_TOKEN_ID);
-  });
-
-  test("does nothing when there is no plaintext token", () => {
-    const s = store();
-    const settings = { ...DEFAULT_SETTINGS };
-    expect(migrateGithubToken(settings, "", s)).toBe(false);
-    expect(s.sets).toEqual([]);
-  });
-
-  test("only drops the plaintext when an ID is already set", () => {
-    const s = store();
-    const settings = { ...DEFAULT_SETTINGS, githubTokenSecret: "mine" };
-    expect(migrateGithubToken(settings, "ghp_x", s)).toBe(true);
-    expect(s.sets).toEqual([]);
-    expect(settings.githubTokenSecret).toBe("mine");
-  });
-
-  test("does not overwrite a different token another plugin keeps", () => {
-    const s = store({ [SHARED_TOKEN_ID]: "ghp_other" });
-    const settings = { ...DEFAULT_SETTINGS };
-    migrateGithubToken(settings, "ghp_x", s);
-    expect(s.secrets.get(SHARED_TOKEN_ID)).toBe("ghp_other");
-    expect(s.secrets.get(OWN_TOKEN_ID)).toBe("ghp_x");
-    expect(settings.githubTokenSecret).toBe(OWN_TOKEN_ID);
-  });
-
-  test("reuses the shared ID when it already holds the same token", () => {
-    const s = store({ [SHARED_TOKEN_ID]: "ghp_x" });
-    const settings = { ...DEFAULT_SETTINGS };
-    migrateGithubToken(settings, "ghp_x", s);
-    expect(settings.githubTokenSecret).toBe(SHARED_TOKEN_ID);
   });
 });

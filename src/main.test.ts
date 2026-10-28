@@ -606,55 +606,6 @@ describe("settings synced from another device (#363)", () => {
 });
 
 // #352: a plaintext token in data.json moves into secret storage on load.
-describe("token migration (#352)", () => {
-  const legacy = { githubToken: "ghp_legacy", repoOwner: "o", repoName: "r" };
-
-  test("moves the token to the keychain and drops the plaintext", async () => {
-    const plugin = makePlugin(legacy, {});
-    await plugin.onload();
-    expect(plugin.secretStorage.secrets.get("github-token")).toBe("ghp_legacy");
-    expect(plugin.settings.githubTokenSecret).toBe("github-token");
-    expect(plugin.data).not.toHaveProperty("githubToken");
-    expect(plugin.publishConfig().githubToken).toBe("ghp_legacy");
-  });
-
-  test("is idempotent: a second load writes nothing", async () => {
-    const plugin = makePlugin(legacy, {});
-    await plugin.onload();
-    const saved = plugin.data;
-    plugin.secretStorage.setSecret.mockClear();
-    await plugin.loadSettings();
-    expect(plugin.secretStorage.setSecret).not.toHaveBeenCalled();
-    expect(plugin.data).toBe(saved);
-  });
-
-  test("only drops the plaintext when an ID is already set", async () => {
-    // Another device migrated first and Sync merged its data.json.
-    const plugin = makePlugin(
-      { ...legacy, githubTokenSecret: "github-token" },
-      {},
-    );
-    await plugin.onload();
-    expect(plugin.secretStorage.setSecret).not.toHaveBeenCalled();
-    expect(plugin.data).not.toHaveProperty("githubToken");
-  });
-
-  test("does not overwrite a different token another plugin keeps", async () => {
-    const plugin = makePlugin(legacy, { "github-token": "ghp_someone_else" });
-    await plugin.onload();
-    expect(plugin.secretStorage.secrets.get("github-token")).toBe(
-      "ghp_someone_else",
-    );
-    expect(plugin.settings.githubTokenSecret).toBe(
-      "obsidian-publisher-github-token",
-    );
-    expect(plugin.publishConfig().githubToken).toBe("ghp_legacy");
-  });
-});
-
-// #246: onProgress used to build a fresh Notice per file, so a 167-note
-// batch stacked 167 toasts that outlived the operation and buried the
-// summary, the PR URL and every warning.
 describe("batch progress notices (#246)", () => {
   const progressOf = (plugin: ObsidianPublisher) =>
     (
