@@ -175,6 +175,112 @@ describe("publisher:preflight CLI handler (#362)", () => {
   });
 });
 
+describe("publisher:publish CLI handler", () => {
+  const note = { basename: "note", path: "Published/note.md" };
+  const runPublish = async (
+    plugin: ObsidianPublisher & PluginInternals,
+    params: Record<string, string>,
+  ) => plugin.cliHandlers.get("publisher:publish")?.(params);
+  const withVault = (plugin: ReturnType<typeof makePlugin>) => {
+    (plugin.app as { vault: unknown }).vault = {
+      getFileByPath: (p: string) => (p === note.path ? note : null),
+    };
+  };
+
+  test("prints ok and the pull request URL, with no notices", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    const publish = spyOn(Publisher.prototype, "publishNote").mockResolvedValue(
+      okResult({ prUrl: "https://github.com/o/r/pull/1" }),
+    );
+
+    expect(await runPublish(plugin, { path: note.path })).toBe(
+      "ok https://github.com/o/r/pull/1",
+    );
+    expect(publish).toHaveBeenCalledWith(note as never);
+    expect(shown()).toEqual([]);
+    publish.mockRestore();
+  });
+
+  test("prints the reason a publish failed", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    const publish = spyOn(Publisher.prototype, "publishNote").mockResolvedValue(
+      {
+        filePath: note.path,
+        success: false,
+        error: "Invalid frontmatter: date is required",
+        warnings: [],
+      },
+    );
+
+    expect(await runPublish(plugin, { path: note.path })).toBe(
+      "Invalid frontmatter: date is required",
+    );
+    publish.mockRestore();
+  });
+
+  test("prints a thrown error", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    const publish = spyOn(Publisher.prototype, "publishNote").mockRejectedValue(
+      new Error("boom"),
+    );
+    const error = spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await runPublish(plugin, { path: note.path })).toBe("Error: boom");
+    publish.mockRestore();
+    error.mockRestore();
+  });
+
+  test("refuses without the token, before touching GitHub", async () => {
+    const plugin = makePlugin(undefined, {});
+    await plugin.onload();
+    withVault(plugin);
+    const publish = spyOn(Publisher.prototype, "publishNote");
+
+    expect(await runPublish(plugin, { path: note.path })).toBe(
+      "Cannot publish: GitHub token is required",
+    );
+    expect(publish).not.toHaveBeenCalled();
+    publish.mockRestore();
+  });
+
+  test("reports a path that names no file", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+
+    expect(await runPublish(plugin, { path: "Nope.md" })).toBe(
+      "File not found: Nope.md",
+    );
+  });
+
+  test("refuses while another publish is running", async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    withVault(plugin);
+    let release: (r: PublishResult) => void = () => {};
+    const publish = spyOn(Publisher.prototype, "publishNote").mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const first = runPublish(plugin, { path: note.path });
+    expect(await runPublish(plugin, { path: note.path })).toBe(
+      "A publish is already running",
+    );
+    release(okResult());
+    expect(await first).toBe("ok");
+    expect(publish).toHaveBeenCalledTimes(1);
+    publish.mockRestore();
+  });
+});
+
 describe("publish-current-note command", () => {
   test("reports when there is no active file", async () => {
     const plugin = makePlugin();

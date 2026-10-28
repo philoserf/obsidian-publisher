@@ -1,5 +1,10 @@
 import { Notice, Plugin, type TFile } from "obsidian";
-import { formatBatchNotice, formatPreflight, formatWarnings } from "./notices";
+import {
+  formatBatchNotice,
+  formatPreflight,
+  formatPublish,
+  formatWarnings,
+} from "./notices";
 import { Publisher } from "./publisher";
 import {
   legacyGithubToken,
@@ -151,6 +156,19 @@ export default class ObsidianPublisher extends Plugin {
       },
       (params) => this.preflight(params.path),
     );
+
+    this.registerCliHandler(
+      "publisher:publish",
+      "Publish a note to GitHub and print the pull request URL",
+      {
+        path: {
+          value: "<path>",
+          description: "Vault path of the note",
+          required: true,
+        },
+      },
+      (params) => this.publishFromCli(params.path),
+    );
   }
 
   /**
@@ -162,10 +180,7 @@ export default class ObsidianPublisher extends Plugin {
    * do not sync.
    */
   private async preflight(notePath: string | undefined): Promise<string> {
-    const file =
-      notePath && notePath !== "true"
-        ? this.app.vault.getFileByPath(notePath)
-        : null;
+    const file = this.cliFile(notePath);
     if (!file) return `File not found: ${notePath ?? ""}`;
     const publisher = new Publisher(
       this.app.vault,
@@ -174,6 +189,45 @@ export default class ObsidianPublisher extends Plugin {
       this.app.metadataCache,
     );
     return formatPreflight(await publisher.preflight(file));
+  }
+
+  /** Resolve a CLI `path=` to a file. A bare `path` flag arrives as "true". */
+  private cliFile(notePath: string | undefined): TFile | null {
+    return notePath && notePath !== "true"
+      ? this.app.vault.getFileByPath(notePath)
+      : null;
+  }
+
+  /**
+   * The `publisher:publish` CLI handler: the publish-current-note command
+   * for a named file, reporting in text instead of notices, since the run
+   * was started from a terminal. Inside `runExclusive`, because unlike
+   * preflight it opens a branch; a publish already running is reported as
+   * the verdict rather than with the guard's notice.
+   */
+  private async publishFromCli(notePath: string | undefined): Promise<string> {
+    if (this.inFlight) return "A publish is already running";
+    const file = this.cliFile(notePath);
+    if (!file) return `File not found: ${notePath ?? ""}`;
+    const publisher = new Publisher(
+      this.app.vault,
+      this.publishConfig(),
+      undefined,
+      this.app.metadataCache,
+    );
+    const validationError = publisher.validateSettings();
+    if (validationError) return `Cannot publish: ${validationError}`;
+
+    let output = "";
+    await this.runExclusive(async () => {
+      try {
+        output = formatPublish(await publisher.publishNote(file));
+      } catch (error) {
+        console.error("Publish error:", error);
+        output = `Error: ${errorMessage(error)}`;
+      }
+    });
+    return output;
   }
 
   /** Load settings, moving a plaintext token from before #352 into secret

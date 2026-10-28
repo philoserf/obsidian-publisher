@@ -24,7 +24,8 @@ A **publish set** is the set of notes participating in _one operation_. Not the 
 notes on the site. This distinction is the single most important idea in the system and the
 one a well-meaning change is most likely to destroy; it gets its own section below.
 
-An **operation** is one invocation of one of the two commands. It produces exactly one
+An **operation** is one invocation of one of the two commands, or of `publisher:publish`, which
+is the single-note command for a named file. It produces exactly one
 branch, one commit and one pull request, or it produces nothing. There is no partial
 operation and no resumable operation.
 
