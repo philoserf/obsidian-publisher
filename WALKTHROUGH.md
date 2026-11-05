@@ -698,6 +698,12 @@ user meant to publish it. A note that cannot be read at all also surfaces
 as a failure: read failures cannot be filtered by publish intent, since we
 never saw the file, and silent loss is the worse trade.
 
+Since 2.5.0 the single-note path runs this scan too, through
+[`collectPublishSet`](#the-single-note-path), to learn which slugs its
+links may resolve to. It keeps `files` and drops `readFailures`: a
+one-note publish deletes nothing, so a note that cannot be read elsewhere
+in the vault costs it a link, not the publish.
+
 Before any of that, a cheap rejection:
 
 `src/publisher.ts` — `isDefinitelyNotPublishable`
@@ -789,7 +795,7 @@ nothing:
     let prepared: Prepared[];
     let deletions: string[];
     try {
-      prepared = await this.prepareBatch(files);
+      prepared = await this.prepareBatch(files, this.buildPublishSet(files));
       const failures = prepared.filter((p) => !p.ok).length;
       if (failures > 0) {
         const abort = `Nothing published: ${failures} note${failures !== 1 ? "s" : ""} failed to prepare`;
@@ -821,12 +827,17 @@ notes failed to read` (or `to prepare`), before a branch exists. Until
 2.3.0 those notes were reported and the rest published; that is the one
 visible behavior change.
 
-Preparing first also inverts the ordering
-[the shared workflow](#the-workflow-both-commands-share) otherwise uses:
-the batch is transformed before the branch is created, and handed in as
-`prepared` so the workflow does not prepare it again. A branch failure now
-throws away the preparation, which is the cheaper loss next to a branch
-left behind by a refused confirmation.
+The batch is transformed before the branch is created, and handed to
+[the shared workflow](#the-workflow-both-commands-share) as `prepared`.
+Until 2.5.0 that inverted the workflow's own ordering, which prepared a
+single note after its branch existed; now both commands prepare first and
+the workflow prepares nothing. A branch failure throws away the
+preparation, which is the cheaper loss next to a branch left behind by a
+refused confirmation.
+
+The publish set passed alongside is built from these same files. They are
+exactly the vault's `status: publish` notes, so Publish All asks the vault
+nothing it has not already read; the single-note path has to ask.
 
 The guards around the listing are each a short-circuit. An empty publish
 set returns at the top, before anything reads the remote, so a vault with
@@ -887,31 +898,26 @@ the next Publish All.
       return this.workflowFailure(opts, undefined, error);
     }
 
-    // Left undefined until preparation completes, so `workflowFailure`
-    // can tell "nothing was prepared" from "these notes prepared and then
-    // the workflow failed" rather than inferring it from an empty array.
-    let prepared: Prepared[] | undefined;
     try {
-      prepared = opts.prepared ?? (await this.prepareBatch(opts.files));
-      return await this.commitAndOpenPr(branchName, prepared, opts);
+      return await this.commitAndOpenPr(branchName, opts.prepared, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
-      return this.workflowFailure(opts, prepared, error);
+      return this.workflowFailure(opts, opts.prepared, error);
     }
   }
 ```
 
-For a single note the branch is created **first**, before anything is
-prepared. That ordering is what makes a branch-creation failure cheap:
-nothing has been transformed yet, and the failure is reported against the
-file list without any work being thrown away. Publish All passes
-`prepared` in, already built, for the reason given above, and the
-`opts.prepared ??` arm skips the second preparation.
+The workflow takes notes already prepared; since 2.5.0 `WorkflowOpts.prepared`
+is required, and both commands build it before calling in. What is left
+here is the part that touches the remote: create the branch, commit, open
+the pull request, and on a failure after the branch exists, delete it.
 
-`prepared` is left `undefined` until preparation completes. That is not
-tidiness — it is the signal `workflowFailure` reads to tell "nothing was
-prepared" from "these notes prepared and then the workflow failed", rather
-than inferring it from an empty array, which is ambiguous.
+The `undefined` passed to `workflowFailure` on a branch failure is a
+signal, not tidiness. It tells "nothing could be committed" from "these
+notes were prepared and then the workflow failed": the first synthesizes
+one failure per file from `opts.files`, the second converts the prepared
+notes with the workflow error, so a prepared success never reports as
+published.
 
 ### A prepared note is not a published note
 
@@ -1076,10 +1082,12 @@ error, which is the one the user needs.
 `src/publisher.ts` — `prepareBatch`
 
 ```ts
-  private async prepareBatch(files: PublishableFile[]): Promise<Prepared[]> {
+  private async prepareBatch(
+    files: PublishableFile[],
+    publishSet: Set<string>,
+  ): Promise<Prepared[]> {
     const prepared: Prepared[] = [];
     const filesByPathSuffix = this.buildFilesByPathSuffix();
-    const publishSet = this.buildPublishSet(files);
     // Read each image source once per batch; multiple notes referencing
     // the same image share the buffer.
     const imageReadCache = new Map<string, ArrayBuffer>();
@@ -1173,8 +1181,9 @@ watching progress, not results.
 
 ### The single-note path
 
-`publishNote` reads the file and checks it may enter the workflow, then
-hands a one-element list to the same workflow:
+`publishNote` reads the file and checks it may enter the workflow,
+prepares it as a batch of one against the vault-wide publish set, then
+hands the result to the same workflow:
 
 `src/publisher.ts` — `publishNote`
 
@@ -1183,10 +1192,21 @@ hands a one-element list to the same workflow:
     const entry = await this.readForPublish(file);
     if ("error" in entry) return failedResult(file.path, entry.error);
 
+    let prepared: Prepared[];
+    try {
+      prepared = await this.prepareBatch(
+        [entry],
+        await this.collectPublishSet(entry),
+      );
+    } catch (error) {
+      return failedResult(file.path, errorMessage(error));
+    }
+
     const result = await this.runPublishWorkflow({
       branchPrefix: "publish",
       readFailures: [],
       files: [entry],
+      prepared,
       commitMessage: () => `Publish: ${file.basename}`,
       prTitle: () => `Publish: ${file.basename}`,
       prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
@@ -1205,6 +1225,29 @@ hands a one-element list to the same workflow:
     };
   }
 ```
+
+The set its links resolve against is the one piece a single note cannot
+know from itself:
+
+`src/publisher.ts` — `collectPublishSet`
+
+```ts
+  private async collectPublishSet(own: PublishableFile): Promise<Set<string>> {
+    const { files } = await this.getPublishableFiles();
+    return this.buildPublishSet([...files, own]);
+  }
+```
+
+Until 2.5.0 the set was built from the batch, which for a single note was
+its own slug, so publishing one note flattened every outbound link it had
+until the next Publish All (#393). Now the single-note path runs the same
+vault scan Publish All runs and resolves against every `status: publish`
+note, so the two modes emit the same links from the same source. The
+note's own slug is added again in case the scan missed it, which costs
+nothing. What the set deliberately is not is a model of the site: a link to
+a note marked `status: publish` but not yet live, scheduled or in an
+unmerged pull request, resolves and returns 404 until its target lands,
+then starts working on its own.
 
 The entry gate is its own method because two callers need it:
 
@@ -1255,7 +1298,10 @@ two pieces `publishNote` uses:
     const entry = await this.readForPublish(file);
     if ("error" in entry)
       return { ok: false, error: entry.error, warnings: [] };
-    const [prepared] = await this.prepareBatch([entry]);
+    const [prepared] = await this.prepareBatch(
+      [entry],
+      await this.collectPublishSet(entry),
+    );
     if (!prepared) return { ok: false, error: "Unknown error", warnings: [] };
     return prepared.ok
       ? { ok: true, warnings: prepared.warnings }
@@ -1264,17 +1310,17 @@ two pieces `publishNote` uses:
 ```
 
 Everything `publishNote` does before `createBranchWithRetry` runs here —
-`readForPublish`, then `prepareBatch`'s validation, transform and image
-reads — and nothing after it. The `!prepared` arm is unreachable, since
+`readForPublish`, `collectPublishSet`, then `prepareBatch`'s validation,
+transform and image reads — and nothing after it. The `!prepared` arm is unreachable, since
 `prepareBatch` returns one `Prepared` per input, and exists because
 `noUncheckedIndexedAccess` types the destructured element as possibly
 absent.
 
 Two consequences follow from reusing `prepareBatch` rather than
-approximating it. The publish set is one slug, exactly as in `publishNote`,
-so the verdict is the single-note command's verdict: a note with outbound
-links passes, and those links would degrade to text. And image warnings
-come back with the verdict, because resolving images is part of preparing.
+approximating it. The publish set is the vault's `status: publish` notes,
+exactly as in `publishNote`, so the verdict is the single-note command's
+verdict, links included. And image warnings come back with the verdict,
+because resolving images is part of preparing.
 
 The result is its own type, not a `PublishResult`:
 
@@ -1972,9 +2018,12 @@ degraded to plain text.
   }
 ```
 
-A link to a note that is not being published degrades to bare display text
-rather than pointing at a URL that will 404. That is the whole reason
-`publishSet` is threaded from `Publisher` down through every transform.
+A link to a note that is not marked `status: publish` degrades to bare
+display text rather than pointing at a URL that will 404. That is the
+whole reason `publishSet` is threaded from `Publisher` down through every
+transform. Which slugs are in the set is `Publisher`'s decision, and since
+2.5.0 it is the same in both modes: every `status: publish` note in the
+vault. The transformer only asks.
 
 Three cases worth calling out:
 
@@ -3012,6 +3061,13 @@ but a re-run never read the prose, so a deleted function left the
 narrative describing something that was gone while verify still passed
 (#328). Its replacement is the release-time read: the regeneration reads
 the source and the prose side by side and corrects the prose.
+
+The 2.5.0 pass worked in place as well. Its one change, #394, made the
+single-note path resolve links against every `status: publish` note, so
+the pass added `collectPublishSet`, requoted `publishNote`, `preflight`,
+`prepareBatch`, `publishAll` and `runPublishWorkflow`, and corrected the
+prose that said a single note is prepared after its branch exists and
+that `preflight` judges a note against a publish set of one.
 
 The 2.4.0 pass worked in place as well. Its one change, #390, split
 `publisher:publish` into a start and a read-back, so the pass quoted the
