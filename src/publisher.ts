@@ -76,8 +76,9 @@ type WorkflowOpts = {
   branchPrefix: string;
   readFailures: PublishResult[];
   files: PublishableFile[];
-  /** Already prepared, so the workflow does not prepare again. */
-  prepared?: Prepared[];
+  /** Prepared before any branch exists, so a failure to prepare leaves
+   * nothing behind on the remote. */
+  prepared: Prepared[];
   /** Repository paths the commit removes. */
   deletions?: string[];
   commitMessage: (successCount: number) => string;
@@ -282,6 +283,24 @@ export class Publisher {
   }
 
   /**
+   * The publish set for a one-note publish and for `preflight`: every
+   * `status: publish` note in the vault, plus the note itself, so a link
+   * from one published note to another resolves the same way in every
+   * mode (#393). Publish All builds the same set from the files it has
+   * already read.
+   *
+   * A note that fails to read or parse is left out rather than reported.
+   * Publish All stops on one, because a note missing from its set would
+   * have its post deleted; a one-note publish deletes nothing, so a bad
+   * note elsewhere must not block this one. A link to it degrades to text,
+   * as a link to any unpublished note does.
+   */
+  private async collectPublishSet(own: PublishableFile): Promise<Set<string>> {
+    const { files } = await this.getPublishableFiles();
+    return this.buildPublishSet([...files, own]);
+  }
+
+  /**
    * Detect all filename collisions before transforming. Returns an array
    * of collision groups, each with the sanitized filename and the source
    * paths that produce it. Empty array means all sanitized filenames are
@@ -396,16 +415,29 @@ export class Publisher {
 
   /**
    * Publish a single note to GitHub: creates a feature branch, commits the
-   * file to it, and opens a pull request against baseBranch.
+   * file to it, and opens a pull request against baseBranch. Its links
+   * resolve against every `status: publish` note in the vault, not only
+   * itself (#393).
    */
   async publishNote(file: TFile): Promise<PublishResult> {
     const entry = await this.readForPublish(file);
     if ("error" in entry) return failedResult(file.path, entry.error);
 
+    let prepared: Prepared[];
+    try {
+      prepared = await this.prepareBatch(
+        [entry],
+        await this.collectPublishSet(entry),
+      );
+    } catch (error) {
+      return failedResult(file.path, errorMessage(error));
+    }
+
     const result = await this.runPublishWorkflow({
       branchPrefix: "publish",
       readFailures: [],
       files: [entry],
+      prepared,
       commitMessage: () => `Publish: ${file.basename}`,
       prTitle: () => `Publish: ${file.basename}`,
       prBody: () => `Published from Obsidian\n\n**File:** ${file.path}`,
@@ -435,7 +467,10 @@ export class Publisher {
     const entry = await this.readForPublish(file);
     if ("error" in entry)
       return { ok: false, error: entry.error, warnings: [] };
-    const [prepared] = await this.prepareBatch([entry]);
+    const [prepared] = await this.prepareBatch(
+      [entry],
+      await this.collectPublishSet(entry),
+    );
     if (!prepared) return { ok: false, error: "Unknown error", warnings: [] };
     return prepared.ok
       ? { ok: true, warnings: prepared.warnings }
@@ -507,7 +542,7 @@ export class Publisher {
     let prepared: Prepared[];
     let deletions: string[];
     try {
-      prepared = await this.prepareBatch(files);
+      prepared = await this.prepareBatch(files, this.buildPublishSet(files));
       const failures = prepared.filter((p) => !p.ok).length;
       if (failures > 0) {
         const abort = `Nothing published: ${failures} note${failures !== 1 ? "s" : ""} failed to prepare`;
@@ -597,15 +632,14 @@ export class Publisher {
   }
 
   /**
-   * Shared branch + commit + PR orchestration. Creates a branch first,
-   * then prepares `opts.files` into the entries to commit. If branch
-   * creation fails, per-file failures are synthesized from that same
-   * list (so the user sees N failures, not just a bare error). On any
-   * other failure the prepared notes are converted with the workflow
-   * error, so a prepared success never reports as published. Callers
-   * supply the branch prefix plus the commit-message and PR title/body
-   * builders so single-note and batch paths share this workflow while
-   * keeping their distinct PR shapes.
+   * Shared branch + commit + PR orchestration over notes the caller has
+   * already prepared. If branch creation fails, per-file failures are
+   * synthesized from `opts.files` (so the user sees N failures, not just
+   * a bare error). On any other failure the prepared notes are converted
+   * with the workflow error, so a prepared success never reports as
+   * published. Callers supply the branch prefix plus the commit-message
+   * and PR title/body builders so single-note and batch paths share this
+   * workflow while keeping their distinct PR shapes.
    */
   private async runPublishWorkflow(
     opts: WorkflowOpts,
@@ -620,16 +654,11 @@ export class Publisher {
       return this.workflowFailure(opts, undefined, error);
     }
 
-    // Left undefined until preparation completes, so `workflowFailure`
-    // can tell "nothing was prepared" from "these notes prepared and then
-    // the workflow failed" rather than inferring it from an empty array.
-    let prepared: Prepared[] | undefined;
     try {
-      prepared = opts.prepared ?? (await this.prepareBatch(opts.files));
-      return await this.commitAndOpenPr(branchName, prepared, opts);
+      return await this.commitAndOpenPr(branchName, opts.prepared, opts);
     } catch (error) {
       await this.cleanupBranch(branchName);
-      return this.workflowFailure(opts, prepared, error);
+      return this.workflowFailure(opts, opts.prepared, error);
     }
   }
 
@@ -693,10 +722,10 @@ export class Publisher {
     error: unknown,
   ): BatchPublishResult {
     const message = errorMessage(error);
-    // `undefined` means preparation never completed — branch creation
-    // failed, or `prepareBatch` itself threw — so every file failed with
-    // the workflow error. Otherwise the notes carry their own outcomes and
-    // the workflow error overrides the successes among them.
+    // `undefined` means branch creation failed before anything could be
+    // committed, so every file failed with the workflow error. Otherwise
+    // the notes carry their own outcomes and the workflow error overrides
+    // the successes among them.
     const failed =
       prepared === undefined
         ? failedResults(opts.files, message)
@@ -781,14 +810,20 @@ export class Publisher {
    * entries — nothing here decides a publish outcome, because nothing
    * here has committed anything.
    *
+   * `publishSet` is the slugs a wikilink may resolve to. The caller
+   * decides its scope: Publish All passes its own files, a one-note
+   * publish passes every `status: publish` note in the vault (#393).
+   *
    * The batch-scoped `imageReadCache` and `targetPathOwners` stay
    * batch-scoped on purpose: cross-note deduplication and collision
    * warnings are batch concerns, not per-note ones.
    */
-  private async prepareBatch(files: PublishableFile[]): Promise<Prepared[]> {
+  private async prepareBatch(
+    files: PublishableFile[],
+    publishSet: Set<string>,
+  ): Promise<Prepared[]> {
     const prepared: Prepared[] = [];
     const filesByPathSuffix = this.buildFilesByPathSuffix();
-    const publishSet = this.buildPublishSet(files);
     // Read each image source once per batch; multiple notes referencing
     // the same image share the buffer.
     const imageReadCache = new Map<string, ArrayBuffer>();

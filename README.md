@@ -45,7 +45,7 @@ The plugin converts Obsidian-specific syntax to Hugo-compatible markdown during 
 | `> [!note] Title`          | `{{< callout note "Title" >}} … {{< /callout >}}`    |
 | ` ```mermaid `             | `{{< mermaid >}} … {{< /mermaid >}}` (any fence)     |
 
-Wikilinks and note embeds only resolve to URLs for notes in the **current publish set** (the notes being published in this operation). Out-of-set references degrade to plain text — so you can't publish a link to a note that isn't also being published. The one exception is a same-page anchor (`[[#Heading]]`): its target is the document itself, so it always resolves.
+Wikilinks and note embeds only resolve to URLs for notes in the **publish set**: every note in the vault with `status: publish`, whether you publish one note or all of them. Out-of-set references degrade to plain text — so you can't publish a link to a draft. A link to a note marked `status: publish` but not yet live (scheduled, or in an unmerged pull request) resolves, and returns 404 until its target lands. The one exception is a same-page anchor (`[[#Heading]]`): its target is the document itself, so it always resolves.
 
 **Blocks nest.** A callout holds whatever you put in it — paragraphs separated by a bare `>`, fenced code samples, comments — and the whole block converts, not just the lines above the first fence. A `%%` comment is removed whether or not it wraps a code span or a fenced block, and an image referenced only inside one is never uploaded. Mermaid is recognized in any fence the parser accepts: tildes, four or more markers, and an info string beyond the bare language.
 
