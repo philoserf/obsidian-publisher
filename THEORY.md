@@ -20,9 +20,10 @@ A **note** is a vault file carrying `status: publish`. That sentinel is the whol
 author's expressed intent — there is no separate manifest, no publish queue, no per-note
 configuration. Publishing is a property the note asserts about itself.
 
-A **publish set** is the set of notes participating in _one operation_. Not the set of
-notes on the site. This distinction is the single most important idea in the system and the
-one a well-meaning change is most likely to destroy; it gets its own section below.
+A **publish set** is the set of slugs a wikilink may resolve to in _one operation_: every
+note in the vault with `status: publish`. Not the set of notes on the site. This distinction
+is the single most important idea in the system and the one a well-meaning change is most
+likely to destroy; it gets its own section below.
 
 An **operation** is one invocation of one of the two commands, or of `publisher:publish`, which
 is the single-note command for a named file. It produces exactly one
@@ -32,7 +33,7 @@ operation and no resumable operation.
 The `publisher:preflight` CLI handler is not an operation. It runs a single-note operation's
 preparation — the same `readForPublish` and `prepareBatch` — and stops before the network,
 so it produces nothing by construction. What it returns is the verdict that operation would
-reach, publish set of one included, and the reason it reuses those functions rather than
+reach, and the reason it reuses those functions rather than
 restating their checks is [one rule, one owner](#one-rule-one-owner--and-rejection-rather-than-repair)
 below: the vault's `/publish` skill had its own copy of the rules, and the two could disagree
 (#362).
@@ -86,25 +87,37 @@ question is not "how do I make this work?" but "which owner should decide, and s
 reject?" Adding a second place that repairs a value is how every one of the bugs above was
 introduced.
 
-### Every operation is self-contained, and link resolution is scoped to it
+### Every operation is self-contained, and link resolution asks the vault, never the site
 
-`[[Some Note]]` becomes a link only when its slug is in the publish set — the set built from
-the files in _this run_. Otherwise it degrades to the display text the author wrote.
+`[[Some Note]]` becomes a link only when its slug is in the publish set — every note in the
+vault carrying `status: publish`. Otherwise it degrades to the display text the author wrote.
 
-The consequence is sharper than it first sounds. `publishNote` passes a one-element list
-into the same workflow, so a single-note publish has a publish set containing exactly one
-slug: the note's own. **Publishing one note therefore flattens every outbound link it has.**
-Only same-page anchors survive, because their target is the document itself and needs no
-lookup. This is pinned by tests, which is how you know it is intended rather than an
-oversight — the single-note command is useful for notes with no outbound links, and the
-batch command is the one that produces a coherent site.
+The set is the same in every mode. Publish All builds it from the files it has already read,
+since those are exactly the vault's `status: publish` notes. `publishNote` and `preflight`
+scan the vault for the same notes (`collectPublishSet`) and prepare their one note against
+that set, so a single-note publish keeps the links Publish All would emit. Until 2.5.0 the
+set was built from the files in _this run_, which gave a one-note publish a set of one slug
+and flattened every outbound link it had; a note republished on its own lost its links until
+the next Publish All, which made cross-links between essays a trap (#393). Only same-page
+anchors never needed the lookup, because their target is the document itself.
+
+Two things follow from asking the vault rather than the site. A link to a note that is
+marked `status: publish` but not yet live — scheduled for a later date, or in an unmerged
+pull request — resolves and returns 404 until its target lands, then starts working on its
+own. Plain text would stay plain until the linking note was published again, so the 404 is
+the better failure, and it needs no date comparison. And the scan tolerates a note that fails
+to read or parse: Publish All stops on one, because a note missing from its set would have
+its post deleted, but a one-note publish deletes nothing, so a bad note elsewhere must not
+block it. A link to the bad note degrades to text.
 
 A sibling project solving this problem would almost certainly resolve links against the
 site: query what is already published, or emit optimistically and let the build break. This
-one does neither, because it has no model of the site and refuses to acquire one. That
-refusal is the premise most of the rest of this document rests on. If you ever find yourself
-adding a "what is already published?" lookup, you are not fixing a bug; you are proposing a
-different system, and most of the reasoning below stops applying.
+one does neither, because it has no model of the site and refuses to acquire one. Which
+notes carry `status: publish` is a question about the vault, and Publish All always asked
+it; `publishNote` now asks the same question. That refusal is the premise most of the rest
+of this document rests on. If you ever find yourself adding a "what is already published?"
+lookup, you are not fixing a bug; you are proposing a different system, and most of the
+reasoning below stops applying.
 
 The reference must be reduced to a basename before the lookup, because the set is keyed on
 `file.basename`. That is `vaultBasename`, and it is deliberately _not_ part of the slug
@@ -329,9 +342,10 @@ one PR, or nothing. A note can fail individually and the batch continues, but th
 "commit what worked and retry the rest" — and adding it would put the system in the position
 of knowing what is already committed, which is the premise again.
 
-**Where a maintainer who did not read this would do damage.** Making `publishNote` resolve
-links against all notes with `status: publish` rather than the operation's set — it looks
-like an obvious fix for flattened links and it silently changes the system's premise. Adding
+**Where a maintainer who did not read this would do damage.** Making link resolution ask
+the site what is published, or check a target's date, rather than asking the vault which
+notes carry `status: publish` — it looks like an obvious fix for a link that 404s until its
+target lands, and it silently changes the system's premise. Adding
 a "clean up" or "repair" step to a normalizer. Re-wrapping a `RequestError` to improve an
 error message. Adding a second place that decides a publish outcome. Adding an option where
 something was deliberately removed.

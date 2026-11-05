@@ -1128,16 +1128,19 @@ See [[Not Published]] for details.`;
     expect(sourceEntry?.content).not.toContain("{{< ref");
   });
 
-  test("single-file publish links to self work; links to others degrade", async () => {
+  // #393. The publish set is the vault's `status: publish` notes in every
+  // mode, so a one-note publish keeps the links Publish All would emit.
+  test("single-file publish links to self and to any status: publish note; others degrade", async () => {
     const selfRef = `---
 title: Source
 status: publish
 date: 2026-01-01
 ---
-I am [[Source]] and I link to [[Other]].`;
+I am [[Source]], I link to [[Other]] and to [[Draft]].`;
     const vault = makeVault([
       { name: "source.md", content: selfRef },
       { name: "other.md", content: targetPublished },
+      { name: "draft.md", content: unpublishedNote },
     ]);
     const gh = makeGitHubApiGateway();
     const { publisher } = makePublisher(vault, makeSettings(), gh);
@@ -1151,7 +1154,36 @@ I am [[Source]] and I link to [[Other]].`;
       (e) => e.path === "content/posts/source.md",
     );
     expect(sourceEntry?.content).toContain("[Source](/posts/source/)");
-    expect(sourceEntry?.content).toContain("I link to Other.");
+    expect(sourceEntry?.content).toContain("[Other](/posts/other/)");
+    expect(sourceEntry?.content).toContain("and to Draft.");
+    // Only the one note is committed; the set widened, not the batch.
+    expect(entries).toHaveLength(1);
+  });
+
+  // Publish All stops on a note that fails to read or parse, because a
+  // missing note would have its post deleted. A one-note publish deletes
+  // nothing, so a bad note elsewhere must not block it (#393).
+  test("single-file publish ignores a malformed note elsewhere in the vault", async () => {
+    const vault = makeVault([
+      { name: "source.md", content: sourceLinkingToTarget },
+      { name: "target.md", content: targetPublished },
+      { name: "broken.md", content: "---\n: bad yaml :\n---\nbody" },
+    ]);
+    const gh = makeGitHubApiGateway();
+    const { publisher } = makePublisher(vault, makeSettings(), gh);
+
+    const preflight = await publisher.preflight(
+      makeTFile("source.md") as never,
+    );
+    expect(preflight).toEqual({ ok: true, warnings: [] });
+
+    const result = await publisher.publishNote(makeTFile("source.md") as never);
+
+    expect(result.success).toBe(true);
+    const commitCall = gh.commitFiles.mock.calls[0] as unknown[];
+    const entries = commitCall[0] as Array<{ path: string; content: string }>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.content).toContain("[Target](/posts/target/)");
   });
 });
 
