@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.0
+
+### Changed
+
+- **A one-note publish keeps its links.** The publish command and `publisher:publish` resolve wikilinks against every `status: publish` note in the vault, the same set Publish All uses, so a note republished on its own no longer loses its outbound links until the next Publish All. `publisher:preflight` judges the note against the same set. A link to a note marked `status: publish` but not yet live, scheduled or in an unmerged pull request, resolves and answers 404 until its target lands, then works on its own; a link to a draft still degrades to plain text. The one-note scan skips a note that fails to read or parse, because publishing one note deletes nothing; Publish All still stops on one (#393, #394)
+
+### Internal
+
+- `prepareBatch` takes the publish set as a parameter and `runPublishWorkflow` takes prepared notes only, so a single note is prepared before any branch exists, as a batch already was. `THEORY.md`'s link-resolution section, `README.md` and `CLAUDE.md` state the new rule. 434 tests, from 433 (#394)
+- Biome 2.6.4 (#392)
+
 ## 2.4.0
 
 ### Added
