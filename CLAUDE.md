@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Obsidian Publisher is a plugin that publishes Obsidian notes to GitHub for Hugo processing, using the GitHub REST API (via Octokit) for cross-platform compatibility including iOS.
 
-The current next step for this repo is tracked in the workspace backlog at `../NEXT.md` (the `obsidian-publisher` row). Read it when starting work; update it when that step ships.
-
 `THEORY.md` carries the design rationale behind the invariants this file summarizes — read it before changing the publish set, the slug rule, or the error-narrowing seam. `README.md` holds the full Obsidian-to-Hugo transformation table.
 
 `WALKTHROUGH.md` is **generated, and regenerated once per release — not per PR.** Run the `code-walkthrough` skill after all the work for a release has landed; do not hand-edit it, and do not regenerate it because one PR moved a function it quotes.
