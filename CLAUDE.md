@@ -86,4 +86,4 @@ Use the `release-gate` then `release-ship` skills — do not tag by hand. `relea
 
 ## Code Style
 
-Code style is enforced by Biome, and markdown by `bun fmt`, which reads `.prettierrc.json` and `.prettierignore`. Run `bun run check` before committing. Type imports come before value imports.
+Code style is enforced by Biome, and markdown by `bun fmt`, configured by the `[fmt]` table in `bunfig.toml`. Run `bun run check` before committing. Type imports come before value imports.
